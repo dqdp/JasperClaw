@@ -44,6 +44,7 @@ class ReadinessService:
             self._settings.ollama_chat_model,
             self._settings.ollama_fast_chat_model,
             self._settings.database_url,
+            self._settings.internal_openai_api_key,
         )
         return "ok" if all(value.strip() for value in required) else "fail"
 

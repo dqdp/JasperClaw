@@ -30,14 +30,14 @@ class _FakeOllamaClient:
             raise self.error
 
 
-def _settings() -> Settings:
+def _settings(internal_openai_api_key: str = "test-internal-key") -> Settings:
     return Settings(
         ollama_base_url="http://ollama.test",
         ollama_chat_model="qwen3:8b",
         ollama_fast_chat_model="qwen3:4b",
         ollama_timeout_seconds=5.0,
         database_url="postgresql://assistant:change-me@postgres:5432/assistant",
-        internal_openai_api_key="test-internal-key",
+        internal_openai_api_key=internal_openai_api_key,
     )
 
 
@@ -112,3 +112,18 @@ def test_readiness_service_reports_pending_migrations_as_not_ready() -> None:
     assert result.status == "not_ready"
     assert result.checks == {"config": "ok", "postgres": "fail", "ollama": "ok"}
     assert migrations.calls == 1
+
+
+def test_readiness_service_reports_missing_internal_api_key_as_not_ready() -> None:
+    ollama = _FakeOllamaClient()
+    migrations = _FakeMigrationRunner()
+    service = ReadinessService(
+        settings=_settings(internal_openai_api_key=""),
+        ollama_client=ollama,
+        migration_runner=migrations,
+    )
+
+    result = service.check()
+
+    assert result.status == "not_ready"
+    assert result.checks == {"config": "fail", "postgres": "ok", "ollama": "ok"}

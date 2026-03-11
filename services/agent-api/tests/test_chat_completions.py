@@ -1,8 +1,13 @@
 import httpx
+import pytest
 
 from app.api import deps
+from app.clients.ollama import OllamaChatStreamChunk
+from app.core.config import get_settings
 from app.core.errors import APIError
 from app.repositories.postgres import ChatPersistenceResult, ConversationContext
+from app.schemas.chat import ChatCompletionRequest
+from app.services.chat import ChatService
 
 
 class _FakeResponse:
@@ -423,3 +428,42 @@ def test_chat_completions_prepare_conversation_mismatch(
     assert response.status_code == 409
     assert response.json()["error"]["type"] == "validation_error"
     assert response.json()["error"]["code"] == "conversation_mismatch"
+
+
+def test_streaming_chat_completion_raises_after_partial_output_on_runtime_failure() -> None:
+    class _StreamingFailureClient:
+        def chat(self, model, messages):
+            raise AssertionError("Unexpected non-streaming runtime call")
+
+        def stream_chat(self, model, messages):
+            yield OllamaChatStreamChunk(content="Runtime ", done=False)
+            raise APIError(
+                status_code=503,
+                error_type="dependency_unavailable",
+                code="runtime_unavailable",
+                message="Model runtime unavailable",
+            )
+
+    repository = _FakeRepository()
+    service = ChatService(
+        settings=get_settings(),
+        ollama_client=_StreamingFailureClient(),
+        repository=repository,
+    )
+    session = service.create_streaming_chat_completion(
+        request_id="req_stream_fail",
+        request=ChatCompletionRequest.model_validate(_chat_payload(stream=True)),
+    )
+
+    first_event = next(session.events)
+
+    assert first_event.content == "Runtime "
+    assert first_event.role == "assistant"
+    with pytest.raises(APIError) as exc_info:
+        next(session.events)
+
+    assert exc_info.value.code == "runtime_unavailable"
+    assert len(repository.success_calls) == 0
+    assert len(repository.failed_calls) == 1
+    assert repository.failed_calls[0]["conversation_id_hint"] == "conv_test"
+    assert repository.failed_calls[0]["error_code"] == "runtime_unavailable"

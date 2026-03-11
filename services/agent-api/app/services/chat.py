@@ -270,9 +270,7 @@ class ChatService:
                 completed_at=completed_at,
                 error=exc,
             )
-            if not sent_any_content:
-                raise
-            return
+            raise
 
     def _iter_stream_chunks(
         self,

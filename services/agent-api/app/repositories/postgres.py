@@ -338,6 +338,9 @@ class PostgresChatRepository:
         best_match: ConversationContext | None = None
         for conversation_id in candidate_ids:
             transcript = self._load_conversation_transcript(conn, conversation_id)
+            # Ignore placeholder conversations until they carry a persisted request transcript.
+            if not transcript:
+                continue
             prefix_length = matching_prefix_length(transcript, request_messages)
             if prefix_length is None:
                 continue
