@@ -1,6 +1,8 @@
 import argparse
+import sys
 
 from app.core.config import get_settings
+from app.core.errors import APIError
 from app.migrations import MigrationRunner
 
 
@@ -18,15 +20,22 @@ def main(argv: list[str] | None = None) -> int:
     runner = MigrationRunner(database_url=settings.database_url)
 
     if args.command == "migrate":
-        status = runner.status()
-        if status.is_current:
-            print("Database schema already current")
-            return 0
+        try:
+            status = runner.status()
+            if status.is_current:
+                print("Database schema already current")
+                return 0
 
-        runner.ensure_current()
-        applied = ", ".join(status.pending_versions)
-        print(f"Applied migrations: {applied}")
-        return 0
+            runner.ensure_current()
+            applied = ", ".join(status.pending_versions)
+            print(f"Applied migrations: {applied}")
+            return 0
+        except APIError as exc:
+            print(
+                f"Migration command failed: {exc.code}: {exc.message}",
+                file=sys.stderr,
+            )
+            return 1
 
     parser.error(f"Unsupported command: {args.command}")
     return 2

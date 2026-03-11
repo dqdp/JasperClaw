@@ -27,9 +27,11 @@ Describe the normal production deployment flow.
 3. SSH into host through the deploy workflow
 4. Log in to GHCR on host if required
 5. Pull new images
-6. Run Compose update
-7. Execute smoke tests
-8. Confirm service health
+6. Start supporting services needed before schema migration
+7. Apply pending database migrations
+8. Start or recreate user-facing services
+9. Execute smoke tests
+10. Confirm service health
 
 ## Operational notes
 
@@ -47,7 +49,9 @@ Avoid production deployment based on floating tags.
 Preferred rollout pattern:
 
 - `docker compose pull`
-- `docker compose up -d --remove-orphans`
+- `docker compose up -d postgres ollama stt-service tts-service`
+- `docker compose run --rm --no-deps agent-api python -m app.cli migrate`
+- `docker compose up -d --remove-orphans agent-api open-webui caddy`
 
 ### Health validation
 

@@ -64,3 +64,37 @@ def test_cli_migrate_reports_current_schema(monkeypatch, capsys) -> None:
     assert cli.main(["migrate"]) == 0
     assert fake_runner.ensure_current_calls == 0
     assert "Database schema already current" in capsys.readouterr().out
+
+
+def test_cli_migrate_reports_failure(monkeypatch, capsys) -> None:
+    class _FakeRunner:
+        def __init__(self, database_url: str) -> None:
+            self.database_url = database_url
+
+        def status(self) -> MigrationStatus:
+            from app.core.errors import APIError
+
+            raise APIError(
+                status_code=503,
+                error_type="dependency_unavailable",
+                code="storage_unavailable",
+                message="Persistent storage unavailable",
+            )
+
+        def ensure_current(self) -> None:
+            raise RuntimeError("unexpected migrate call")
+
+    monkeypatch.setattr(
+        cli,
+        "get_settings",
+        lambda: SimpleNamespace(
+            database_url="postgresql://assistant:test@postgres:5432/assistant"
+        ),
+    )
+    monkeypatch.setattr(cli, "MigrationRunner", _FakeRunner)
+
+    assert cli.main(["migrate"]) == 1
+    assert (
+        "Migration command failed: storage_unavailable: Persistent storage unavailable"
+        in capsys.readouterr().err
+    )
