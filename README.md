@@ -111,6 +111,8 @@ local-assistant/
 ## Documentation map
 
 - [`docs/architecture.md`](docs/architecture.md) — target architecture v1
+- [`docs/data-model.md`](docs/data-model.md) — canonical Postgres and pgvector schema plan for transcript, audit, and memory
+- [`docs/features/chat.md`](docs/features/chat.md) — canonical text request flow from Open WebUI through persistence and response
 - [`docs/roadmap.md`](docs/roadmap.md) — implementation milestones and delivery order
 - [`docs/backlog.md`](docs/backlog.md) — epics and task breakdown for execution tracking
 - [`docs/adr/0001-monorepo.md`](docs/adr/0001-monorepo.md) — monorepo decision
