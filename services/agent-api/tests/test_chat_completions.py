@@ -152,7 +152,7 @@ def _chat_payload(
     return payload
 
 
-def test_chat_completions_non_streaming_success(client, monkeypatch) -> None:
+def test_chat_completions_non_streaming_success(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
     client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
@@ -167,7 +167,7 @@ def test_chat_completions_non_streaming_success(client, monkeypatch) -> None:
         },
     )
 
-    response = client.post("/v1/chat/completions", json=_chat_payload())
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -190,7 +190,7 @@ def test_chat_completions_non_streaming_success(client, monkeypatch) -> None:
     assert repository.success_calls[0]["conversation_id_hint"] is None
 
 
-def test_chat_completions_streaming_success(client, monkeypatch) -> None:
+def test_chat_completions_streaming_success(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
     client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
@@ -203,7 +203,11 @@ def test_chat_completions_streaming_success(client, monkeypatch) -> None:
         ],
     )
 
-    response = client.post("/v1/chat/completions", json=_chat_payload(stream=True))
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(stream=True),
+        headers=auth_headers,
+    )
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -220,7 +224,7 @@ def test_chat_completions_streaming_success(client, monkeypatch) -> None:
 
 
 def test_chat_completions_streaming_runtime_unavailable_before_first_chunk(
-    client, monkeypatch
+    client, monkeypatch, auth_headers
 ) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
@@ -228,7 +232,11 @@ def test_chat_completions_streaming_runtime_unavailable_before_first_chunk(
     request = httpx.Request("POST", "http://ollama.test/api/chat")
     _FakeClient.stream_error = httpx.ConnectError("boom", request=request)
 
-    response = client.post("/v1/chat/completions", json=_chat_payload(stream=True))
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(stream=True),
+        headers=auth_headers,
+    )
 
     assert response.status_code == 503
     assert response.json()["error"]["type"] == "dependency_unavailable"
@@ -238,7 +246,7 @@ def test_chat_completions_streaming_runtime_unavailable_before_first_chunk(
     assert repository.failed_calls[0]["conversation_id_hint"] == "conv_test"
 
 
-def test_chat_completions_header_conversation_hint(client, monkeypatch) -> None:
+def test_chat_completions_header_conversation_hint(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
     client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
@@ -251,14 +259,14 @@ def test_chat_completions_header_conversation_hint(client, monkeypatch) -> None:
     response = client.post(
         "/v1/chat/completions",
         json=_chat_payload(),
-        headers={"X-Conversation-ID": "conv_existing"},
+        headers={**auth_headers, "X-Conversation-ID": "conv_existing"},
     )
 
     assert response.status_code == 200
     assert repository.success_calls[0]["conversation_id_hint"] == "conv_existing"
 
 
-def test_chat_completions_metadata_conversation_hint(client, monkeypatch) -> None:
+def test_chat_completions_metadata_conversation_hint(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
     client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
@@ -271,46 +279,51 @@ def test_chat_completions_metadata_conversation_hint(client, monkeypatch) -> Non
     response = client.post(
         "/v1/chat/completions",
         json=_chat_payload(metadata={"conversation_id": "conv_meta"}),
+        headers=auth_headers,
     )
 
     assert response.status_code == 200
     assert repository.success_calls[0]["conversation_id_hint"] == "conv_meta"
 
 
-def test_chat_completions_unknown_profile(client, monkeypatch) -> None:
+def test_chat_completions_unknown_profile(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
     client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
     payload = _chat_payload()
     payload["model"] = "unknown-model"
 
-    response = client.post("/v1/chat/completions", json=payload)
+    response = client.post("/v1/chat/completions", json=payload, headers=auth_headers)
 
     assert response.status_code == 422
     assert response.json()["error"]["type"] == "validation_error"
     assert response.json()["error"]["code"] == "unknown_profile"
 
 
-def test_chat_completions_invalid_request(client, monkeypatch) -> None:
+def test_chat_completions_invalid_request(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
     client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
 
-    response = client.post("/v1/chat/completions", json={"messages": []})
+    response = client.post(
+        "/v1/chat/completions",
+        json={"messages": []},
+        headers=auth_headers,
+    )
 
     assert response.status_code == 422
     assert response.json()["error"]["type"] == "validation_error"
     assert response.json()["error"]["code"] == "invalid_request"
 
 
-def test_chat_completions_runtime_unavailable(client, monkeypatch) -> None:
+def test_chat_completions_runtime_unavailable(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
     client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
     request = httpx.Request("POST", "http://ollama.test/api/chat")
     _FakeClient.error = httpx.ConnectError("boom", request=request)
 
-    response = client.post("/v1/chat/completions", json=_chat_payload())
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
 
     assert response.status_code == 503
     assert response.json()["error"]["type"] == "dependency_unavailable"
@@ -319,14 +332,14 @@ def test_chat_completions_runtime_unavailable(client, monkeypatch) -> None:
     assert repository.failed_calls[0]["error_code"] == "runtime_unavailable"
 
 
-def test_chat_completions_upstream_bad_payload(client, monkeypatch) -> None:
+def test_chat_completions_upstream_bad_payload(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
     client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
     _FakeClient.error = None
     _FakeClient.response = _FakeResponse(200, {"unexpected": "shape"})
 
-    response = client.post("/v1/chat/completions", json=_chat_payload())
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
 
     assert response.status_code == 502
     assert response.json()["error"]["type"] == "upstream_error"
@@ -335,7 +348,7 @@ def test_chat_completions_upstream_bad_payload(client, monkeypatch) -> None:
     assert repository.failed_calls[0]["error_code"] == "dependency_bad_response"
 
 
-def test_chat_completions_storage_unavailable(client, monkeypatch) -> None:
+def test_chat_completions_storage_unavailable(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository(
         error=APIError(
@@ -352,14 +365,14 @@ def test_chat_completions_storage_unavailable(client, monkeypatch) -> None:
         {"message": {"role": "assistant", "content": "Runtime response"}},
     )
 
-    response = client.post("/v1/chat/completions", json=_chat_payload())
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
 
     assert response.status_code == 503
     assert response.json()["error"]["type"] == "dependency_unavailable"
     assert response.json()["error"]["code"] == "storage_unavailable"
 
 
-def test_chat_completions_conversation_mismatch(client, monkeypatch) -> None:
+def test_chat_completions_conversation_mismatch(client, monkeypatch, auth_headers) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository(
         error=APIError(
@@ -379,7 +392,7 @@ def test_chat_completions_conversation_mismatch(client, monkeypatch) -> None:
     response = client.post(
         "/v1/chat/completions",
         json=_chat_payload(),
-        headers={"X-Conversation-ID": "conv_wrong"},
+        headers={**auth_headers, "X-Conversation-ID": "conv_wrong"},
     )
 
     assert response.status_code == 409
@@ -387,7 +400,9 @@ def test_chat_completions_conversation_mismatch(client, monkeypatch) -> None:
     assert response.json()["error"]["code"] == "conversation_mismatch"
 
 
-def test_chat_completions_prepare_conversation_mismatch(client, monkeypatch) -> None:
+def test_chat_completions_prepare_conversation_mismatch(
+    client, monkeypatch, auth_headers
+) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository(
         prepare_error=APIError(
@@ -402,7 +417,7 @@ def test_chat_completions_prepare_conversation_mismatch(client, monkeypatch) -> 
     response = client.post(
         "/v1/chat/completions",
         json=_chat_payload(stream=True),
-        headers={"X-Conversation-ID": "conv_wrong"},
+        headers={**auth_headers, "X-Conversation-ID": "conv_wrong"},
     )
 
     assert response.status_code == 409

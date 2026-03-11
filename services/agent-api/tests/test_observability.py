@@ -22,7 +22,9 @@ def _events(caplog) -> list[dict]:
     ]
 
 
-def test_chat_request_emits_structured_events(client, monkeypatch, caplog) -> None:
+def test_chat_request_emits_structured_events(
+    client, monkeypatch, caplog, auth_headers
+) -> None:
     _patch_http_client(monkeypatch)
     repository = _FakeRepository()
     client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
@@ -40,7 +42,7 @@ def test_chat_request_emits_structured_events(client, monkeypatch, caplog) -> No
         response = client.post(
             "/v1/chat/completions",
             json=_chat_payload(),
-            headers={"X-Request-ID": "req_testobs"},
+            headers={**auth_headers, "X-Request-ID": "req_testobs"},
         )
 
     assert response.status_code == 200

@@ -12,6 +12,7 @@ def reset_env(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("OLLAMA_CHAT_MODEL", "qwen3:8b")
     monkeypatch.setenv("OLLAMA_FAST_CHAT_MODEL", "qwen3:4b")
     monkeypatch.setenv("OLLAMA_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("INTERNAL_OPENAI_API_KEY", "test-internal-key")
     monkeypatch.setenv("POSTGRES_HOST", "postgres.test")
     monkeypatch.setenv("POSTGRES_PORT", "5432")
     monkeypatch.setenv("POSTGRES_DB", "assistant")
@@ -32,3 +33,8 @@ def reset_env(monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app)
+
+
+@pytest.fixture
+def auth_headers() -> dict[str, str]:
+    return {"Authorization": "Bearer test-internal-key"}

@@ -5,7 +5,13 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 
 from app.api.routes import router
-from app.core.errors import APIError, api_error_handler, request_validation_error_handler
+from app.core.auth import enforce_internal_openai_auth
+from app.core.config import get_settings
+from app.core.errors import (
+    APIError,
+    api_error_handler,
+    request_validation_error_handler,
+)
 from app.core.logging import configure_logging, log_event
 
 configure_logging()
@@ -25,7 +31,11 @@ async def attach_request_id(request: Request, call_next):
         method=request.method,
         path=request.url.path,
     )
-    response = await call_next(request)
+    try:
+        enforce_internal_openai_auth(request, get_settings())
+        response = await call_next(request)
+    except APIError as exc:
+        response = await api_error_handler(request, exc)
     response.headers["X-Request-ID"] = request.state.request_id
     duration_ms = round((perf_counter() - started) * 1000, 2)
     event = "request_completed" if response.status_code < 400 else "request_failed"

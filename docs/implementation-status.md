@@ -56,6 +56,7 @@ Implemented:
 - `GET /healthz`
 - `GET /readyz`
 - `GET /v1/models`
+- shared internal bearer authentication enforced on `/v1/*`, with `healthz` and `readyz` left open
 - real profile-based `POST /v1/chat/completions` for `stream=false`
 - real token streaming path for `stream=true`, bridging `Ollama` chat chunks into OpenAI-style SSE
 - real `Ollama` chat runtime call for text requests

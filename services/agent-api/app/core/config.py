@@ -10,6 +10,7 @@ class Settings:
     ollama_fast_chat_model: str
     ollama_timeout_seconds: float
     database_url: str
+    internal_openai_api_key: str
     model_owner: str = "local-assistant"
 
     @property
@@ -37,4 +38,5 @@ def get_settings() -> Settings:
         ollama_fast_chat_model=os.getenv("OLLAMA_FAST_CHAT_MODEL", ollama_chat_model),
         ollama_timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "30")),
         database_url=database_url,
+        internal_openai_api_key=os.getenv("INTERNAL_OPENAI_API_KEY", "change-me"),
     )

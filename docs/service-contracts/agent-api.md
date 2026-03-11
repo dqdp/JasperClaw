@@ -30,6 +30,18 @@ For v1 delivery sequencing, the first real vertical slice is the text path. Voic
 - future mobile or PWA clients
 - future CLI or automation clients
 
+## Authentication model
+
+In v1, `agent-api` authenticates trusted internal clients with one shared bearer credential.
+
+Rules:
+
+- all `/v1/*` routes require `Authorization: Bearer <INTERNAL_OPENAI_API_KEY>`
+- `GET /healthz` and `GET /readyz` remain unauthenticated
+- this credential identifies a trusted client such as `Open WebUI`, not an end user
+- missing or invalid bearer tokens must fail before downstream runtime or storage calls
+- the shared bearer credential is a deployment secret and must never be exposed publicly
+
 ## Downstream dependencies
 
 - `Ollama`
@@ -118,6 +130,10 @@ Failure response example:
 
 List available logical assistant profiles.
 
+Authentication:
+
+- requires `Authorization: Bearer <INTERNAL_OPENAI_API_KEY>`
+
 Response shape:
 
 ```json
@@ -133,6 +149,10 @@ Response shape:
 ### `POST /v1/chat/completions`
 
 OpenAI-compatible chat endpoint.
+
+Authentication:
+
+- requires `Authorization: Bearer <INTERNAL_OPENAI_API_KEY>`
 
 Minimum request fields:
 
@@ -173,6 +193,10 @@ Continuity behavior:
 
 OpenAI-compatible transcription endpoint.
 
+Authentication:
+
+- requires `Authorization: Bearer <INTERNAL_OPENAI_API_KEY>`
+
 Minimum multipart fields:
 
 - `file`
@@ -192,6 +216,10 @@ Implementation note:
 ### `POST /v1/audio/speech`
 
 OpenAI-compatible speech synthesis endpoint.
+
+Authentication:
+
+- requires `Authorization: Bearer <INTERNAL_OPENAI_API_KEY>`
 
 Minimum request fields:
 
@@ -246,6 +274,9 @@ Examples of stable `code` values:
 - `missing_required_field`
 - `unknown_profile`
 - `unsupported_feature`
+- `missing_api_key`
+- `invalid_api_key`
+- `auth_not_configured`
 - `invalid_client_credentials`
 - `tool_not_allowed`
 - `voice_not_enabled`

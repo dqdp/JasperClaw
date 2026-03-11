@@ -32,6 +32,7 @@ def _settings() -> Settings:
         ollama_fast_chat_model="qwen3:4b",
         ollama_timeout_seconds=5.0,
         database_url="postgresql://assistant:change-me@postgres:5432/assistant",
+        internal_openai_api_key="test-internal-key",
     )
 
 

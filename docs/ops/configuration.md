@@ -180,6 +180,9 @@ Notes:
 
 - this is not an end-user credential
 - it must not be exposed publicly
+- it is enforced on all `/v1/*` routes in `agent-api`
+- it is not required for `GET /healthz` or `GET /readyz`
+- it must match the bearer token configured in trusted internal clients such as `Open WebUI`
 
 ### `WEBUI_SECRET_KEY`
 
@@ -535,6 +538,7 @@ Additional required only if enabled:
 - example files must contain placeholders only
 - external provider credentials must never be exposed to `Open WebUI`
 - the internal OpenAI-style credential is shared only between `Open WebUI` and `agent-api`
+- unauthenticated probes are limited to `healthz` and `readyz`
 
 ## Recommended file layout
 

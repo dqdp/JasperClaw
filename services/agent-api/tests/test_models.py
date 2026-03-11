@@ -1,5 +1,5 @@
-def test_models(client) -> None:
-    response = client.get("/v1/models")
+def test_models(client, auth_headers) -> None:
+    response = client.get("/v1/models", headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json() == {

@@ -33,6 +33,8 @@ Smoke tests should confirm the canonical request path:
 
 Execute a simple prompt through the UI or through the OpenAI-compatible endpoint.
 
+If using the OpenAI-compatible endpoint directly, include `Authorization: Bearer <INTERNAL_OPENAI_API_KEY>`.
+
 Expected result:
 
 - streamed or non-streamed response returns successfully
@@ -44,6 +46,8 @@ Confirm `GET /v1/models` exposes expected logical profiles, for example:
 
 - `assistant-v1`
 - `assistant-fast`
+
+If this check is performed directly against `agent-api`, include `Authorization: Bearer <INTERNAL_OPENAI_API_KEY>`.
 
 ### 6. Ollama path works indirectly
 

@@ -68,6 +68,7 @@ The request includes:
 - selected logical profile, for example `assistant-v1`
 - current message history in OpenAI-compatible form
 - whether the response should stream
+- `Authorization: Bearer <INTERNAL_OPENAI_API_KEY>`
 
 ### 2. Ingress and request correlation
 
@@ -77,6 +78,11 @@ At ingress, `agent-api` must:
 - assign or propagate a request ID
 - log `request_received`
 - validate the transport payload
+
+Current v1 baseline:
+
+- all `/v1/*` text requests require the shared internal bearer credential
+- `healthz` and `readyz` are intentionally left unauthenticated because they are operational probes, not user traffic
 
 If validation fails, return a stable machine-readable error without invoking downstream dependencies.
 
