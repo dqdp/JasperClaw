@@ -3,6 +3,9 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 
+_PLACEHOLDER_SECRET_VALUES = frozenset({"", "change-me"})
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     ollama_base_url: str
@@ -16,6 +19,17 @@ class Settings:
     @property
     def public_profiles(self) -> tuple[str, str]:
         return ("assistant-v1", "assistant-fast")
+
+
+def _normalize_required_secret(value: str | None) -> str:
+    normalized = (value or "").strip()
+    if normalized.casefold() in _PLACEHOLDER_SECRET_VALUES:
+        return ""
+    return normalized
+
+
+def is_configured_required_secret(value: str | None) -> bool:
+    return bool(_normalize_required_secret(value))
 
 
 @lru_cache
@@ -38,5 +52,7 @@ def get_settings() -> Settings:
         ollama_fast_chat_model=os.getenv("OLLAMA_FAST_CHAT_MODEL", ollama_chat_model),
         ollama_timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "30")),
         database_url=database_url,
-        internal_openai_api_key=os.getenv("INTERNAL_OPENAI_API_KEY", "change-me"),
+        internal_openai_api_key=_normalize_required_secret(
+            os.getenv("INTERNAL_OPENAI_API_KEY", "change-me")
+        ),
     )

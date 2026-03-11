@@ -42,3 +42,14 @@ def test_auth_configuration_error_returns_503(client, monkeypatch) -> None:
     assert response.status_code == 503
     assert response.json()["error"]["type"] == "internal_error"
     assert response.json()["error"]["code"] == "auth_not_configured"
+
+
+def test_placeholder_auth_configuration_returns_503(client, monkeypatch) -> None:
+    monkeypatch.setenv("INTERNAL_OPENAI_API_KEY", "change-me")
+    get_settings.cache_clear()
+
+    response = client.get("/v1/models", headers={"Authorization": "Bearer change-me"})
+
+    assert response.status_code == 503
+    assert response.json()["error"]["type"] == "internal_error"
+    assert response.json()["error"]["code"] == "auth_not_configured"

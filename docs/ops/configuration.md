@@ -183,6 +183,7 @@ Notes:
 - it is enforced on all `/v1/*` routes in `agent-api`
 - it is not required for `GET /healthz` or `GET /readyz`
 - it must match the bearer token configured in trusted internal clients such as `Open WebUI`
+- placeholder values such as `change-me` are treated as not configured and keep `/v1/*` unavailable
 
 ### `WEBUI_SECRET_KEY`
 

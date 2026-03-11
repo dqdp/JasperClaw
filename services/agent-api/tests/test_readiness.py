@@ -127,3 +127,18 @@ def test_readiness_service_reports_missing_internal_api_key_as_not_ready() -> No
 
     assert result.status == "not_ready"
     assert result.checks == {"config": "fail", "postgres": "ok", "ollama": "ok"}
+
+
+def test_readiness_service_reports_placeholder_internal_api_key_as_not_ready() -> None:
+    ollama = _FakeOllamaClient()
+    migrations = _FakeMigrationRunner()
+    service = ReadinessService(
+        settings=_settings(internal_openai_api_key="change-me"),
+        ollama_client=ollama,
+        migration_runner=migrations,
+    )
+
+    result = service.check()
+
+    assert result.status == "not_ready"
+    assert result.checks == {"config": "fail", "postgres": "ok", "ollama": "ok"}

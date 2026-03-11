@@ -39,6 +39,7 @@ Rules:
 - all `/v1/*` routes require `Authorization: Bearer <INTERNAL_OPENAI_API_KEY>`
 - `GET /healthz` and `GET /readyz` remain unauthenticated
 - this credential identifies a trusted client such as `Open WebUI`, not an end user
+- placeholder credentials such as `change-me` are treated as not configured
 - missing or invalid bearer tokens must fail before downstream runtime or storage calls
 - the shared bearer credential is a deployment secret and must never be exposed publicly
 

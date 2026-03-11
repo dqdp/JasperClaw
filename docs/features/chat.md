@@ -82,6 +82,7 @@ At ingress, `agent-api` must:
 Current v1 baseline:
 
 - all `/v1/*` text requests require the shared internal bearer credential
+- placeholder bearer values such as `change-me` are treated as not configured
 - `healthz` and `readyz` are intentionally left unauthenticated because they are operational probes, not user traffic
 
 If validation fails, return a stable machine-readable error without invoking downstream dependencies.

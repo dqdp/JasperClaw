@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from app.clients.ollama import OllamaChatClient
-from app.core.config import Settings
+from app.core.config import Settings, is_configured_required_secret
 from app.core.errors import APIError
 from app.core.logging import log_event
 from app.migrations import MigrationRunner
@@ -44,9 +44,14 @@ class ReadinessService:
             self._settings.ollama_chat_model,
             self._settings.ollama_fast_chat_model,
             self._settings.database_url,
-            self._settings.internal_openai_api_key,
         )
-        return "ok" if all(value.strip() for value in required) else "fail"
+        if not all(value.strip() for value in required):
+            return "fail"
+        return (
+            "ok"
+            if is_configured_required_secret(self._settings.internal_openai_api_key)
+            else "fail"
+        )
 
     def _check_postgres(self) -> str:
         try:

@@ -1,6 +1,6 @@
 from fastapi import Request
 
-from app.core.config import Settings
+from app.core.config import Settings, is_configured_required_secret
 from app.core.errors import APIError
 
 
@@ -8,7 +8,7 @@ def enforce_internal_openai_auth(request: Request, settings: Settings) -> None:
     if not request.url.path.startswith("/v1/"):
         return
 
-    if not settings.internal_openai_api_key:
+    if not is_configured_required_secret(settings.internal_openai_api_key):
         raise APIError(
             status_code=503,
             error_type="internal_error",
