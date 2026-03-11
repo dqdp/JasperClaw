@@ -1,0 +1,14 @@
+[project]
+name = "agent-api"
+version = "0.1.0"
+description = "Canonical assistant control plane"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116.0",
+  "uvicorn[standard]>=0.35.0",
+  "httpx>=0.28.0",
+  "pydantic>=2.11.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

@@ -1,0 +1,24 @@
+name: deploy-prod
+
+on:
+  workflow_run:
+    workflows: [images]
+    types: [completed]
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            cd /opt/local-assistant
+            export APP_VERSION=${{ github.event.workflow_run.head_sha }}
+            echo ${{ secrets.GHCR_PULL_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            bash infra/scripts/deploy.sh

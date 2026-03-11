@@ -1,0 +1,146 @@
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      open-webui:
+        condition: service_started
+    networks:
+      - frontend
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.8.6
+    restart: unless-stopped
+    environment:
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY}
+      ENABLE_PERSISTENT_CONFIG: "False"
+      ENABLE_OLLAMA_API: "False"
+      ENABLE_OPENAI_API: "True"
+      OPENAI_API_BASE_URL: http://agent-api:8080/v1
+      OPENAI_API_KEY: ${INTERNAL_OPENAI_API_KEY}
+      AUDIO_STT_ENGINE: openai
+      AUDIO_STT_MODEL: whisper-1
+      AUDIO_STT_OPENAI_API_BASE_URL: http://agent-api:8080/v1
+      AUDIO_STT_OPENAI_API_KEY: ${INTERNAL_OPENAI_API_KEY}
+      AUDIO_TTS_ENGINE: openai
+      AUDIO_TTS_MODEL: tts-1
+      AUDIO_TTS_VOICE: alloy
+      AUDIO_TTS_OPENAI_API_BASE_URL: http://agent-api:8080/v1
+      AUDIO_TTS_OPENAI_API_KEY: ${INTERNAL_OPENAI_API_KEY}
+      TASK_MODEL_EXTERNAL: assistant-fast
+    volumes:
+      - open_webui_data:/app/backend/data
+    depends_on:
+      agent-api:
+        condition: service_healthy
+    networks:
+      - frontend
+      - control
+
+  agent-api:
+    build:
+      context: ../../services/agent-api
+    image: ghcr.io/${GHCR_OWNER}/local-assistant-agent:${APP_VERSION}
+    restart: unless-stopped
+    env_file:
+      - ../env/app.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      stt-service:
+        condition: service_started
+      tts-service:
+        condition: service_started
+      tools-gateway:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - control
+      - runtime
+
+  ollama:
+    image: ollama/ollama:0.12.4
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - runtime
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: assistant
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistant -d assistant"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - runtime
+
+  stt-service:
+    build:
+      context: ../../services/stt-service
+    image: ghcr.io/${GHCR_OWNER}/local-assistant-stt:${APP_VERSION}
+    restart: unless-stopped
+    env_file:
+      - ../env/app.env
+    networks:
+      - runtime
+
+  tts-service:
+    build:
+      context: ../../services/tts-service
+    image: ghcr.io/${GHCR_OWNER}/local-assistant-tts:${APP_VERSION}
+    restart: unless-stopped
+    env_file:
+      - ../env/app.env
+    networks:
+      - runtime
+
+  tools-gateway:
+    build:
+      context: ../../services/tools-gateway
+    image: ghcr.io/${GHCR_OWNER}/local-assistant-tools:${APP_VERSION}
+    restart: unless-stopped
+    env_file:
+      - ../env/app.env
+    networks:
+      - runtime
+
+volumes:
+  open_webui_data:
+  ollama_data:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  frontend:
+  control:
+  runtime:

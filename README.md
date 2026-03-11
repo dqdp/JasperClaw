@@ -150,3 +150,16 @@ When making trade-offs, prefer:
 - typed internal APIs over UI-driven hidden behavior
 - pinned image versions over floating tags in production
 - reproducibility and rollback over ad hoc convenience
+
+## Starter scaffold included
+
+This repository skeleton also includes:
+
+- `infra/compose/compose.yml`
+- `infra/env/*.example.env`
+- `infra/caddy/Caddyfile`
+- `.github/workflows/*`
+- `services/agent-api` minimal FastAPI skeleton
+- placeholder `stt-service`, `tts-service`, `tools-gateway`
+
+These files are intended as a bootstrap point for an implementation agent, not as a finished production deployment.

@@ -1,0 +1,12 @@
+services:
+  open-webui:
+    restart: unless-stopped
+
+  agent-api:
+    restart: unless-stopped
+
+  ollama:
+    restart: unless-stopped
+
+  postgres:
+    restart: unless-stopped
