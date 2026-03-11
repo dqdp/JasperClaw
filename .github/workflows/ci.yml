@@ -61,3 +61,4 @@ jobs:
       - run: mkdir -p infra/env
       - run: cp infra/env/app.example.env infra/env/app.env
       - run: docker compose --env-file .env -f infra/compose/compose.yml config >/tmp/compose.out
+      - run: 'rg -n "INTERNAL_OPENAI_API_KEY: change-me" /tmp/compose.out'

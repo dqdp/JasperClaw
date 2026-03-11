@@ -52,6 +52,7 @@ services:
     env_file:
       - ../env/app.env
     environment:
+      INTERNAL_OPENAI_API_KEY: ${INTERNAL_OPENAI_API_KEY}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     depends_on:
       postgres:
