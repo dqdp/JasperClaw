@@ -27,7 +27,6 @@ Deliver a self-hosted assistant where all user-facing AI traffic flows through `
 - service stubs exist
 - `agent-api` exposes placeholder OpenAI-compatible endpoints
 - STT/TTS placeholders exist for the future voice path
-- a legacy `services/tools-gateway/` placeholder directory still exists, but it is no longer part of the active v1 runtime topology
 
 ## Architecture review outcomes already accepted
 

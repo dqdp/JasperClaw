@@ -97,7 +97,7 @@ Implement minimal internal HTTP contracts for:
 - placeholder structure for Spotify adapters
 - capability metadata and policy hooks for risk class, approval, and audit
 
-Do not implement this as a standalone `tools-gateway` service in v1.
+Do not implement this as a standalone tools service in v1.
 
 ## Infrastructure expectations
 

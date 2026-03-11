@@ -22,6 +22,30 @@ What is missing is one clear architectural decision describing how linting and t
 
 Use a **layered testing model with explicit lint gates** in v1.
 
+Use **short-form TDD** for new vertical slices and risky runtime-facing changes.
+
+## Development workflow rule
+
+For any new runtime-facing slice that changes system behavior materially, define the tests before or alongside the implementation work rather than after the fact.
+
+In v1, this does not mean writing long formal TDD specifications for every task.
+
+It means:
+
+- start with a short TDD plan for the slice
+- define the behavior to prove before implementation is considered complete
+- define the expected failure cases before implementation is considered complete
+- use the layered test model to decide which checks belong in unit, integration, and smoke levels
+
+This short-form TDD rule is especially expected for:
+
+- the first real vertical slice of a feature
+- risky integration changes
+- changes that introduce new failure semantics
+- changes that affect the canonical request path
+
+Low-risk refactors or narrow internal edits do not require separate TDD documents if their test impact is already obvious and local.
+
 ## Quality layers
 
 ### 1. Lint gate

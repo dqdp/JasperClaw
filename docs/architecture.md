@@ -164,7 +164,7 @@ v1 implementation rule:
 
 - keep this boundary in-process inside `agent-api`
 - treat it as an internal execution boundary, not a standalone service topology in v1
-- extract a standalone `tools-gateway` later only if a real operational need appears
+- extract a standalone tools service later only if a real operational need appears
 
 Expected initial tool surface:
 

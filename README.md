@@ -100,13 +100,10 @@ local-assistant/
 ├─ services/
 │  ├─ agent-api/
 │  ├─ stt-service/
-│  ├─ tts-service/
-│  └─ tools-gateway/
+│  └─ tts-service/
 └─ .github/
    └─ workflows/
 ```
-
-`services/tools-gateway/` currently exists as a placeholder scaffold. The accepted v1 design keeps the tools boundary in-process inside `agent-api` unless a later extraction is justified.
 
 ## Documentation map
 
@@ -132,6 +129,7 @@ local-assistant/
 - [`docs/adr/0013-layered-testing-and-linting-gates.md`](docs/adr/0013-layered-testing-and-linting-gates.md) — use layered testing and explicit lint gates for v1 quality control
 - [`docs/service-contracts/agent-api.md`](docs/service-contracts/agent-api.md) — public contract for the canonical backend ingress
 - [`docs/service-contracts/tools.md`](docs/service-contracts/tools.md) — internal typed contract for the v1 tools integration layer
+- [`docs/testing/short-tdd-plan-template.md`](docs/testing/short-tdd-plan-template.md) — compact TDD plan template with a Control Plane MVP example slice
 - [`docs/ops/agent-action-policy.md`](docs/ops/agent-action-policy.md) — risk classes, approvals, sandbox profiles, and audit rules for agent actions
 - [`docs/ops/configuration.md`](docs/ops/configuration.md) — canonical env-var and config ownership reference
 - [`docs/ops/observability.md`](docs/ops/observability.md) — minimum request tracing, health, and readiness semantics
@@ -186,6 +184,6 @@ This repository skeleton also includes:
 - `infra/caddy/Caddyfile`
 - `.github/workflows/*`
 - `services/agent-api` minimal FastAPI skeleton
-- placeholder `stt-service`, `tts-service`, `tools-gateway`
+- placeholder `stt-service`, `tts-service`
 
 These files are intended as a bootstrap point for an implementation agent, not as a finished production deployment. Some placeholder scaffolds remain broader than the accepted v1 architecture so implementation should follow the ADR set, not placeholder service count alone.
