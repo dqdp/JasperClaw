@@ -20,8 +20,6 @@ jobs:
   smoke-model:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      COMPOSE_PROJECT_NAME: ci-smoke
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,18 +27,16 @@ jobs:
           python-version: '3.12'
       - run: cp infra/env/app.ci-smoke.example.env infra/env/app.env
       - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml build agent-api
-      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d postgres
-      - name: Start CPU Ollama for smoke
-        run: docker run -d --name ci-smoke-ollama --network ci-smoke_runtime --network-alias ollama ollama/ollama:0.12.4
-      - name: Wait for postgres and CPU Ollama
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d postgres ollama
+      - name: Wait for postgres and Ollama
         run: |
           until docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml exec -T postgres pg_isready -U assistant -d assistant; do
             sleep 2
           done
-          until docker exec ci-smoke-ollama ollama list >/dev/null 2>&1; do
+          until docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml exec -T ollama ollama list >/dev/null 2>&1; do
             sleep 2
           done
-      - run: docker exec ci-smoke-ollama ollama pull qwen2.5:0.5b
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml exec -T ollama ollama pull qwen2.5:0.5b
       - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml run --rm --no-deps agent-api python -m app.cli migrate
       - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d --no-deps agent-api
       - name: Run lightweight runtime smoke
@@ -52,11 +48,7 @@ jobs:
       - name: Dump smoke logs on failure
         if: failure()
         run: |
-          docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml logs --no-color postgres agent-api
-          docker logs ci-smoke-ollama || true
-      - name: Remove CPU Ollama
-        if: always()
-        run: docker rm -f ci-smoke-ollama || true
+          docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml logs --no-color postgres ollama agent-api
       - name: Tear down smoke stack
         if: always()
         run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml down -v

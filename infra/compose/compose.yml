@@ -78,13 +78,6 @@ services:
       - ollama_data:/root/.ollama
     networks:
       - runtime
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
 
   postgres:
     image: pgvector/pgvector:pg17
