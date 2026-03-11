@@ -6,8 +6,8 @@ Self-hosted home/work assistant built around a single control plane:
 - **agent-api** as the canonical AI/backend entrypoint
 - **Ollama** as the internal inference runtime
 - **Postgres + pgvector** as canonical assistant state
-- **STT/TTS services** as internal speech executors
-- **tools-gateway** as typed adapters to external systems
+- **STT/TTS services** as deferred internal speech executors after the text path is stable
+- **typed tools integration** inside `agent-api` in v1, with a clean extraction path if a standalone gateway becomes justified later
 - **Caddy** as HTTPS reverse proxy and single external ingress
 
 ## Why this architecture
@@ -43,7 +43,7 @@ The first version is intentionally conservative:
 - Postgres + pgvector
 - stt-service
 - tts-service
-- tools-gateway
+- typed tools integration layer
 - Caddy
 - Docker Compose runtime
 - GitHub Actions CI/CD
@@ -106,12 +106,24 @@ local-assistant/
    └─ workflows/
 ```
 
+`services/tools-gateway/` currently exists as a placeholder scaffold. The accepted v1 design keeps the tools boundary in-process inside `agent-api` unless a later extraction is justified.
+
 ## Documentation map
 
 - [`docs/architecture.md`](docs/architecture.md) — target architecture v1
+- [`docs/roadmap.md`](docs/roadmap.md) — implementation milestones and delivery order
+- [`docs/backlog.md`](docs/backlog.md) — epics and task breakdown for execution tracking
 - [`docs/adr/0001-monorepo.md`](docs/adr/0001-monorepo.md) — monorepo decision
 - [`docs/adr/0002-agent-api-control-plane.md`](docs/adr/0002-agent-api-control-plane.md) — canonical control plane decision
 - [`docs/adr/0003-deploy-via-ssh.md`](docs/adr/0003-deploy-via-ssh.md) — deploy strategy decision
+- [`docs/adr/0004-open-webui-non-canonical-ux-projection.md`](docs/adr/0004-open-webui-non-canonical-ux-projection.md) — make Open WebUI a non-canonical UX projection
+- [`docs/adr/0005-canonical-assistant-state-model.md`](docs/adr/0005-canonical-assistant-state-model.md) — separate transcript, execution audit, and derived memory state
+- [`docs/adr/0006-agent-api-single-public-surface-layered-internals.md`](docs/adr/0006-agent-api-single-public-surface-layered-internals.md) — one public `agent-api` surface with layered internals
+- [`docs/adr/0007-tools-boundary-in-process-in-v1.md`](docs/adr/0007-tools-boundary-in-process-in-v1.md) — keep tools in-process in v1
+- [`docs/adr/0008-profile-routing-without-automatic-fallback.md`](docs/adr/0008-profile-routing-without-automatic-fallback.md) — profile routing without hidden fallback
+- [`docs/adr/0009-auth-and-secret-boundaries-for-v1.md`](docs/adr/0009-auth-and-secret-boundaries-for-v1.md) — narrow auth and secret boundary for v1
+- [`docs/adr/0010-voice-after-text-path-stability.md`](docs/adr/0010-voice-after-text-path-stability.md) — deliver voice after the text path is stable
+- [`docs/service-contracts/agent-api.md`](docs/service-contracts/agent-api.md) — public contract for the canonical backend ingress
 - [`docs/runbooks/bootstrap-ubuntu-24.04.md`](docs/runbooks/bootstrap-ubuntu-24.04.md) — host bootstrap runbook
 - [`docs/runbooks/deploy.md`](docs/runbooks/deploy.md) — deployment runbook
 - [`docs/runbooks/rollback.md`](docs/runbooks/rollback.md) — rollback runbook
@@ -123,11 +135,12 @@ local-assistant/
 1. Bring up `ollama` + `open-webui`
 2. Insert `agent-api` as the only OpenAI-compatible backend
 3. Add `postgres + pgvector`
-4. Add `stt-service` and `tts-service`
-5. Add `tools-gateway`
-6. Add Caddy and HTTPS
-7. Add CI
-8. Add CD
+4. Add typed tools integration inside `agent-api`
+5. Stabilize the text path and persistence model
+6. Add `stt-service` and `tts-service` after the text path is stable
+7. Add Caddy and HTTPS
+8. Add CI
+9. Add CD
 
 ## Operating model
 
@@ -162,4 +175,4 @@ This repository skeleton also includes:
 - `services/agent-api` minimal FastAPI skeleton
 - placeholder `stt-service`, `tts-service`, `tools-gateway`
 
-These files are intended as a bootstrap point for an implementation agent, not as a finished production deployment.
+These files are intended as a bootstrap point for an implementation agent, not as a finished production deployment. Some placeholder scaffolds remain broader than the accepted v1 architecture so implementation should follow the ADR set, not placeholder service count alone.

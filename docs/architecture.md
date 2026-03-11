@@ -4,6 +4,8 @@
 
 Proposed target architecture for repository bootstrap.
 
+The accepted v1 implementation details are further refined by ADR 0004 through ADR 0010.
+
 ## Executive summary
 
 The project uses the following principle:
@@ -40,7 +42,7 @@ User
   -> Caddy
   -> Open WebUI
   -> agent-api
-  -> Ollama / tools-gateway / stt-service / tts-service / Postgres
+  -> Ollama / in-process tools adapters / stt-service / tts-service / Postgres
 ```
 
 This path must remain true for:
@@ -140,13 +142,18 @@ Responsibility:
 
 - text-to-speech via a thin HTTP wrapper over Piper
 
-### 8. tools-gateway
+### 8. tools integration boundary
 
 Responsibility:
 
 - first-party typed adapters to external systems
 - stable internal contracts for tools
 - auth/token boundary for integrations
+
+v1 implementation rule:
+
+- keep this boundary in-process inside `agent-api`
+- extract a standalone `tools-gateway` later only if a real operational need appears
 
 Expected initial tool surface:
 
@@ -210,7 +217,6 @@ Contains:
 - postgres
 - stt-service
 - tts-service
-- tools-gateway
 
 Purpose:
 
@@ -247,7 +253,6 @@ This includes:
 - Postgres
 - stt-service
 - tts-service
-- tools-gateway
 
 ## API surface design
 
@@ -296,30 +301,32 @@ Simple HTTP endpoint:
 
 - `POST /speak`
 
-### `agent-api -> tools-gateway`
+### `agent-api -> tools integration layer`
 
-Typed HTTP endpoints such as:
+In v1, tool adapters remain in-process behind typed internal interfaces such as:
 
-- `POST /tools/web-search`
-- `POST /tools/spotify/search`
-- `POST /tools/spotify/play`
-- `POST /tools/spotify/pause`
-- `POST /tools/spotify/next`
+- `web-search`
+- `spotify-search`
+- `spotify-play`
+- `spotify-pause`
+- `spotify-next`
 
-For v1, use ordinary internal HTTP/OpenAPI contracts rather than MCP as the primary internal protocol.
+If this layer is extracted later, the typed internal contract should remain stable.
 
 ## State ownership
 
 ### Open WebUI owns
 
 - UI accounts and authentication
-- UI chat history
+- UI chat and session presentation state
 - UI-level preferences
 - interface state
 
 ### `agent-api` owns
 
+- canonical conversations and messages
 - canonical assistant memory
+- model run audit
 - preferences relevant to assistant behavior
 - tool credential references
 - tool audit log
@@ -336,10 +343,12 @@ Minimum schema domains:
 - `principals`
 - `conversations`
 - `messages`
+- `model_runs`
+- `tool_executions`
 - `memory_items`
-- `memory_embeddings`
+- `retrieval_runs`
+- `retrieval_hits`
 - `tool_credentials`
-- `tool_audit_log`
 - `document_sources`
 - `document_chunks`
 
@@ -347,13 +356,13 @@ Minimum schema domains:
 
 ### Core rule
 
-Secrets and privileged integrations must live behind `agent-api` and/or `tools-gateway`, not in Open WebUI configuration as the canonical policy point.
+Secrets and privileged integrations must live behind `agent-api` and its internal integration boundaries, not in Open WebUI configuration as the canonical policy point.
 
 ### Additional rules
 
 - no public exposure of Ollama
 - no public exposure of Postgres
-- no public exposure of tools-gateway
+- no public exposure of private tool adapters or any future extracted tool service
 - no direct production tool execution from Open WebUI assistant models
 - treat terminal access as an operator-only concern, not general assistant capability
 
@@ -386,7 +395,7 @@ Rollback should primarily mean restoring the previously known-good image tag and
 
 These may be added later, but are intentionally deferred:
 
-- MCP façade over tools-gateway
+- MCP façade over the typed tools integration boundary
 - richer memory management policies
 - per-user isolated assistant principals
 - job scheduler / reminders
