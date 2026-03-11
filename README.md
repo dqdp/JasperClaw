@@ -129,6 +129,7 @@ local-assistant/
 - [`docs/adr/0010-voice-after-text-path-stability.md`](docs/adr/0010-voice-after-text-path-stability.md) — deliver voice after the text path is stable
 - [`docs/adr/0011-readiness-observability-and-error-semantics.md`](docs/adr/0011-readiness-observability-and-error-semantics.md) — define operational probes, request tracing, and stable error behavior
 - [`docs/adr/0012-capability-gated-agent-actions.md`](docs/adr/0012-capability-gated-agent-actions.md) — keep agent actions capability-gated, least-privilege, and audit-first
+- [`docs/adr/0013-layered-testing-and-linting-gates.md`](docs/adr/0013-layered-testing-and-linting-gates.md) — use layered testing and explicit lint gates for v1 quality control
 - [`docs/service-contracts/agent-api.md`](docs/service-contracts/agent-api.md) — public contract for the canonical backend ingress
 - [`docs/service-contracts/tools.md`](docs/service-contracts/tools.md) — internal typed contract for the v1 tools integration layer
 - [`docs/ops/agent-action-policy.md`](docs/ops/agent-action-policy.md) — risk classes, approvals, sandbox profiles, and audit rules for agent actions
@@ -174,6 +175,7 @@ When making trade-offs, prefer:
 - typed internal APIs over UI-driven hidden behavior
 - pinned image versions over floating tags in production
 - reproducibility and rollback over ad hoc convenience
+- layered verification over single-step “it works on my machine” checks
 
 ## Starter scaffold included
 

@@ -4,7 +4,7 @@
 
 This roadmap tracks the transition from repository skeleton to a usable self-hosted assistant platform.
 
-Accepted architecture refinements are captured in ADR 0004 through ADR 0012.
+Accepted architecture refinements are captured in ADR 0004 through ADR 0013.
 
 ## Product goal
 
@@ -39,6 +39,7 @@ Deliver a self-hosted assistant where all user-facing AI traffic flows through `
 - auth is explicit at the `Open WebUI -> agent-api` ingress and network-private inside the runtime boundary
 - readiness is defined around the core text path, with structured request tracing and stable client-visible error types
 - agent actions are capability-gated, least-privilege, and audit-first
+- linting and verification follow layered quality gates rather than ad hoc local checks
 
 ## Milestone 1: Control Plane MVP
 

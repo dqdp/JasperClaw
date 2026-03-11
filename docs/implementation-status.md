@@ -40,7 +40,7 @@ Implemented:
 
 Implemented:
 
-- accepted ADR set through `ADR 0012`
+- accepted ADR set through `ADR 0013`
 - roadmap and backlog
 - canonical `agent-api` service contract
 - canonical tools integration contract

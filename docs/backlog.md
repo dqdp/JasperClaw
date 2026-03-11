@@ -4,7 +4,7 @@
 
 This backlog translates the roadmap into epics and tasks that can be tracked in a project tool such as Linear.
 
-This version of the backlog reflects the architecture decisions accepted in ADR 0004 through ADR 0012.
+This version of the backlog reflects the architecture decisions accepted in ADR 0004 through ADR 0013.
 
 ## EPIC 1: Control Plane MVP
 
@@ -114,6 +114,7 @@ The platform becomes repeatable to deploy, observe, and roll back.
 - OPS-6: Define backup and restore procedure for `Postgres`
 - OPS-7: Validate rollback procedure against deployed image versions
 - OPS-8: Pin production runtime versions and document upgrade policy
+- OPS-9: Enforce layered lint, test, and smoke gates across local, CI, and deployment flow
 
 ### Exit criteria
 

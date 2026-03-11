@@ -4,7 +4,7 @@
 
 Proposed target architecture for repository bootstrap.
 
-The accepted v1 implementation details are further refined by ADR 0004 through ADR 0012.
+The accepted v1 implementation details are further refined by ADR 0004 through ADR 0013.
 
 ## Executive summary
 
@@ -382,6 +382,12 @@ Production must prefer pinned image tags over floating tags.
 - push images to GHCR
 - deploy to host over SSH
 - use manual approval on production environment
+
+### Testing and linting
+
+- use explicit lint gates in CI
+- use layered verification across unit, integration, and smoke levels
+- treat Linux + NVIDIA as the canonical runtime validation environment for model-backed behavior
 
 ### Rollback
 
