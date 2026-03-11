@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from threading import Lock
 from typing import Protocol
 from uuid import uuid4
 
 import psycopg
 
 from app.core.errors import APIError
+from app.migrations import MigrationRunner
 from app.schemas.chat import ChatCompletionUsage, ChatMessage
 
 
@@ -47,10 +47,9 @@ class ChatRepository(Protocol):
 
 
 class PostgresChatRepository:
-    def __init__(self, database_url: str) -> None:
+    def __init__(self, database_url: str, migration_runner: MigrationRunner) -> None:
         self._database_url = database_url
-        self._schema_ready = False
-        self._schema_lock = Lock()
+        self._migration_runner = migration_runner
 
     def record_successful_completion(
         self,
@@ -172,9 +171,9 @@ class PostgresChatRepository:
 
     def _execute_write(self, operation) -> None:
         try:
+            self._migration_runner.ensure_current()
             with psycopg.connect(self._database_url) as conn:
                 with conn.transaction():
-                    self._ensure_schema(conn)
                     operation(conn)
         except psycopg.Error as exc:
             raise APIError(
@@ -183,74 +182,6 @@ class PostgresChatRepository:
                 code="storage_unavailable",
                 message="Persistent storage unavailable",
             ) from exc
-
-    def _ensure_schema(self, conn: psycopg.Connection) -> None:
-        if self._schema_ready:
-            return
-
-        with self._schema_lock:
-            if self._schema_ready:
-                return
-
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS conversations (
-                        id TEXT PRIMARY KEY,
-                        public_profile TEXT NOT NULL,
-                        created_at TIMESTAMPTZ NOT NULL
-                    )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS messages (
-                        id TEXT PRIMARY KEY,
-                        conversation_id TEXT NOT NULL REFERENCES conversations(id)
-                            ON DELETE CASCADE,
-                        message_index INTEGER NOT NULL,
-                        role TEXT NOT NULL,
-                        content TEXT NOT NULL,
-                        source TEXT NOT NULL,
-                        created_at TIMESTAMPTZ NOT NULL
-                    )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS model_runs (
-                        id TEXT PRIMARY KEY,
-                        conversation_id TEXT NOT NULL REFERENCES conversations(id)
-                            ON DELETE CASCADE,
-                        assistant_message_id TEXT NULL REFERENCES messages(id),
-                        request_id TEXT NOT NULL,
-                        public_profile TEXT NOT NULL,
-                        runtime_model TEXT NOT NULL,
-                        status TEXT NOT NULL,
-                        error_type TEXT NULL,
-                        error_code TEXT NULL,
-                        error_message TEXT NULL,
-                        prompt_tokens INTEGER NULL,
-                        completion_tokens INTEGER NULL,
-                        total_tokens INTEGER NULL,
-                        started_at TIMESTAMPTZ NOT NULL,
-                        completed_at TIMESTAMPTZ NOT NULL
-                    )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_messages_conversation_id
-                    ON messages (conversation_id, message_index)
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE INDEX IF NOT EXISTS idx_model_runs_request_id
-                    ON model_runs (request_id)
-                    """
-                )
-            self._schema_ready = True
 
     def _insert_conversation(
         self,

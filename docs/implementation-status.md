@@ -61,7 +61,9 @@ Implemented:
 - real `Ollama` chat runtime call for text requests
 - stable error envelopes for request validation and runtime/storage failures
 - request ID attachment via `X-Request-ID`
+- structured request logging for request lifecycle, readiness, runtime, and storage outcomes
 - minimal request-scoped persistence for `conversations`, `messages`, and `model_runs`
+- forward-only in-process SQL migration runner for the current canonical text-path schema
 - stubbed `POST /v1/audio/transcriptions`
 - stubbed `POST /v1/audio/speech`
 
@@ -71,9 +73,8 @@ Not yet implemented:
 - true token streaming from `Ollama`
 - retrieval-aware or memory-backed prompt assembly
 - tool execution
-- real readiness logic
-- structured request tracing beyond request ID propagation
-- full migration-based persistence lifecycle
+- external migration command/workflow separated from application startup and request path
+- structured tracing beyond request ID and JSON event logs
 - memory retrieval
 - production-hardened runtime and storage observability
 

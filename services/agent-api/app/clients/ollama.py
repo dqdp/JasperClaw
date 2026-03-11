@@ -103,3 +103,63 @@ class OllamaChatClient:
             else None,
             total_tokens=total_tokens,
         )
+
+    def check_ready(self, models: tuple[str, ...]) -> None:
+        try:
+            with httpx.Client(timeout=self._timeout_seconds) as client:
+                response = client.get(f"{self._base_url}/api/tags")
+        except httpx.TimeoutException as exc:
+            raise APIError(
+                status_code=504,
+                error_type="dependency_unavailable",
+                code="dependency_timeout",
+                message="Model runtime timed out",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise APIError(
+                status_code=503,
+                error_type="dependency_unavailable",
+                code="runtime_unavailable",
+                message="Model runtime unavailable",
+            ) from exc
+
+        if response.status_code != 200:
+            raise APIError(
+                status_code=503,
+                error_type="dependency_unavailable",
+                code="runtime_unavailable",
+                message="Model runtime unavailable",
+            )
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Model runtime returned invalid JSON",
+            ) from exc
+
+        model_entries = data.get("models")
+        if not isinstance(model_entries, list):
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Model runtime returned an unexpected payload",
+            )
+
+        available_models = {
+            entry.get("name")
+            for entry in model_entries
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+        }
+        expected_models = {model for model in models if model}
+        if not expected_models.issubset(available_models):
+            raise APIError(
+                status_code=503,
+                error_type="dependency_unavailable",
+                code="runtime_model_unavailable",
+                message="Model runtime missing required model",
+            )

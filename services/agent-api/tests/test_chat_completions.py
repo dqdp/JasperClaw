@@ -2,6 +2,7 @@ import httpx
 
 from app.api import deps
 from app.core.errors import APIError
+from app.repositories.postgres import ChatPersistenceResult
 
 
 class _FakeResponse:
@@ -61,21 +62,21 @@ class _FakeRepository:
         self.success_calls.append(kwargs)
         if self.error is not None:
             raise self.error
-        return {
-            "conversation_id": "conv_test",
-            "assistant_message_id": "msg_test",
-            "model_run_id": "run_test",
-        }
+        return ChatPersistenceResult(
+            conversation_id="conv_test",
+            assistant_message_id="msg_test",
+            model_run_id="run_test",
+        )
 
     def record_failed_completion(self, **kwargs):
         self.failed_calls.append(kwargs)
         if self.error is not None:
             raise self.error
-        return {
-            "conversation_id": "conv_test",
-            "assistant_message_id": None,
-            "model_run_id": "run_test",
-        }
+        return ChatPersistenceResult(
+            conversation_id="conv_test",
+            assistant_message_id=None,
+            model_run_id="run_test",
+        )
 
 
 def _chat_payload(stream: bool = False) -> dict:

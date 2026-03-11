@@ -239,6 +239,34 @@ Notes:
 - public profile IDs remain `assistant-v1` and `assistant-fast`
 - this value is an internal runtime target, not a public contract
 
+### `OLLAMA_FAST_CHAT_MODEL`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- explicit runtime target for the lower-latency public profile mapping
+
+Notes:
+
+- defaults to `OLLAMA_CHAT_MODEL` if unset
+
+### `OLLAMA_TIMEOUT_SECONDS`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- timeout budget for runtime readiness checks and chat calls
+
 ### `OLLAMA_EMBED_MODEL`
 
 Required: no until retrieval is enabled
@@ -314,6 +342,18 @@ Used by:
 Purpose:
 
 - database user for canonical assistant storage
+
+### `LOG_LEVEL`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- minimum emitted severity for structured JSON logs
 
 ### `SEARCH_API_KEY`
 

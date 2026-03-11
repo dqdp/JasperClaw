@@ -20,11 +20,13 @@ def reset_env(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
     deps.get_ollama_client.cache_clear()
     deps.get_chat_repository.cache_clear()
+    deps.get_migration_runner.cache_clear()
     yield
     app.dependency_overrides.clear()
     get_settings.cache_clear()
     deps.get_ollama_client.cache_clear()
     deps.get_chat_repository.cache_clear()
+    deps.get_migration_runner.cache_clear()
 
 
 @pytest.fixture
