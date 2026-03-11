@@ -42,7 +42,10 @@ def main() -> int:
     deadline = time.monotonic() + timeout_seconds
 
     while True:
-        status, payload = _request_json(f"{base_url}/readyz")
+        try:
+            status, payload = _request_json(f"{base_url}/readyz")
+        except urllib.error.URLError as exc:
+            status, payload = 0, {"error": str(exc.reason)}
         if status == 200 and payload.get("status") == "ready":
             break
         if time.monotonic() >= deadline:
