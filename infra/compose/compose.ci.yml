@@ -1,0 +1,4 @@
+services:
+  agent-api:
+    ports:
+      - "18080:8080"

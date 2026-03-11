@@ -17,6 +17,41 @@ jobs:
       - run: ruff check services
       - run: PYTHON_BIN=python bash infra/scripts/test-python-services.sh
 
+  smoke-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: cp infra/env/app.ci-smoke.example.env infra/env/app.env
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml build agent-api
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d postgres ollama
+      - name: Wait for postgres and Ollama
+        run: |
+          until docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml exec -T postgres pg_isready -U assistant -d assistant; do
+            sleep 2
+          done
+          until docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml exec -T ollama ollama list >/dev/null 2>&1; do
+            sleep 2
+          done
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml exec -T ollama ollama pull qwen2.5:0.5b
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml run --rm --no-deps agent-api python -m app.cli migrate
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d --no-deps agent-api
+      - name: Run lightweight runtime smoke
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:18080
+          SMOKE_INTERNAL_OPENAI_API_KEY: ci-smoke-key
+          SMOKE_TIMEOUT_SECONDS: "180"
+        run: python infra/scripts/smoke-agent-api.py
+      - name: Dump smoke logs on failure
+        if: failure()
+        run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml logs --no-color postgres ollama agent-api
+      - name: Tear down smoke stack
+        if: always()
+        run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml down -v
+
   validate-compose:
     runs-on: ubuntu-latest
     steps:

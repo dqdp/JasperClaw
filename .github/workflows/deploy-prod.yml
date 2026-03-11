@@ -1,13 +1,19 @@
 name: deploy-prod
 
 on:
-  workflow_run:
-    workflows: [images]
-    types: [completed]
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: Immutable image tag to deploy
+        required: true
+        type: string
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -19,6 +25,6 @@ jobs:
           key: ${{ secrets.PROD_SSH_KEY }}
           script: |
             cd /opt/local-assistant
-            export APP_VERSION=${{ github.event.workflow_run.head_sha }}
+            export APP_VERSION=${{ inputs.app_version }}
             echo ${{ secrets.GHCR_PULL_TOKEN }} | docker login ghcr.io -u ${{ secrets.GHCR_PULL_USER || github.repository_owner }} --password-stdin
             bash infra/scripts/deploy.sh
