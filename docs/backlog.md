@@ -4,7 +4,7 @@
 
 This backlog translates the roadmap into epics and tasks that can be tracked in a project tool such as Linear.
 
-This version of the backlog reflects the architecture decisions accepted in ADR 0004 through ADR 0010.
+This version of the backlog reflects the architecture decisions accepted in ADR 0004 through ADR 0012.
 
 ## EPIC 1: Control Plane MVP
 

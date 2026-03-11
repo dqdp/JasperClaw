@@ -16,6 +16,7 @@ Your job is to create a clean v1 skeleton that preserves the accepted architectu
 5. Ollama remains an internal runtime component.
 6. Internal services are private on Docker networks; only the reverse proxy is public.
 7. In v1, the tools boundary is typed but in-process inside `agent-api`.
+8. Agent actions must remain capability-gated, least-privilege, and audit-first.
 
 ## First repository deliverables
 
@@ -92,6 +93,7 @@ Implement minimal internal HTTP contracts for:
 ### tools integration layer
 - typed in-process adapter boundary for `web-search`
 - placeholder structure for Spotify adapters
+- capability metadata and policy hooks for risk class, approval, and audit
 
 ## Infrastructure expectations
 
@@ -136,6 +138,7 @@ Do not:
 - introduce multi-agent orchestration
 - connect Open WebUI directly to Ollama for convenience
 - make Open Terminal part of the default assistant path
+- introduce arbitrary shell execution as a general assistant capability
 - use Open WebUI Knowledge as canonical memory
 
 ## Quality bar

@@ -40,12 +40,13 @@ Implemented:
 
 Implemented:
 
-- accepted ADR set through `ADR 0011`
+- accepted ADR set through `ADR 0012`
 - roadmap and backlog
 - canonical `agent-api` service contract
+- canonical tools integration contract
 - canonical data model spec
 - canonical text chat flow
-- ops docs for configuration, observability, and error semantics
+- ops docs for configuration, observability, error semantics, and agent action policy
 
 ### `agent-api`
 

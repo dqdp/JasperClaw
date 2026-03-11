@@ -36,6 +36,8 @@ It provides an OpenAI-compatible facade for `Open WebUI` and orchestrates calls 
 - `tts-service` when the voice path is enabled
 - typed tools integration layer inside `agent-api` in v1
 
+Tool execution inside `agent-api` follows the internal contract in `docs/service-contracts/tools.md`.
+
 ## Model exposure
 
 The public API must expose logical assistant profiles, not raw runtime model names.

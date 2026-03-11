@@ -128,7 +128,10 @@ local-assistant/
 - [`docs/adr/0009-auth-and-secret-boundaries-for-v1.md`](docs/adr/0009-auth-and-secret-boundaries-for-v1.md) — narrow auth and secret boundary for v1
 - [`docs/adr/0010-voice-after-text-path-stability.md`](docs/adr/0010-voice-after-text-path-stability.md) — deliver voice after the text path is stable
 - [`docs/adr/0011-readiness-observability-and-error-semantics.md`](docs/adr/0011-readiness-observability-and-error-semantics.md) — define operational probes, request tracing, and stable error behavior
+- [`docs/adr/0012-capability-gated-agent-actions.md`](docs/adr/0012-capability-gated-agent-actions.md) — keep agent actions capability-gated, least-privilege, and audit-first
 - [`docs/service-contracts/agent-api.md`](docs/service-contracts/agent-api.md) — public contract for the canonical backend ingress
+- [`docs/service-contracts/tools.md`](docs/service-contracts/tools.md) — internal typed contract for the v1 tools integration layer
+- [`docs/ops/agent-action-policy.md`](docs/ops/agent-action-policy.md) — risk classes, approvals, sandbox profiles, and audit rules for agent actions
 - [`docs/ops/configuration.md`](docs/ops/configuration.md) — canonical env-var and config ownership reference
 - [`docs/ops/observability.md`](docs/ops/observability.md) — minimum request tracing, health, and readiness semantics
 - [`docs/ops/error-semantics.md`](docs/ops/error-semantics.md) — stable error taxonomy and mapping rules

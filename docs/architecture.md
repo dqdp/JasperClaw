@@ -4,7 +4,7 @@
 
 Proposed target architecture for repository bootstrap.
 
-The accepted v1 implementation details are further refined by ADR 0004 through ADR 0010.
+The accepted v1 implementation details are further refined by ADR 0004 through ADR 0012.
 
 ## Executive summary
 
@@ -24,6 +24,7 @@ Primary goals:
 - one canonical place for memory, tool routing, and policy
 - reproducible local and server runtime
 - safe extension path for tools and integrations
+- strong control over agent-side effects and execution scope
 - operational simplicity for a single host setup
 - clear future path to richer automation and more clients
 
@@ -149,6 +150,7 @@ Responsibility:
 - first-party typed adapters to external systems
 - stable internal contracts for tools
 - auth/token boundary for integrations
+- capability-gated execution with explicit risk and approval metadata
 
 v1 implementation rule:
 
@@ -358,6 +360,8 @@ Minimum schema domains:
 
 Secrets and privileged integrations must live behind `agent-api` and its internal integration boundaries, not in Open WebUI configuration as the canonical policy point.
 
+Agent actions must remain capability-gated, least-privilege, and audit-first rather than relying on implicit model intent or broad execution access.
+
 ### Additional rules
 
 - no public exposure of Ollama
@@ -397,6 +401,7 @@ Rollback should primarily mean restoring the previously known-good image tag and
 3. Production tools are not invoked directly from Open WebUI’s assistant models.
 4. Ollama is an internal runtime, not a public assistant API.
 5. Text and voice share one backend control path.
+6. Agent actions are allowed only through explicit capabilities with bounded scope and audit.
 
 ## Deferred topics
 
