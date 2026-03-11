@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the canonical v1 persistence model for Jasper.
+Define the canonical v1 persistence model for `local-assistant`.
 
 This document turns ADR 0005 into an implementation-oriented schema specification for:
 
@@ -17,6 +17,14 @@ This document covers the data owned by `agent-api` and persisted in `Postgres + 
 It does not make `Open WebUI` state canonical.
 
 It also does not fully specify long-term document ingestion or voice-specific storage beyond the places where those future features touch the core model.
+
+## Canonical state formula
+
+Use this model consistently:
+
+- transcript is the append-oriented source record of interaction
+- execution audit is the source record of system and tool activity
+- derived memory is revisable projection state, not immutable truth
 
 ## Design principles
 

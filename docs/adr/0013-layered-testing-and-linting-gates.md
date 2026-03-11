@@ -95,7 +95,7 @@ CI must run:
 
 GPU-backed model and deployment-realistic validation belongs to the target runtime path, not to every local machine.
 
-For Jasper v1, the canonical runtime validation environment is **Linux with NVIDIA GPU support**.
+For `local-assistant` v1, the canonical runtime validation environment is **Linux with NVIDIA GPU support**.
 
 MacBook or other local developer machines may be used for fast development loops, but they are not the canonical environment for final model-serving validation.
 

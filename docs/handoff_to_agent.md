@@ -17,6 +17,8 @@ Your job is to create a clean v1 skeleton that preserves the accepted architectu
 6. Internal services are private on Docker networks; only the reverse proxy is public.
 7. In v1, the tools boundary is typed but in-process inside `agent-api`.
 8. Agent actions must remain capability-gated, least-privilege, and audit-first.
+9. Do not introduce a standalone tools service in v1 unless an ADR explicitly reopens that decision.
+10. Speech endpoints may exist as contract stubs, but voice is not part of the first real delivery slice.
 
 ## First repository deliverables
 
@@ -95,6 +97,8 @@ Implement minimal internal HTTP contracts for:
 - placeholder structure for Spotify adapters
 - capability metadata and policy hooks for risk class, approval, and audit
 
+Do not implement this as a standalone `tools-gateway` service in v1.
+
 ## Infrastructure expectations
 
 ### Reverse proxy
@@ -114,6 +118,12 @@ Use GHCR for custom images.
 Use GitHub Actions to deploy over SSH with manual approval for production.
 
 ## Implementation priorities
+
+The first real vertical slice is:
+
+- text chat through `Open WebUI -> agent-api -> Ollama`
+- canonical persistence in `Postgres`
+- readiness and failure-stable behavior for the text path
 
 Follow this order:
 
@@ -139,6 +149,7 @@ Do not:
 - connect Open WebUI directly to Ollama for convenience
 - make Open Terminal part of the default assistant path
 - introduce arbitrary shell execution as a general assistant capability
+- interpret the presence of speech endpoints as meaning voice is part of the first delivery slice
 - use Open WebUI Knowledge as canonical memory
 
 ## Quality bar

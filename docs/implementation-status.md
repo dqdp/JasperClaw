@@ -137,8 +137,9 @@ It remains only as leftover scaffold material unless a later extraction is delib
 These are accepted target behaviors, not current runtime facts:
 
 - `agent-api` as the real orchestration layer
-- canonical transcript persistence
-- execution audit in `Postgres`
+- transcript as the source interaction record
+- execution audit in `Postgres` as the source execution record
+- derived memory as revisable projection state
 - profile-based runtime routing
 - in-process tools integration
 - voice after text-path stabilization

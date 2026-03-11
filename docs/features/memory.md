@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the canonical v1 memory model for Jasper and explain how memory fits into the text-serving path without becoming the source of truth.
+Define the canonical v1 memory model for `local-assistant` and explain how memory fits into the text-serving path without becoming the source of truth.
 
 This document builds on:
 
@@ -16,10 +16,10 @@ Memory is **derived**, not canonical.
 
 The canonical source of truth remains:
 
-- transcript state
-- execution audit state
+- transcript as the source interaction record
+- execution audit as the source execution record
 
-Memory exists to improve future responses, not to replace stored conversation history.
+Memory exists as revisable derived state to improve future responses, not to replace stored conversation history.
 
 ## Goals
 

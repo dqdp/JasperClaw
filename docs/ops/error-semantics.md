@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the stable public error behavior for Jasper and the rules for mapping internal failures into client-visible responses.
+Define the stable public error behavior for `local-assistant` and the rules for mapping internal failures into client-visible responses.
 
 ## Core rule
 

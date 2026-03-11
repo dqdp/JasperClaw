@@ -5,6 +5,7 @@
 This document defines the canonical v1 contract for the typed tools integration layer used by `agent-api`.
 
 In v1, this is an **internal contract**, not a public HTTP API.
+It defines an internal execution boundary, not a standalone service topology.
 
 Risk classification, approval requirements, and sandbox expectations for tools are governed by `docs/ops/agent-action-policy.md`.
 
@@ -166,3 +167,5 @@ Minimum audit fields:
 The internal request and response envelopes should remain stable enough that the tools integration layer can later be extracted into a standalone service if a real operational need appears.
 
 That extraction path is a future deployment change, not a v1 contract change.
+
+Do not introduce a standalone tools service in v1 unless an ADR explicitly reopens that decision.

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the canonical v1 configuration surface for Jasper.
+Define the canonical v1 configuration surface for `local-assistant`.
 
 This document specifies:
 

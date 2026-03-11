@@ -6,6 +6,8 @@
 
 It provides an OpenAI-compatible facade for `Open WebUI` and orchestrates calls to internal runtime services.
 
+For v1 delivery sequencing, the first real vertical slice is the text path. Voice endpoints may exist as contract stubs before voice is production-ready.
+
 ## Responsibilities
 
 - expose OpenAI-compatible endpoints
@@ -170,6 +172,11 @@ Behavior:
 - forwards normalized transcription request to `stt-service`
 - returns normalized OpenAI-style response
 
+Implementation note:
+
+- this endpoint may remain a contract stub until the text path is stable enough for voice work to begin
+- its existence does not make voice part of the first delivery slice
+
 ### `POST /v1/audio/speech`
 
 OpenAI-compatible speech synthesis endpoint.
@@ -185,6 +192,11 @@ Behavior:
 - validates requested voice or profile
 - forwards synthesis request to `tts-service`
 - returns audio bytes with correct content type
+
+Implementation note:
+
+- this endpoint may remain a contract stub until the text path is stable enough for voice work to begin
+- its existence does not make voice part of the first delivery slice
 
 ## Error contract
 

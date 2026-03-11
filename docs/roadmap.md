@@ -18,6 +18,7 @@ Deliver a self-hosted assistant where all user-facing AI traffic flows through `
 - canonical state lives in `Postgres + pgvector`
 - tools are accessed only through the typed tools integration boundary owned by `agent-api`
 - text and voice paths converge through `agent-api`
+- no milestone item may bypass the canonical request path
 
 ## Current state
 
@@ -47,6 +48,8 @@ Deliver a self-hosted assistant where all user-facing AI traffic flows through `
 
 Replace the `agent-api` chat stub with a real orchestration path backed by `Ollama` and `Postgres`.
 
+This is the first real vertical slice for v1.
+
 ### Scope
 
 - implement request and response schemas for OpenAI-compatible chat
@@ -63,7 +66,9 @@ Replace the `agent-api` chat stub with a real orchestration path backed by `Olla
 - Open WebUI can chat through `agent-api`
 - responses come from a real model, not a stub
 - chat history and request metadata are persisted
+- the text path is observable and readiness-aware
 - failure cases return explicit, stable API errors
+- the text path is real, persisted, observable, and failure-stable
 
 ## Milestone 2: Memory and Tools
 
@@ -92,7 +97,7 @@ Add durable assistant memory and typed tool execution without bypassing the cont
 
 ### Goal
 
-After the text path is stable, make voice a first-class path using the same orchestration core as text.
+Only after Milestone 1 is stable, make voice a second-order v1 feature using the same orchestration core as text.
 
 ### Scope
 

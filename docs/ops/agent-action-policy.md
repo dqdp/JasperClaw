@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the operational control model for agent actions in Jasper.
+Define the operational control model for agent actions in `local-assistant`.
 
 This document turns ADR 0012 into concrete rules for capability registration, risk classification, approvals, sandboxing, and audit.
 

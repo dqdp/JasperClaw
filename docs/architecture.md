@@ -14,6 +14,14 @@ The project uses the following principle:
 
 `Open WebUI` is treated as a UX shell and not as the assistant’s source of truth.
 
+## v1 implementation priority
+
+Implementation order matters in v1:
+
+1. text path first
+2. persistence, readiness, and failure-stable text behavior second
+3. voice only after the text path is stable
+
 ## Architectural goals
 
 The system should support a home/work assistant that can grow over time without rewriting its core control flow.
@@ -155,6 +163,7 @@ Responsibility:
 v1 implementation rule:
 
 - keep this boundary in-process inside `agent-api`
+- treat it as an internal execution boundary, not a standalone service topology in v1
 - extract a standalone `tools-gateway` later only if a real operational need appears
 
 Expected initial tool surface:
@@ -313,6 +322,8 @@ In v1, tool adapters remain in-process behind typed internal interfaces such as:
 - `spotify-pause`
 - `spotify-next`
 
+This is an internal contract boundary, not a required standalone service in v1.
+
 If this layer is extracted later, the typed internal contract should remain stable.
 
 ## State ownership
@@ -336,6 +347,12 @@ If this layer is extracted later, the typed internal contract should remain stab
 - assistant profiles and policy state
 
 UI history and canonical memory are intentionally separate concerns.
+
+Use the following mental model consistently:
+
+- transcript is the source interaction record
+- execution audit is the source execution record
+- derived memory is revisable projection state
 
 ## Suggested v1 data model
 
@@ -389,6 +406,12 @@ Production must prefer pinned image tags over floating tags.
 - use layered verification across unit, integration, and smoke levels
 - treat Linux + NVIDIA as the canonical runtime validation environment for model-backed behavior
 
+### Delivery sequencing
+
+- speech endpoints may exist before real voice implementation
+- that does not make voice part of the first real delivery slice
+- no implementation milestone may bypass the canonical request path
+
 ### Rollback
 
 Rollback should primarily mean restoring the previously known-good image tag and re-running Compose.
@@ -408,6 +431,7 @@ Rollback should primarily mean restoring the previously known-good image tag and
 4. Ollama is an internal runtime, not a public assistant API.
 5. Text and voice share one backend control path.
 6. Agent actions are allowed only through explicit capabilities with bounded scope and audit.
+7. The first real v1 slice is the text path, not voice.
 
 ## Deferred topics
 

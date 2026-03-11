@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the minimum operational signals required to run Jasper without guessing about service health, request flow, or failure cause.
+Define the minimum operational signals required to run `local-assistant` without guessing about service health, request flow, or failure cause.
 
 ## Goals
 
