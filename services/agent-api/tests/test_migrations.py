@@ -18,13 +18,20 @@ class _FakeCursor:
     def execute(self, sql, params=None):
         normalized = " ".join(sql.split())
         self._connection.executed.append((normalized, params))
+        if normalized.startswith("SELECT to_regclass('schema_migrations')"):
+            self._rows = [("schema_migrations",)] if self._connection.migration_table_exists else [(None,)]
         if normalized.startswith("SELECT version FROM schema_migrations"):
             self._rows = [(version,) for version in self._connection.applied_versions]
         elif normalized.startswith("INSERT INTO schema_migrations"):
             self._connection.applied_versions.append(params[0])
+        elif normalized.startswith("CREATE TABLE IF NOT EXISTS schema_migrations"):
+            self._connection.migration_table_exists = True
 
     def fetchall(self):
         return list(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
 
 
 class _FakeTransaction:
@@ -40,6 +47,7 @@ class _FakeConnection:
     def __init__(self):
         self.executed = []
         self.applied_versions = []
+        self.migration_table_exists = False
 
     def __enter__(self):
         return self
@@ -109,3 +117,57 @@ def test_migration_runner_skips_already_applied_versions(monkeypatch, tmp_path: 
         statement == "CREATE TABLE test_table (id INTEGER);"
         for statement, _ in fake_connection.executed
     )
+
+
+def test_migration_runner_status_reports_pending_without_mutation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    migrations_dir = tmp_path / "sql"
+    migrations_dir.mkdir()
+    (migrations_dir / "0001_initial.sql").write_text("CREATE TABLE test_table (id INTEGER);")
+    fake_connection = _FakeConnection()
+
+    monkeypatch.setattr(
+        "app.migrations.runner.psycopg.connect",
+        lambda database_url: fake_connection,
+    )
+
+    runner = MigrationRunner(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant",
+        migrations_dir=migrations_dir,
+    )
+    status = runner.status()
+
+    assert status.is_current is False
+    assert status.applied_versions == ()
+    assert status.pending_versions == ("0001_initial",)
+    assert not any(
+        statement.startswith("CREATE TABLE IF NOT EXISTS schema_migrations")
+        for statement, _ in fake_connection.executed
+    )
+
+
+def test_migration_runner_status_reports_current_when_versions_match(
+    monkeypatch, tmp_path: Path
+) -> None:
+    migrations_dir = tmp_path / "sql"
+    migrations_dir.mkdir()
+    (migrations_dir / "0001_initial.sql").write_text("CREATE TABLE test_table (id INTEGER);")
+    fake_connection = _FakeConnection()
+    fake_connection.migration_table_exists = True
+    fake_connection.applied_versions = ["0001_initial"]
+
+    monkeypatch.setattr(
+        "app.migrations.runner.psycopg.connect",
+        lambda database_url: fake_connection,
+    )
+
+    runner = MigrationRunner(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant",
+        migrations_dir=migrations_dir,
+    )
+    status = runner.status()
+
+    assert status.is_current is True
+    assert status.applied_versions == ("0001_initial",)
+    assert status.pending_versions == ()

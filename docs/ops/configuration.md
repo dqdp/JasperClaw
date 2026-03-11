@@ -560,7 +560,8 @@ Local operator files:
 2. Copy `infra/env/app.example.env` to `infra/env/app.env`
 3. Copy `infra/env/prod.example.env` to `infra/env/prod.env` if using a production-specific split
 4. Fill in required secrets and runtime targets
-5. Validate compose configuration before deploy, for example `docker compose --env-file .env -f infra/compose/compose.yml config`
+5. Apply pending schema changes before serving traffic, for example `make migrate` locally or `docker compose ... run --rm agent-api python -m app.cli migrate` in deployment automation
+6. Validate compose configuration before deploy, for example `docker compose --env-file .env -f infra/compose/compose.yml config`
 
 ## Follow-up work
 

@@ -6,7 +6,6 @@ from uuid import uuid4
 import psycopg
 
 from app.core.errors import APIError
-from app.migrations import MigrationRunner
 from app.schemas.chat import ChatCompletionUsage, ChatMessage
 
 
@@ -71,9 +70,8 @@ class ChatRepository(Protocol):
 
 
 class PostgresChatRepository:
-    def __init__(self, database_url: str, migration_runner: MigrationRunner) -> None:
+    def __init__(self, database_url: str) -> None:
         self._database_url = database_url
-        self._migration_runner = migration_runner
 
     def prepare_conversation(
         self,
@@ -228,7 +226,6 @@ class PostgresChatRepository:
 
     def _execute_write(self, operation) -> ChatPersistenceResult:
         try:
-            self._migration_runner.ensure_current()
             with psycopg.connect(self._database_url) as conn:
                 with conn.transaction():
                     return operation(conn)

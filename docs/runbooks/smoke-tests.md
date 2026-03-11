@@ -28,6 +28,7 @@ Smoke tests should confirm the canonical request path:
 
 - `GET /healthz` returns success as a liveness check
 - `GET /readyz` returns success for the core text path
+- if `readyz` fails for storage, confirm the explicit migration step completed before traffic was sent to `agent-api`
 
 ### 4. Chat path works
 
@@ -95,6 +96,7 @@ Confirm:
 
 - agent-api can read/write required state
 - no migration errors are present
+- the explicit migration command completed successfully before smoke started
 - no connection failures appear in logs
 
 ## Pass/fail rule

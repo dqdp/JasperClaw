@@ -49,10 +49,10 @@ class ReadinessService:
 
     def _check_postgres(self) -> str:
         try:
-            self._migration_runner.ensure_current()
+            migration_status = self._migration_runner.status()
         except APIError:
             return "fail"
-        return "ok"
+        return "ok" if migration_status.is_current else "fail"
 
     def _check_ollama(self) -> str:
         try:

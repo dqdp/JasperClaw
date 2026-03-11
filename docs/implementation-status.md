@@ -65,7 +65,8 @@ Implemented:
 - structured request logging for request lifecycle, readiness, runtime, and storage outcomes
 - minimal request-scoped persistence for `conversations`, `messages`, and `model_runs`
 - baseline conversation continuity via transcript-prefix matching and optional canonical conversation hints
-- forward-only in-process SQL migration runner for the current canonical text-path schema
+- forward-only SQL migration runner for the current canonical text-path schema
+- explicit `python -m app.cli migrate` command for applying pending schema changes before service traffic
 - stubbed `POST /v1/audio/transcriptions`
 - stubbed `POST /v1/audio/speech`
 
@@ -74,7 +75,6 @@ Not yet implemented:
 - stronger client-to-backend conversation binding beyond transcript-prefix matching and optional hints
 - retrieval-aware or memory-backed prompt assembly
 - tool execution
-- external migration command/workflow separated from application startup and request path
 - structured tracing beyond request ID and JSON event logs
 - memory retrieval
 - production-hardened runtime and storage observability
@@ -121,11 +121,12 @@ Not yet implemented:
 Implemented:
 
 - accepted schema design and documentation
+- forward-only SQL migrations for the current text-path tables
+- readiness checks that fail when required migrations are still pending
 
 Not yet implemented:
 
-- migrations
-- canonical tables
+- full canonical schema beyond the current text-path subset
 - retrieval behavior
 - memory extraction
 

@@ -29,10 +29,7 @@ def get_migration_runner() -> MigrationRunner:
 @lru_cache
 def get_chat_repository() -> ChatRepository:
     settings = get_settings()
-    return PostgresChatRepository(
-        database_url=settings.database_url,
-        migration_runner=get_migration_runner(),
-    )
+    return PostgresChatRepository(database_url=settings.database_url)
 
 
 def get_app_settings() -> Settings:

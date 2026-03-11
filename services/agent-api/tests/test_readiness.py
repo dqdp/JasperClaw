@@ -1,3 +1,4 @@
+from app.migrations.runner import MigrationStatus
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.services.readiness import ReadinessService
@@ -8,10 +9,14 @@ class _FakeMigrationRunner:
         self.error = error
         self.calls = 0
 
-    def ensure_current(self) -> None:
+    def status(self) -> MigrationStatus:
         self.calls += 1
         if self.error is not None:
             raise self.error
+        return MigrationStatus(
+            applied_versions=("0001_initial_schema",),
+            pending_versions=(),
+        )
 
 
 class _FakeOllamaClient:
@@ -80,3 +85,30 @@ def test_readiness_service_reports_dependency_failure() -> None:
 
     assert result.status == "not_ready"
     assert result.checks == {"config": "ok", "postgres": "fail", "ollama": "fail"}
+
+
+def test_readiness_service_reports_pending_migrations_as_not_ready() -> None:
+    class _PendingMigrationRunner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def status(self) -> MigrationStatus:
+            self.calls += 1
+            return MigrationStatus(
+                applied_versions=("0001_initial_schema",),
+                pending_versions=("0002_conversation_updates",),
+            )
+
+    ollama = _FakeOllamaClient()
+    migrations = _PendingMigrationRunner()
+    service = ReadinessService(
+        settings=_settings(),
+        ollama_client=ollama,
+        migration_runner=migrations,
+    )
+
+    result = service.check()
+
+    assert result.status == "not_ready"
+    assert result.checks == {"config": "ok", "postgres": "fail", "ollama": "ok"}
+    assert migrations.calls == 1
