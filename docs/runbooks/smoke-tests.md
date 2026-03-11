@@ -26,8 +26,8 @@ Smoke tests should confirm the canonical request path:
 
 ### 3. agent-api healthy
 
-- health endpoint returns success
-- readiness endpoint returns success
+- `GET /healthz` returns success as a liveness check
+- `GET /readyz` returns success for the core text path
 
 ### 4. Chat path works
 
@@ -61,6 +61,8 @@ Expected result:
 - language is plausible
 - latency is acceptable for v1 expectations
 
+Run this only if voice is enabled in that environment.
+
 ### 8. TTS path works
 
 Submit a short text payload.
@@ -70,6 +72,8 @@ Expected result:
 - audio file or stream is returned
 - chosen voice resolves correctly
 
+Run this only if voice is enabled in that environment.
+
 ### 9. Tool path works
 
 Run at least one safe tool request, for example web search.
@@ -78,6 +82,8 @@ Expected result:
 
 - tool call succeeds
 - response is routed through agent-api/tool boundary correctly
+
+Run this only if tool adapters are enabled in that environment.
 
 ### 10. Database-backed state path works
 
@@ -92,7 +98,7 @@ Confirm:
 A deployment passes smoke if:
 
 - user chat works
-- agent-api is healthy
+- `agent-api` liveness and readiness are both correct
 - storage is functional
-- at least one tool path works
+- at least one tool path works if tools are enabled in that environment
 - speech path works if speech is enabled in that environment

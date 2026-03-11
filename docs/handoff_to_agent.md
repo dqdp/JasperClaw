@@ -15,6 +15,7 @@ Your job is to create a clean v1 skeleton that preserves the accepted architectu
 4. Text and voice paths must converge through `agent-api`.
 5. Ollama remains an internal runtime component.
 6. Internal services are private on Docker networks; only the reverse proxy is public.
+7. In v1, the tools boundary is typed but in-process inside `agent-api`.
 
 ## First repository deliverables
 
@@ -55,7 +56,7 @@ Create three Compose networks:
 
 - `open-webui` joins `frontend` and `control`
 - `agent-api` joins `control` and `runtime`
-- `ollama`, `postgres`, `stt-service`, `tts-service`, `tools-gateway` join `runtime`
+- `ollama`, `postgres`, `stt-service`, and `tts-service` join `runtime`
 - `open-webui` must not join `runtime`
 
 ## Required `agent-api` public endpoints
@@ -88,9 +89,9 @@ Implement minimal internal HTTP contracts for:
 ### TTS
 - `POST /speak`
 
-### tools-gateway
-- `POST /tools/web-search`
-- placeholder structure for Spotify endpoints
+### tools integration layer
+- typed in-process adapter boundary for `web-search`
+- placeholder structure for Spotify adapters
 
 ## Infrastructure expectations
 
@@ -120,7 +121,7 @@ Follow this order:
 4. Postgres integration scaffold
 5. Ollama integration scaffold
 6. STT/TTS service skeletons
-7. tools-gateway skeleton
+7. typed tools integration scaffold inside `agent-api`
 8. CI workflows
 9. deploy workflow
 10. smoke script

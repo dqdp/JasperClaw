@@ -58,6 +58,12 @@ The public API must expose logical assistant profiles, not raw runtime model nam
 
 Liveness probe.
 
+Meaning:
+
+- process is alive
+- service can answer a basic liveness request
+- downstream dependency failures must not make this probe fail
+
 Response:
 
 ```json
@@ -70,14 +76,38 @@ Readiness probe.
 
 Readiness must reflect:
 
-- database connectivity
-- `Ollama` availability
+- core text-path readiness, not just process liveness
 - internal config validity
+- database connectivity
+- primary `Ollama` runtime availability for active chat profiles
 
-Response:
+Readiness must not fail only because:
+
+- an optional tool adapter is unavailable
+- `stt-service` or `tts-service` is unavailable while voice is not enabled as a required deployment feature
+
+Recommended response behavior:
+
+- `200` when the service can accept core text traffic
+- `503` when the core text path is not ready
+
+Success response:
 
 ```json
 { "status": "ready" }
+```
+
+Failure response example:
+
+```json
+{
+  "status": "not_ready",
+  "checks": {
+    "config": "ok",
+    "postgres": "ok",
+    "ollama": "fail"
+  }
+}
 ```
 
 ### `GET /v1/models`
@@ -176,10 +206,39 @@ Response shape:
 - `validation_error`
 - `authentication_error`
 - `authorization_error`
+- `policy_error`
 - `rate_limit_error`
 - `upstream_error`
 - `dependency_unavailable`
 - `internal_error`
+
+## Suggested stable codes
+
+Examples of stable `code` values:
+
+- `invalid_request`
+- `missing_required_field`
+- `unknown_profile`
+- `unsupported_feature`
+- `invalid_client_credentials`
+- `tool_not_allowed`
+- `voice_not_enabled`
+- `database_unavailable`
+- `runtime_unavailable`
+- `dependency_timeout`
+- `dependency_bad_response`
+- `internal_failure`
+
+## Suggested HTTP mapping
+
+- `validation_error` -> `400` or `422`
+- `authentication_error` -> `401`
+- `authorization_error` -> `403`
+- `policy_error` -> `403`
+- `rate_limit_error` -> `429`
+- `dependency_unavailable` -> `503` or `504`
+- `upstream_error` -> `502`
+- `internal_error` -> `500`
 
 ## Streaming contract
 
@@ -191,6 +250,7 @@ Rules:
 - chunk ordering must be stable
 - terminal chunk must be followed by `data: [DONE]`
 - partial failures must be logged with the same `request_id`
+- if a failure occurs before the first chunk, return the normal error envelope instead of a partial stream
 
 ## Persistence contract
 
@@ -214,6 +274,22 @@ Every request must produce:
 - selected model or profile
 - downstream dependency timings
 - success or failure outcome
+
+Recommended response behavior:
+
+- return the request identifier in `X-Request-ID`
+- preserve the same ID across logs and downstream dependency records
+
+Minimum structured log events:
+
+- request received
+- request validated
+- dependency call started
+- dependency call completed
+- persistence write completed
+- request completed
+- request failed
+- readiness check completed
 
 ## Security rules
 

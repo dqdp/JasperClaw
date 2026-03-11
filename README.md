@@ -123,7 +123,10 @@ local-assistant/
 - [`docs/adr/0008-profile-routing-without-automatic-fallback.md`](docs/adr/0008-profile-routing-without-automatic-fallback.md) — profile routing without hidden fallback
 - [`docs/adr/0009-auth-and-secret-boundaries-for-v1.md`](docs/adr/0009-auth-and-secret-boundaries-for-v1.md) — narrow auth and secret boundary for v1
 - [`docs/adr/0010-voice-after-text-path-stability.md`](docs/adr/0010-voice-after-text-path-stability.md) — deliver voice after the text path is stable
+- [`docs/adr/0011-readiness-observability-and-error-semantics.md`](docs/adr/0011-readiness-observability-and-error-semantics.md) — define operational probes, request tracing, and stable error behavior
 - [`docs/service-contracts/agent-api.md`](docs/service-contracts/agent-api.md) — public contract for the canonical backend ingress
+- [`docs/ops/observability.md`](docs/ops/observability.md) — minimum request tracing, health, and readiness semantics
+- [`docs/ops/error-semantics.md`](docs/ops/error-semantics.md) — stable error taxonomy and mapping rules
 - [`docs/runbooks/bootstrap-ubuntu-24.04.md`](docs/runbooks/bootstrap-ubuntu-24.04.md) — host bootstrap runbook
 - [`docs/runbooks/deploy.md`](docs/runbooks/deploy.md) — deployment runbook
 - [`docs/runbooks/rollback.md`](docs/runbooks/rollback.md) — rollback runbook

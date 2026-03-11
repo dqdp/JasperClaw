@@ -383,6 +383,13 @@ Production must prefer pinned image tags over floating tags.
 
 Rollback should primarily mean restoring the previously known-good image tag and re-running Compose.
 
+### Readiness and error semantics
+
+- `GET /healthz` is process liveness only
+- `GET /readyz` means the core text path is ready
+- optional tool or voice features must not fail global readiness unless explicitly required in that deployment mode
+- request tracing and client-visible errors must follow a stable structured contract
+
 ## Invariants
 
 1. All user-facing AI requests pass through `agent-api`.

@@ -37,6 +37,7 @@ Deliver a self-hosted assistant where all user-facing AI traffic flows through `
 - profile routing is explicit and has no automatic per-request fallback
 - voice remains in v1 scope but only after the text path is stable
 - auth is explicit at the `Open WebUI -> agent-api` ingress and network-private inside the runtime boundary
+- readiness is defined around the core text path, with structured request tracing and stable client-visible error types
 
 ## Milestone 1: Control Plane MVP
 
