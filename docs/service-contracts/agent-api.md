@@ -94,6 +94,7 @@ Readiness must reflect:
 
 - core text-path readiness, not just process liveness
 - internal config validity
+- required internal bearer-auth configuration for `/v1/*`
 - database connectivity
 - primary `Ollama` runtime availability for active chat profiles
 
@@ -305,9 +306,10 @@ Rules:
 
 - each chunk includes `id`, `object`, and `choices`
 - chunk ordering must be stable
-- terminal chunk must be followed by `data: [DONE]`
+- successful completion must end with a terminal chunk followed by `data: [DONE]`
 - partial failures must be logged with the same `request_id`
 - if a failure occurs before the first chunk, return the normal error envelope instead of a partial stream
+- if a failure occurs after streaming starts, terminate the stream without emitting `data: [DONE]`
 
 ## Persistence contract
 

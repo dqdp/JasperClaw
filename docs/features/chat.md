@@ -112,7 +112,7 @@ Current v1 baseline:
 
 - `agent-api` accepts an explicit canonical hint via `X-Conversation-ID`
 - `agent-api` also accepts `metadata.conversation_id` when the client can send it
-- if no hint is available, `agent-api` continues the best matching conversation whose stored transcript is a prefix of the incoming message list
+- if no hint is available, `agent-api` continues the best matching conversation whose persisted non-empty transcript is a prefix of the incoming message list
 - if no matching conversation exists, `agent-api` creates a new canonical conversation
 
 The result of this step is one canonical `conversation_id` used for persistence and tracing.
@@ -204,7 +204,7 @@ Current v1 baseline:
 Rules:
 
 - if failure occurs before the first chunk, return the normal error envelope
-- if failure occurs after streaming starts, log it with the same `request_id` and terminate the stream as cleanly as possible
+- if failure occurs after streaming starts, log it with the same `request_id`, terminate the stream, and do not emit a synthetic `data: [DONE]`
 - persistence and model-run finalization must still be completed or explicitly failed
 - the `X-Conversation-ID` response header still carries the canonical conversation identifier
 

@@ -104,7 +104,7 @@ If it fails after streaming has started:
 
 - log the failure with the same `request_id`
 - include dependency and error classification in logs
-- terminate the stream cleanly if possible
+- terminate the stream without emitting a success sentinel such as `data: [DONE]`
 
 ## Logging rule
 
