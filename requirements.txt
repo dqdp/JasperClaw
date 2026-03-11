@@ -1,0 +1,4 @@
+-r services/agent-api/requirements.txt
+-r services/stt-service/requirements.txt
+-r services/tts-service/requirements.txt
+-r services/tools-gateway/requirements.txt

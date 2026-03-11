@@ -175,6 +175,19 @@ When making trade-offs, prefer:
 - reproducibility and rollback over ad hoc convenience
 - layered verification over single-step “it works on my machine” checks
 
+## Local Python environment
+
+For local Python development and tests:
+
+```bash
+make venv
+source .venv/bin/activate
+make lint
+make test
+```
+
+The local test runner executes tests per service directory rather than with one global `pytest services` invocation. This avoids cross-service import collisions caused by multiple service-local `app/` packages.
+
 ## Starter scaffold included
 
 This repository skeleton also includes:
