@@ -60,8 +60,6 @@ services:
         condition: service_started
       tts-service:
         condition: service_started
-      tools-gateway:
-        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
       interval: 10s
@@ -117,16 +115,6 @@ services:
     build:
       context: ../../services/tts-service
     image: ghcr.io/${GHCR_OWNER}/local-assistant-tts:${APP_VERSION}
-    restart: unless-stopped
-    env_file:
-      - ../env/app.env
-    networks:
-      - runtime
-
-  tools-gateway:
-    build:
-      context: ../../services/tools-gateway
-    image: ghcr.io/${GHCR_OWNER}/local-assistant-tools:${APP_VERSION}
     restart: unless-stopped
     env_file:
       - ../env/app.env

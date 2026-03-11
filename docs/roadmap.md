@@ -22,11 +22,11 @@ Deliver a self-hosted assistant where all user-facing AI traffic flows through `
 ## Current state
 
 - repository skeleton exists
-- docker compose topology exists
+- docker compose topology exists for the accepted v1 core services
 - service stubs exist
 - `agent-api` exposes placeholder OpenAI-compatible endpoints
 - STT/TTS placeholders exist for the future voice path
-- a placeholder `tools-gateway` service exists, but accepted v1 delivery keeps tool adapters in-process unless extraction is justified
+- a legacy `services/tools-gateway/` placeholder directory still exists, but it is no longer part of the active v1 runtime topology
 
 ## Architecture review outcomes already accepted
 

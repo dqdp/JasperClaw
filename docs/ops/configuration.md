@@ -1,0 +1,463 @@
+# Configuration
+
+## Purpose
+
+Define the canonical v1 configuration surface for Jasper.
+
+This document specifies:
+
+- which variables exist
+- which service owns them
+- which ones are required
+- which ones are optional or feature-gated
+- where current scaffold gaps still exist
+
+## Current configuration sources
+
+Today the repository has three relevant configuration layers:
+
+### 1. Root compose substitution
+
+Primary template:
+
+- `.env.example`
+
+This layer feeds:
+
+- Compose variable substitution
+- Caddy domain configuration
+- image tag selection
+- some service environment values injected directly in `compose.yml`
+
+### 2. Service env files
+
+Recommended templates:
+
+- `infra/env/app.example.env`
+- `infra/env/prod.example.env`
+
+These correspond to the `env_file` pattern already referenced by `infra/compose/compose.yml`.
+
+### 3. Hardcoded compose defaults
+
+Some settings are currently pinned directly in `infra/compose/compose.yml`, for example:
+
+- Open WebUI feature flags
+- Open WebUI model IDs
+- container image names
+
+Those values still count as part of the configuration surface even when they are not yet externalized.
+
+## Current scaffold note
+
+The repository now contains committed `infra/env/*.example.env` templates that match the `env_file` pattern used by `infra/compose/compose.yml`.
+
+The accepted v1 baseline is:
+
+- keep `.env.example` as the root compose-substitution template
+- add `infra/env/*.example.env` as service-oriented env templates
+- treat `infra/env/app.env` and `infra/env/prod.env` as local, uncommitted operator files derived from the examples
+
+## Configuration ownership model
+
+### Root deployment configuration
+
+Owned by:
+
+- operator or deploy environment
+
+Examples:
+
+- image version selection
+- domain
+- shared internal credentials
+- database password
+
+### `agent-api` runtime configuration
+
+Owned by:
+
+- `agent-api`
+
+Examples:
+
+- runtime endpoints
+- model profile targets
+- embeddings target
+- feature toggles
+- tool provider credentials
+
+### Speech runtime configuration
+
+Owned by:
+
+- `stt-service`
+- `tts-service`
+
+Examples:
+
+- default speech model
+- default voice
+
+### UI shell configuration
+
+Owned by:
+
+- `Open WebUI`
+
+Examples:
+
+- WebUI secret
+- backend API URL
+- OpenAI-compatible backend credential
+
+## Variable catalog
+
+## Root deployment and compose variables
+
+### `GHCR_OWNER`
+
+Required: yes
+
+Used by:
+
+- `infra/compose/compose.yml`
+
+Purpose:
+
+- namespace for published container images
+
+Example:
+
+```env
+GHCR_OWNER=your-github-user-or-org
+```
+
+### `APP_VERSION`
+
+Required: yes
+
+Used by:
+
+- `infra/compose/compose.yml`
+- deployment workflows and operator rollouts
+
+Purpose:
+
+- pin the image tag to deploy
+
+Example:
+
+```env
+APP_VERSION=dev
+```
+
+### `DOMAIN`
+
+Required: yes for proxied deployments
+
+Used by:
+
+- `infra/caddy/Caddyfile`
+
+Purpose:
+
+- public host name served by Caddy
+
+### `INTERNAL_OPENAI_API_KEY`
+
+Required: yes
+
+Used by:
+
+- `Open WebUI -> agent-api` authentication
+
+Purpose:
+
+- trusted internal client credential for the UI shell
+
+Notes:
+
+- this is not an end-user credential
+- it must not be exposed publicly
+
+### `WEBUI_SECRET_KEY`
+
+Required: yes
+
+Used by:
+
+- `Open WebUI`
+
+Purpose:
+
+- secret for UI session and application security
+
+### `POSTGRES_PASSWORD`
+
+Required: yes
+
+Used by:
+
+- `postgres`
+- eventually `agent-api` database connectivity
+
+Purpose:
+
+- password for the assistant database
+
+## `agent-api` runtime variables
+
+These values should live in `infra/env/app.env`, derived from `infra/env/app.example.env`.
+
+### `OLLAMA_BASE_URL`
+
+Required: yes
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- base URL for the internal `Ollama` runtime
+
+### `OLLAMA_CHAT_MODEL`
+
+Required: yes
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- default runtime target for the primary chat profile mapping
+
+Notes:
+
+- public profile IDs remain `assistant-v1` and `assistant-fast`
+- this value is an internal runtime target, not a public contract
+
+### `OLLAMA_EMBED_MODEL`
+
+Required: no until retrieval is enabled
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- embedding model for memory and future document retrieval
+
+### `SEARCH_API_KEY`
+
+Required: no until search adapters are enabled
+
+Used by:
+
+- in-process tools integration layer inside `agent-api`
+
+Purpose:
+
+- credential for the configured search provider
+
+### `SEARCH_BASE_URL`
+
+Required: no until search adapters are enabled
+
+Used by:
+
+- in-process tools integration layer inside `agent-api`
+
+Purpose:
+
+- provider endpoint for search requests
+
+### `SPOTIFY_CLIENT_ID`
+
+Required: no until Spotify adapters are enabled
+
+Used by:
+
+- in-process tools integration layer inside `agent-api`
+
+### `SPOTIFY_CLIENT_SECRET`
+
+Required: no until Spotify adapters are enabled
+
+Used by:
+
+- in-process tools integration layer inside `agent-api`
+
+### `SPOTIFY_REDIRECT_URI`
+
+Required: no until Spotify adapters are enabled
+
+Used by:
+
+- in-process tools integration layer inside `agent-api`
+
+## Speech-related variables
+
+These remain part of the config surface even though real voice delivery comes after the text path stabilizes.
+
+### `STT_BASE_URL`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- location of `stt-service`
+
+### `STT_MODEL`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `stt-service`
+
+Purpose:
+
+- default speech-to-text model selection
+
+### `TTS_BASE_URL`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- location of `tts-service`
+
+### `TTS_DEFAULT_VOICE`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `tts-service`
+
+Purpose:
+
+- default text-to-speech voice selection
+
+## Legacy or provisional variables
+
+### `TOOLS_BASE_URL`
+
+Status:
+
+- legacy scaffold variable
+
+Reason:
+
+- accepted v1 architecture keeps the tools boundary in-process inside `agent-api`
+- there is no canonical v1 need for a standalone tools base URL
+
+Rule:
+
+- do not treat this as part of the accepted v1 baseline
+
+## Compose-pinned settings that still matter
+
+The following are not currently sourced from env files, but are part of the effective configuration and should remain visible to operators:
+
+- `OPENAI_API_BASE_URL=http://agent-api:8080/v1`
+- `AUDIO_STT_OPENAI_API_BASE_URL=http://agent-api:8080/v1`
+- `AUDIO_TTS_OPENAI_API_BASE_URL=http://agent-api:8080/v1`
+- `TASK_MODEL_EXTERNAL=assistant-fast`
+- `ENABLE_OLLAMA_API=False`
+- `ENABLE_OPENAI_API=True`
+
+## Required sets by deployment phase
+
+### Core text path
+
+Minimum required:
+
+- `GHCR_OWNER`
+- `APP_VERSION`
+- `DOMAIN`
+- `INTERNAL_OPENAI_API_KEY`
+- `WEBUI_SECRET_KEY`
+- `POSTGRES_PASSWORD`
+- `OLLAMA_BASE_URL`
+- `OLLAMA_CHAT_MODEL`
+
+### Memory and retrieval
+
+Additional recommended:
+
+- `OLLAMA_EMBED_MODEL`
+
+### Search and tool adapters
+
+Additional required only if enabled:
+
+- `SEARCH_API_KEY`
+- `SEARCH_BASE_URL`
+
+### Spotify adapters
+
+Additional required only if enabled:
+
+- `SPOTIFY_CLIENT_ID`
+- `SPOTIFY_CLIENT_SECRET`
+- `SPOTIFY_REDIRECT_URI`
+
+### Voice path
+
+Additional required only if enabled:
+
+- `STT_BASE_URL`
+- `STT_MODEL`
+- `TTS_BASE_URL`
+- `TTS_DEFAULT_VOICE`
+
+## Secret-handling rules
+
+- secrets belong only to the service that directly uses them
+- root `.env` files and `infra/env/*.env` files must not be committed
+- example files must contain placeholders only
+- external provider credentials must never be exposed to `Open WebUI`
+- the internal OpenAI-style credential is shared only between `Open WebUI` and `agent-api`
+
+## Recommended file layout
+
+Committed templates:
+
+- `.env.example`
+- `infra/env/app.example.env`
+- `infra/env/prod.example.env`
+
+Local operator files:
+
+- `.env`
+- `infra/env/app.env`
+- `infra/env/prod.env`
+
+## Example operator workflow
+
+1. Copy `.env.example` to `.env`
+2. Copy `infra/env/app.example.env` to `infra/env/app.env`
+3. Copy `infra/env/prod.example.env` to `infra/env/prod.env` if using a production-specific split
+4. Fill in required secrets and runtime targets
+5. Validate compose configuration before deploy, for example `docker compose --env-file .env -f infra/compose/compose.yml config`
+
+## Follow-up work
+
+Configuration should later be refined by:
+
+- moving more hardcoded compose settings into explicit config when they become operationally significant
+- documenting per-profile runtime mapping once the `agent-api` profile registry is implemented
+- documenting feature flags for memory, tool adapters, and voice once those paths are real

@@ -111,8 +111,10 @@ local-assistant/
 ## Documentation map
 
 - [`docs/architecture.md`](docs/architecture.md) — target architecture v1
+- [`docs/implementation-status.md`](docs/implementation-status.md) — what is actually implemented versus only documented as target state
 - [`docs/data-model.md`](docs/data-model.md) — canonical Postgres and pgvector schema plan for transcript, audit, and memory
 - [`docs/features/chat.md`](docs/features/chat.md) — canonical text request flow from Open WebUI through persistence and response
+- [`docs/features/memory.md`](docs/features/memory.md) — canonical derived-memory model, provenance, and retrieval behavior
 - [`docs/roadmap.md`](docs/roadmap.md) — implementation milestones and delivery order
 - [`docs/backlog.md`](docs/backlog.md) — epics and task breakdown for execution tracking
 - [`docs/adr/0001-monorepo.md`](docs/adr/0001-monorepo.md) — monorepo decision
@@ -127,6 +129,7 @@ local-assistant/
 - [`docs/adr/0010-voice-after-text-path-stability.md`](docs/adr/0010-voice-after-text-path-stability.md) — deliver voice after the text path is stable
 - [`docs/adr/0011-readiness-observability-and-error-semantics.md`](docs/adr/0011-readiness-observability-and-error-semantics.md) — define operational probes, request tracing, and stable error behavior
 - [`docs/service-contracts/agent-api.md`](docs/service-contracts/agent-api.md) — public contract for the canonical backend ingress
+- [`docs/ops/configuration.md`](docs/ops/configuration.md) — canonical env-var and config ownership reference
 - [`docs/ops/observability.md`](docs/ops/observability.md) — minimum request tracing, health, and readiness semantics
 - [`docs/ops/error-semantics.md`](docs/ops/error-semantics.md) — stable error taxonomy and mapping rules
 - [`docs/runbooks/bootstrap-ubuntu-24.04.md`](docs/runbooks/bootstrap-ubuntu-24.04.md) — host bootstrap runbook

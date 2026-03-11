@@ -20,5 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: cp .env.example infra/env/app.env
-      - run: docker compose -f infra/compose/compose.yml config >/tmp/compose.out
+      - run: cp .env.example .env
+      - run: mkdir -p infra/env
+      - run: cp infra/env/app.example.env infra/env/app.env
+      - run: docker compose --env-file .env -f infra/compose/compose.yml config >/tmp/compose.out

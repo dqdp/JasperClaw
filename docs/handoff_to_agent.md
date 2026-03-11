@@ -36,7 +36,7 @@ Create the initial repository structure with at least:
 - `services/agent-api/` skeleton
 - `services/stt-service/` skeleton
 - `services/tts-service/` skeleton
-- `services/tools-gateway/` skeleton
+- optional legacy `services/tools-gateway/` placeholder directory may still exist, but it is not part of the accepted active v1 topology
 - `.github/workflows/ci.yml`
 - `.github/workflows/images.yml`
 - `.github/workflows/deploy-prod.yml`
