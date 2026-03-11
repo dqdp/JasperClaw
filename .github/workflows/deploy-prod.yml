@@ -20,5 +20,5 @@ jobs:
           script: |
             cd /opt/local-assistant
             export APP_VERSION=${{ github.event.workflow_run.head_sha }}
-            echo ${{ secrets.GHCR_PULL_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            echo ${{ secrets.GHCR_PULL_TOKEN }} | docker login ghcr.io -u ${{ secrets.GHCR_PULL_USER || github.repository_owner }} --password-stdin
             bash infra/scripts/deploy.sh
