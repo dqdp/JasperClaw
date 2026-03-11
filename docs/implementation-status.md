@@ -57,7 +57,7 @@ Implemented:
 - `GET /readyz`
 - `GET /v1/models`
 - real profile-based `POST /v1/chat/completions` for `stream=false`
-- compatibility SSE wrapper for `stream=true` pending true token streaming
+- real token streaming path for `stream=true`, bridging `Ollama` chat chunks into OpenAI-style SSE
 - real `Ollama` chat runtime call for text requests
 - stable error envelopes for request validation and runtime/storage failures
 - request ID attachment via `X-Request-ID`
@@ -71,7 +71,6 @@ Implemented:
 Not yet implemented:
 
 - stronger client-to-backend conversation binding beyond transcript-prefix matching and optional hints
-- true token streaming from `Ollama`
 - retrieval-aware or memory-backed prompt assembly
 - tool execution
 - external migration command/workflow separated from application startup and request path

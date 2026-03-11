@@ -31,6 +31,15 @@ class ConversationContext:
 
 
 class ChatRepository(Protocol):
+    def prepare_conversation(
+        self,
+        *,
+        public_model: str,
+        request_messages: list[ChatMessage],
+        conversation_id_hint: str | None,
+        created_at: datetime,
+    ) -> ConversationContext: ...
+
     def record_successful_completion(
         self,
         *,
@@ -65,6 +74,25 @@ class PostgresChatRepository:
     def __init__(self, database_url: str, migration_runner: MigrationRunner) -> None:
         self._database_url = database_url
         self._migration_runner = migration_runner
+
+    def prepare_conversation(
+        self,
+        *,
+        public_model: str,
+        request_messages: list[ChatMessage],
+        conversation_id_hint: str | None,
+        created_at: datetime,
+    ) -> ConversationContext:
+        def write(conn: psycopg.Connection) -> ConversationContext:
+            return self._resolve_conversation(
+                conn,
+                public_model=public_model,
+                request_messages=request_messages,
+                conversation_id_hint=conversation_id_hint,
+                created_at=created_at.astimezone(timezone.utc),
+            )
+
+        return self._execute_write(write)
 
     def record_successful_completion(
         self,

@@ -13,44 +13,37 @@ from app.schemas.chat import (
     ChatCompletionRequest,
     ChatCompletionResponse,
 )
-from app.services.chat import ChatResult, ChatService
+from app.services.chat import ChatService, ChatStreamSession
 
 router = APIRouter()
 
 
-def _stream_chat_result(result: ChatResult) -> StreamingResponse:
-    initial_chunk = ChatCompletionChunk(
-        id=result.response_id,
-        created=result.created,
-        model=result.public_model,
-        choices=[
-            ChatCompletionChunkChoice(
-                index=0,
-                delta=ChatCompletionDelta(role="assistant", content=result.content),
-                finish_reason=None,
-            )
-        ],
-    )
-    terminal_chunk = ChatCompletionChunk(
-        id=result.response_id,
-        created=result.created,
-        model=result.public_model,
-        choices=[
-            ChatCompletionChunkChoice(
-                index=0,
-                delta=ChatCompletionDelta(),
-                finish_reason="stop",
-            )
-        ],
-    )
-
+def _stream_chat_result(result: ChatStreamSession) -> StreamingResponse:
     def sse():
-        # Compatibility wrapper for clients that expect SSE before true token streaming lands.
-        yield f"data: {json.dumps(initial_chunk.model_dump(exclude_none=True))}\n\n".encode()
-        yield f"data: {json.dumps(terminal_chunk.model_dump(exclude_none=True))}\n\n".encode()
+        for event in result.events:
+            chunk = ChatCompletionChunk(
+                id=result.response_id,
+                created=result.created,
+                model=result.public_model,
+                choices=[
+                    ChatCompletionChunkChoice(
+                        index=0,
+                        delta=ChatCompletionDelta(
+                            role=event.role,
+                            content=event.content,
+                        ),
+                        finish_reason=event.finish_reason,
+                    )
+                ],
+            )
+            yield f"data: {json.dumps(chunk.model_dump(exclude_none=True))}\n\n".encode()
         yield b"data: [DONE]\n\n"
 
-    return StreamingResponse(sse(), media_type="text/event-stream")
+    return StreamingResponse(
+        sse(),
+        media_type="text/event-stream",
+        headers={"X-Conversation-ID": result.conversation_id},
+    )
 
 
 @router.post("/v1/chat/completions")
@@ -59,15 +52,19 @@ def chat_completions(
     payload: ChatCompletionRequest,
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
+    if payload.stream:
+        result = chat_service.create_streaming_chat_completion(
+            request_id=get_request_id(request),
+            request=payload,
+            conversation_id_hint=request.headers.get("X-Conversation-ID"),
+        )
+        return _stream_chat_result(result)
+
     result = chat_service.create_chat_completion(
         request_id=get_request_id(request),
         request=payload,
         conversation_id_hint=request.headers.get("X-Conversation-ID"),
     )
-    if payload.stream:
-        response = _stream_chat_result(result)
-        response.headers["X-Conversation-ID"] = result.conversation_id
-        return response
 
     response = ChatCompletionResponse(
         id=result.response_id,

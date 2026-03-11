@@ -189,6 +189,12 @@ The canonical backend conversation identifier is returned in the `X-Conversation
 
 Return SSE chunks in stable order.
 
+Current v1 baseline:
+
+- `agent-api` consumes the chunked `Ollama` chat stream directly
+- `agent-api` forwards assistant content incrementally as OpenAI-style SSE chunks
+- the final runtime chunk is used to finalize usage metadata and persistence
+
 Rules:
 
 - if failure occurs before the first chunk, return the normal error envelope
