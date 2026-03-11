@@ -56,19 +56,26 @@ Implemented:
 - `GET /healthz`
 - `GET /readyz`
 - `GET /v1/models`
-- stubbed `POST /v1/chat/completions`
+- real profile-based `POST /v1/chat/completions` for `stream=false`
+- compatibility SSE wrapper for `stream=true` pending true token streaming
+- real `Ollama` chat runtime call for text requests
+- stable error envelopes for request validation and runtime/storage failures
+- request ID attachment via `X-Request-ID`
+- minimal request-scoped persistence for `conversations`, `messages`, and `model_runs`
 - stubbed `POST /v1/audio/transcriptions`
 - stubbed `POST /v1/audio/speech`
 
 Not yet implemented:
 
-- real `Ollama` orchestration
-- canonical persistence in `Postgres`
-- structured request tracing
-- real readiness logic
-- memory retrieval
+- conversation continuity across requests
+- true token streaming from `Ollama`
+- retrieval-aware or memory-backed prompt assembly
 - tool execution
-- stable error mapping beyond placeholders
+- real readiness logic
+- structured request tracing beyond request ID propagation
+- full migration-based persistence lifecycle
+- memory retrieval
+- production-hardened runtime and storage observability
 
 ### `stt-service`
 

@@ -200,7 +200,7 @@ Required: yes
 Used by:
 
 - `postgres`
-- eventually `agent-api` database connectivity
+- `agent-api`
 
 Purpose:
 
@@ -250,6 +250,70 @@ Used by:
 Purpose:
 
 - embedding model for memory and future document retrieval
+
+### `DATABASE_URL`
+
+Required: no if component Postgres variables are provided
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- explicit database DSN override for `agent-api`
+
+Notes:
+
+- if set, it takes precedence over component Postgres variables
+
+### `POSTGRES_HOST`
+
+Required: yes unless `DATABASE_URL` is set
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- hostname for canonical assistant storage
+
+### `POSTGRES_PORT`
+
+Required: yes unless `DATABASE_URL` is set
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- port for canonical assistant storage
+
+### `POSTGRES_DB`
+
+Required: yes unless `DATABASE_URL` is set
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- database name for canonical assistant storage
+
+### `POSTGRES_USER`
+
+Required: yes unless `DATABASE_URL` is set
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- database user for canonical assistant storage
 
 ### `SEARCH_API_KEY`
 

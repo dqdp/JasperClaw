@@ -51,6 +51,8 @@ services:
     restart: unless-stopped
     env_file:
       - ../env/app.env
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy

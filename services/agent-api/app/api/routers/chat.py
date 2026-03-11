@@ -1,10 +1,11 @@
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.deps import get_chat_service
+from app.core.errors import get_request_id
 from app.schemas.chat import (
     ChatCompletionChunk,
     ChatCompletionChunkChoice,
@@ -54,10 +55,14 @@ def _stream_chat_result(result: ChatResult) -> StreamingResponse:
 
 @router.post("/v1/chat/completions")
 def chat_completions(
+    request: Request,
     payload: ChatCompletionRequest,
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
-    result = chat_service.create_chat_completion(payload)
+    result = chat_service.create_chat_completion(
+        request_id=get_request_id(request),
+        request=payload,
+    )
     if payload.stream:
         return _stream_chat_result(result)
 

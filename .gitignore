@@ -6,6 +6,7 @@ __pycache__/
 .env
 *.env
 !.env.example
+!*.example.env
 *.log
 .DS_Store
 .idea/
