@@ -140,6 +140,11 @@ Minimum request fields:
 - `messages`
 - `stream`
 
+Optional continuity inputs:
+
+- `metadata.conversation_id` for clients that can carry backend conversation metadata
+- `X-Conversation-ID` header for clients that want to continue a previously resolved canonical conversation directly
+
 Supported message roles:
 
 - `system`
@@ -151,11 +156,18 @@ Behavior:
 
 - validates request schema
 - resolves logical profile to internal runtime config
+- resolves or creates a canonical backend conversation
 - optionally loads memory context
 - invokes model runtime
 - returns an explicit failure if the selected runtime target is unavailable
 - persists request and response metadata
 - returns non-streaming JSON or SSE stream
+
+Continuity behavior:
+
+- when a valid canonical conversation hint is present, `agent-api` attempts to continue that conversation
+- otherwise `agent-api` may continue a conversation by matching the stored transcript prefix against the incoming message history
+- the canonical conversation identity is returned in the `X-Conversation-ID` response header
 
 ### `POST /v1/audio/transcriptions`
 

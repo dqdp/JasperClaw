@@ -62,9 +62,12 @@ def chat_completions(
     result = chat_service.create_chat_completion(
         request_id=get_request_id(request),
         request=payload,
+        conversation_id_hint=request.headers.get("X-Conversation-ID"),
     )
     if payload.stream:
-        return _stream_chat_result(result)
+        response = _stream_chat_result(result)
+        response.headers["X-Conversation-ID"] = result.conversation_id
+        return response
 
     response = ChatCompletionResponse(
         id=result.response_id,
@@ -73,4 +76,7 @@ def chat_completions(
         choices=result.choices,
         usage=result.usage,
     )
-    return JSONResponse(content=response.model_dump(exclude_none=True))
+    return JSONResponse(
+        content=response.model_dump(exclude_none=True),
+        headers={"X-Conversation-ID": result.conversation_id},
+    )

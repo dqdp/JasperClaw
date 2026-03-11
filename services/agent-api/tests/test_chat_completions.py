@@ -79,12 +79,18 @@ class _FakeRepository:
         )
 
 
-def _chat_payload(stream: bool = False) -> dict:
-    return {
+def _chat_payload(
+    stream: bool = False,
+    metadata: dict[str, str] | None = None,
+) -> dict:
+    payload = {
         "model": "assistant-v1",
         "messages": [{"role": "user", "content": "Hello"}],
         "stream": stream,
     }
+    if metadata is not None:
+        payload["metadata"] = metadata
+    return payload
 
 
 def test_chat_completions_non_streaming_success(client, monkeypatch) -> None:
@@ -112,6 +118,7 @@ def test_chat_completions_non_streaming_success(client, monkeypatch) -> None:
         "completion_tokens": 7,
         "total_tokens": 18,
     }
+    assert response.headers["x-conversation-id"] == "conv_test"
     assert _FakeClient.last_url == "http://ollama.test/api/chat"
     assert _FakeClient.last_json["model"] == "qwen3:8b"
     assert _FakeClient.last_json["stream"] is False
@@ -120,6 +127,7 @@ def test_chat_completions_non_streaming_success(client, monkeypatch) -> None:
     assert repository.success_calls[0]["public_model"] == "assistant-v1"
     assert repository.success_calls[0]["runtime_model"] == "qwen3:8b"
     assert repository.success_calls[0]["response_content"] == "Runtime response"
+    assert repository.success_calls[0]["conversation_id_hint"] is None
 
 
 def test_chat_completions_streaming_compatibility_success(client, monkeypatch) -> None:
@@ -136,8 +144,48 @@ def test_chat_completions_streaming_compatibility_success(client, monkeypatch) -
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["x-conversation-id"] == "conv_test"
     assert "Runtime response" in response.text
     assert "[DONE]" in response.text
+
+
+def test_chat_completions_header_conversation_hint(client, monkeypatch) -> None:
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    _FakeClient.error = None
+    _FakeClient.response = _FakeResponse(
+        200,
+        {"message": {"role": "assistant", "content": "Runtime response"}},
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(),
+        headers={"X-Conversation-ID": "conv_existing"},
+    )
+
+    assert response.status_code == 200
+    assert repository.success_calls[0]["conversation_id_hint"] == "conv_existing"
+
+
+def test_chat_completions_metadata_conversation_hint(client, monkeypatch) -> None:
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    _FakeClient.error = None
+    _FakeClient.response = _FakeResponse(
+        200,
+        {"message": {"role": "assistant", "content": "Runtime response"}},
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(metadata={"conversation_id": "conv_meta"}),
+    )
+
+    assert response.status_code == 200
+    assert repository.success_calls[0]["conversation_id_hint"] == "conv_meta"
 
 
 def test_chat_completions_unknown_profile(client, monkeypatch) -> None:
@@ -220,3 +268,31 @@ def test_chat_completions_storage_unavailable(client, monkeypatch) -> None:
     assert response.status_code == 503
     assert response.json()["error"]["type"] == "dependency_unavailable"
     assert response.json()["error"]["code"] == "storage_unavailable"
+
+
+def test_chat_completions_conversation_mismatch(client, monkeypatch) -> None:
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository(
+        error=APIError(
+            status_code=409,
+            error_type="validation_error",
+            code="conversation_mismatch",
+            message="Conversation hint does not match request transcript",
+        )
+    )
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    _FakeClient.error = None
+    _FakeClient.response = _FakeResponse(
+        200,
+        {"message": {"role": "assistant", "content": "Runtime response"}},
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(),
+        headers={"X-Conversation-ID": "conv_wrong"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["type"] == "validation_error"
+    assert response.json()["error"]["code"] == "conversation_mismatch"

@@ -28,6 +28,7 @@ class ChatResult:
     response_id: str
     created: int
     public_model: str
+    conversation_id: str
     content: str
     choices: list[ChatCompletionChoice]
     usage: ChatCompletionUsage | None
@@ -45,9 +46,16 @@ class ChatService:
         self._repository = repository
 
     def create_chat_completion(
-        self, *, request_id: str, request: ChatCompletionRequest
+        self,
+        *,
+        request_id: str,
+        request: ChatCompletionRequest,
+        conversation_id_hint: str | None = None,
     ) -> ChatResult:
         profile = self._resolve_profile(request.model)
+        resolved_conversation_hint = (
+            conversation_id_hint or self._extract_conversation_hint(request)
+        )
         started_at = datetime.now(timezone.utc)
         runtime_started = perf_counter()
 
@@ -77,6 +85,7 @@ class ChatService:
                     public_model=profile.public_id,
                     runtime_model=profile.runtime_model,
                     request_messages=request.messages,
+                    conversation_id_hint=resolved_conversation_hint,
                     error_type=exc.error_type,
                     error_code=exc.code,
                     error_message=exc.message,
@@ -138,6 +147,7 @@ class ChatService:
             public_model=profile.public_id,
             runtime_model=profile.runtime_model,
             request_messages=request.messages,
+            conversation_id_hint=resolved_conversation_hint,
             response_content=runtime_result.content,
             usage=usage,
             started_at=started_at,
@@ -157,6 +167,7 @@ class ChatService:
             response_id=response_id,
             created=created,
             public_model=profile.public_id,
+            conversation_id=persistence.conversation_id,
             content=runtime_result.content,
             choices=[
                 ChatCompletionChoice(
@@ -184,3 +195,15 @@ class ChatService:
             code="unknown_profile",
             message="Unknown assistant profile",
         )
+
+    def _extract_conversation_hint(
+        self, request: ChatCompletionRequest
+    ) -> str | None:
+        if not request.metadata:
+            return None
+
+        for key in ("conversation_id", "chat_id", "session_id"):
+            value = request.metadata.get(key)
+            if value:
+                return value
+        return None

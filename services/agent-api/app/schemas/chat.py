@@ -16,6 +16,7 @@ class ChatCompletionRequest(BaseModel):
     model: str
     messages: list[ChatMessage]
     stream: bool = False
+    metadata: dict[str, str] | None = None
 
 
 class ChatCompletionChoiceMessage(BaseModel):

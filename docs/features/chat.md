@@ -102,6 +102,13 @@ Rules:
 - canonical `conversations.id` is owned by the backend
 - the backend may create or continue a canonical conversation based on request metadata and policy
 
+Current v1 baseline:
+
+- `agent-api` accepts an explicit canonical hint via `X-Conversation-ID`
+- `agent-api` also accepts `metadata.conversation_id` when the client can send it
+- if no hint is available, `agent-api` continues the best matching conversation whose stored transcript is a prefix of the incoming message list
+- if no matching conversation exists, `agent-api` creates a new canonical conversation
+
 The result of this step is one canonical `conversation_id` used for persistence and tracing.
 
 ### 5. Transcript normalization
@@ -176,6 +183,8 @@ If later tool execution becomes part of the text path, tool activity must be rec
 
 Return one complete OpenAI-compatible completion payload.
 
+The canonical backend conversation identifier is returned in the `X-Conversation-ID` response header.
+
 #### Streaming mode
 
 Return SSE chunks in stable order.
@@ -185,6 +194,7 @@ Rules:
 - if failure occurs before the first chunk, return the normal error envelope
 - if failure occurs after streaming starts, log it with the same `request_id` and terminate the stream as cleanly as possible
 - persistence and model-run finalization must still be completed or explicitly failed
+- the `X-Conversation-ID` response header still carries the canonical conversation identifier
 
 ## Persistence model touched by the text flow
 

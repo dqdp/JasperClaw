@@ -63,13 +63,14 @@ Implemented:
 - request ID attachment via `X-Request-ID`
 - structured request logging for request lifecycle, readiness, runtime, and storage outcomes
 - minimal request-scoped persistence for `conversations`, `messages`, and `model_runs`
+- baseline conversation continuity via transcript-prefix matching and optional canonical conversation hints
 - forward-only in-process SQL migration runner for the current canonical text-path schema
 - stubbed `POST /v1/audio/transcriptions`
 - stubbed `POST /v1/audio/speech`
 
 Not yet implemented:
 
-- conversation continuity across requests
+- stronger client-to-backend conversation binding beyond transcript-prefix matching and optional hints
 - true token streaming from `Ollama`
 - retrieval-aware or memory-backed prompt assembly
 - tool execution
