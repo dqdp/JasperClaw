@@ -1,6 +1,8 @@
 {$DOMAIN} {
   encode gzip
 
+  reverse_proxy /webhook* telegram-ingress:8080
+  reverse_proxy /telegram/webhook* telegram-ingress:8080
   reverse_proxy /api/* open-webui:8080
   reverse_proxy /ws* open-webui:8080
   reverse_proxy open-webui:8080

@@ -576,6 +576,130 @@ Notes:
 
 - defaults to `3`
 
+## Telegram ingress variables
+
+### `TELEGRAM_WEBHOOK_PATH`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- webhook route that receives Telegram updates
+
+Notes:
+
+- keep route narrow and stable for operator and firewall allowlisting
+- examples in repo use `/telegram/webhook`
+
+### `TELEGRAM_WEBHOOK_SECRET_TOKEN`
+
+Required: yes for Telegram-hosted webhook delivery
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- constant-time compare secret token from header `X-Telegram-Bot-Api-Secret-Token`
+
+Notes:
+
+- this is a webhook authenticity guard, not a full auth for downstream user actions
+- rotate this value with the bot token as part of the same security domain
+
+### `TELEGRAM_BOT_TOKEN`
+
+Required: yes once Telegram ingress is enabled
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- Telegram Bot API authentication token
+
+### `TELEGRAM_API_BASE_URL`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- base URL for Telegram Bot API
+
+Notes:
+
+- defaults to `https://api.telegram.org`
+
+### `AGENT_API_BASE_URL`
+
+Required: yes
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- upstream `agent-api` endpoint for `/v1/chat/completions`
+
+### `AGENT_API_KEY`
+
+Required: yes
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- bearer token for `agent-api` internal chat API
+
+Notes:
+
+- use the same value as `INTERNAL_OPENAI_API_KEY` unless a dedicated ingress key is required
+
+### `AGENT_API_MODEL`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- default runtime model used for Telegram user messages
+
+Notes:
+
+- defaults to `assistant-fast`
+
+### `TELEGRAM_REQUEST_TIMEOUT_SECONDS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- request timeout for downstream API calls
+
+Notes:
+
+- defaults to `5`
+
 ## Speech-related variables
 
 These remain part of the config surface even though real voice delivery comes after the text path stabilizes.
@@ -699,6 +823,14 @@ Additional required only if enabled:
 - `SPOTIFY_TIMEOUT_SECONDS` (if custom timeout is required)
 - `SPOTIFY_SEARCH_TOP_K` (if non-default result limit is required)
 
+### Telegram ingress
+
+Additional required if enabled:
+
+- `TELEGRAM_BOT_TOKEN`
+- `AGENT_API_KEY`
+- `TELEGRAM_WEBHOOK_SECRET_TOKEN`
+
 ### Voice path
 
 Additional required only if enabled:
@@ -724,21 +856,24 @@ Committed templates:
 - `.env.example`
 - `infra/env/app.example.env`
 - `infra/env/prod.example.env`
+- `infra/env/telegram.example.env`
 
 Local operator files:
 
 - `.env`
 - `infra/env/app.env`
 - `infra/env/prod.env`
+- `infra/env/telegram.env`
 
 ## Example operator workflow
 
 1. Copy `.env.example` to `.env`
 2. Copy `infra/env/app.example.env` to `infra/env/app.env`
 3. Copy `infra/env/prod.example.env` to `infra/env/prod.env` if using a production-specific split
-4. Fill in required secrets and runtime targets
-5. Apply pending schema changes before serving traffic, for example `make migrate` locally or `docker compose ... run --rm agent-api python -m app.cli migrate` in deployment automation
-6. Validate compose configuration before deploy, for example `docker compose --env-file .env -f infra/compose/compose.yml config`
+4. Copy `infra/env/telegram.example.env` to `infra/env/telegram.env` if Telegram ingress is enabled
+5. Fill in required secrets and runtime targets
+6. Apply pending schema changes before serving traffic, for example `make migrate` locally or `docker compose ... run --rm agent-api python -m app.cli migrate` in deployment automation
+7. Validate compose configuration before deploy, for example `docker compose --env-file .env -f infra/compose/compose.yml config`
 
 ## Follow-up work
 

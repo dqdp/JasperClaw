@@ -19,6 +19,7 @@ services=(
   "services/stt-service"
   "services/tts-service"
   "services/tools-gateway"
+  "services/telegram-ingress"
 )
 
 for service in "${services[@]}"; do

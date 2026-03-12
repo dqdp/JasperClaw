@@ -23,6 +23,8 @@ jobs:
             image_name: local-assistant-stt
           - service: tts-service
             image_name: local-assistant-tts
+          - service: telegram-ingress
+            image_name: local-assistant-telegram-ingress
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

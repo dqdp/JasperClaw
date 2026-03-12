@@ -2,3 +2,4 @@
 -r services/stt-service/requirements.txt
 -r services/tts-service/requirements.txt
 -r services/tools-gateway/requirements.txt
+-r services/telegram-ingress/requirements.txt

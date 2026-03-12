@@ -110,9 +110,18 @@ Implemented:
 - in-process `web-search` and `spotify-*` policy-gated execution in `agent-api`
 - canonical `tool_executions` persistence and basic tool planning audit
 
+### Telegram ingress integration
+
+Implemented:
+
+- webhook ingestion service for Telegram updates
+- idempotent update handling in the bridge layer
+- `agent-api` fan-out path with conversation reuse by chat id
+
 Not yet implemented:
 
-- Telegram ingress integration (planned as a separate safe bridge to `agent-api`, see roadmap/backlog)
+- webhook registration automation (`setWebhook`) and polling fallback
+- abuse controls beyond duplicate suppression and token verification
 
 ### Database and memory
 
