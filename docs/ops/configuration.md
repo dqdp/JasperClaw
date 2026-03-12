@@ -982,6 +982,9 @@ Additional required if enabled:
 - `TELEGRAM_WEBHOOK_URL` (required when webhook mode is used)
 - `TELEGRAM_POLLING_ENABLED` (required only when webhook URL cannot be configured)
 - `TELEGRAM_RATE_LIMIT_*` values should be tuned for expected traffic and abuse tolerance
+### Additional optional variable
+
+- `TELEGRAM_ALLOWED_COMMANDS` (comma-separated command allowlist)
 
 ### Voice path
 
