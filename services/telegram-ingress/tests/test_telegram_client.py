@@ -120,3 +120,20 @@ def test_get_updates_filters_to_dict_payloads_and_extracts_result() -> None:
     ]
     assert fake_http.requests[0][0] == "GET"
     assert fake_http.requests[0][3] == {"timeout": 5, "limit": 10}
+
+
+def test_send_message_surfaces_http_status_code_for_retry_classification() -> None:
+    fake_http = _FakeAsyncClient(
+        responses=[_FakeResponse(503, {"ok": False}, text="temporary failure")]
+    )
+    client = TelegramClient(
+        bot_token="bot-token",
+        http_client=fake_http,
+    )
+
+    import asyncio
+
+    with pytest.raises(TelegramSendError) as excinfo:
+        asyncio.run(client.send_message(chat_id=11, text="hello"))
+
+    assert excinfo.value.status_code == 503

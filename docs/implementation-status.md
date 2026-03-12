@@ -123,6 +123,7 @@ Implemented:
 - optional polling fallback when webhook URL is not configured
 - operational alert relay via `/telegram/alerts` using a dedicated alert bot token
 - severity-aware alert routing via default/warning/critical Telegram recipient groups
+- durable alert outbox with retry/dedupe semantics for operational Telegram fanout
 - minimal command routing for `/help`, `/status`, and `/ask`
 - slash-command allowlist and request ID continuity across ingress handling
 - Telegram-originated tool actions are tagged at ingress and denied inside `agent-api`
@@ -130,7 +131,7 @@ Implemented:
 Not yet implemented:
 
 - richer command/approval routing beyond the current local command set
-- persistent alert retries, dedupe, and escalation behavior for operational fanout
+- escalation behavior beyond the current bounded retry/dedupe alert fanout baseline
 
 ### Database and memory
 

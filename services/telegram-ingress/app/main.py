@@ -7,11 +7,19 @@ from time import perf_counter
 from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 
 from app.clients.agent_api import AgentApiClient
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, log_event, new_request_id
+from app.services.alert_delivery import (
+    AlertDeliveryHandler,
+    AlertDeliveryRequest,
+    AlertDeliveryService,
+    AlertDeliveryStorageError,
+    PostgresAlertDeliveryRepository,
+)
 from app.services.bridge import (
     TelegramBridgeRetryableError,
     TelegramBridgeService,
@@ -57,6 +65,7 @@ def create_app(
     *,
     settings: Settings | None = None,
     bridge_service: TelegramBridgeService | None = None,
+    alert_delivery_service: AlertDeliveryHandler | None = None,
 ) -> FastAPI:
     config = settings if settings is not None else get_settings()
     app = FastAPI(title="telegram-ingress", version="0.1.0")
@@ -85,23 +94,12 @@ def create_app(
         return response
 
     telegram_client = None
-    alert_telegram_client = None
     if bridge_service is None:
         telegram_client = TelegramClient(
             bot_token=config.telegram_bot_token,
             api_base_url=config.telegram_api_base_url,
             timeout_seconds=config.request_timeout_seconds,
         )
-        if config.telegram_alert_bot_token and _unique_chat_ids(
-            config.telegram_alert_chat_ids,
-            config.telegram_alert_warning_chat_ids,
-            config.telegram_alert_critical_chat_ids,
-        ):
-            alert_telegram_client = TelegramClient(
-                bot_token=config.telegram_alert_bot_token,
-                api_base_url=config.telegram_alert_api_base_url,
-                timeout_seconds=config.request_timeout_seconds,
-            )
         bridge_service = TelegramBridgeService(
             agent_client=AgentApiClient(
                 base_url=config.agent_api_base_url,
@@ -112,7 +110,28 @@ def create_app(
             settings=config,
         )
 
+    alert_telegram_client = None
+    alert_chat_ids = _unique_chat_ids(
+        config.telegram_alert_chat_ids,
+        config.telegram_alert_warning_chat_ids,
+        config.telegram_alert_critical_chat_ids,
+    )
+    if alert_delivery_service is None and config.telegram_alert_bot_token and alert_chat_ids:
+        alert_telegram_client = TelegramClient(
+            bot_token=config.telegram_alert_bot_token,
+            api_base_url=config.telegram_alert_api_base_url,
+            timeout_seconds=config.request_timeout_seconds,
+        )
+        alert_delivery_service = AlertDeliveryService(
+            repository=PostgresAlertDeliveryRepository(config.database_url),
+            telegram_client=alert_telegram_client,
+            retry_backoff_seconds=config.telegram_alert_retry_backoff_seconds,
+            max_attempts=config.telegram_alert_max_attempts,
+            claim_ttl_seconds=config.telegram_alert_claim_ttl_seconds,
+        )
+
     polling_task: asyncio.Task[None] | None = None
+    alert_retry_task: asyncio.Task[None] | None = None
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -171,12 +190,18 @@ def create_app(
 
     @app.on_event("startup")
     async def _startup() -> None:
-        nonlocal polling_task
+        nonlocal alert_retry_task, polling_task
         if config.telegram_webhook_url and not config.telegram_webhook_secret_token:
             raise RuntimeError(
                 "TELEGRAM_WEBHOOK_SECRET_TOKEN is required when "
                 "TELEGRAM_WEBHOOK_URL is configured"
             )
+        if (
+            alert_delivery_service is not None
+            and config.telegram_alert_retry_worker_enabled
+        ):
+            alert_retry_task = asyncio.create_task(_retry_alert_deliveries_forever())
+            app.state.alert_retry_task = alert_retry_task
         if not config.is_operational() or telegram_client is None:
             return
 
@@ -299,16 +324,51 @@ def create_app(
                         lines.append(line)
 
             deliveries = tuple(
-                (chat_id, "\n".join(lines))
-                for chat_id, lines in recipient_lines.items()
-                if lines
+                sorted(
+                    (
+                        (chat_id, "\n".join(lines))
+                        for chat_id, lines in recipient_lines.items()
+                        if lines
+                    ),
+                    key=lambda item: item[0],
+                )
             )
             return AlertDeliveryPlan(
                 deliveries=deliveries,
                 matched_alerts=matched_alerts,
             )
 
-        return AlertDeliveryPlan(deliveries=(), matched_alerts=0)
+        return AlertDeliveryPlan(
+            deliveries=(),
+            matched_alerts=0,
+        )
+
+    def _alert_idempotency_key(
+        *,
+        payload: dict[str, object],
+        header_value: str | None,
+    ) -> str | None:
+        if header_value is not None:
+            key = header_value.strip()
+            if key:
+                return key
+        key = _extract_field("idempotency_key", source=payload)
+        return key or None
+
+    async def _retry_alert_deliveries_forever() -> None:
+        assert alert_delivery_service is not None
+        poll_seconds = max(config.telegram_alert_retry_poll_seconds, 0.1)
+        while True:
+            try:
+                processed = await alert_delivery_service.process_due_deliveries(limit=10)
+            except Exception:
+                logger.exception("telegram alert retry loop error")
+                await asyncio.sleep(poll_seconds)
+                continue
+            if processed == 0:
+                await asyncio.sleep(poll_seconds)
+            else:
+                await asyncio.sleep(0)
 
     @app.post(config.webhook_path)
     async def webhook(
@@ -345,14 +405,15 @@ def create_app(
 
     @app.post("/telegram/alerts")
     async def telegram_alerts(
+        request: Request,
         payload: dict[str, object] = Body(...),
         x_telegram_alert_token: str | None = Header(default=None, alias="X-Telegram-Alert-Token"),
-    ) -> dict[str, object]:
-        if alert_telegram_client is None or not _unique_chat_ids(
-            config.telegram_alert_chat_ids,
-            config.telegram_alert_warning_chat_ids,
-            config.telegram_alert_critical_chat_ids,
-        ):
+        x_telegram_alert_idempotency_key: str | None = Header(
+            default=None,
+            alias="X-Telegram-Alert-Idempotency-Key",
+        ),
+    ) -> object:
+        if alert_delivery_service is None or not alert_chat_ids:
             raise HTTPException(
                 status_code=503,
                 detail="telegram alert relay is not configured",
@@ -374,34 +435,68 @@ def create_app(
                 "reason": "alert_policy_filtered",
                 "matched_alerts": plan.matched_alerts,
             }
+        idempotency_key = _alert_idempotency_key(
+            payload=payload,
+            header_value=x_telegram_alert_idempotency_key,
+        )
 
         try:
-            for chat_id, message in plan.deliveries:
-                await alert_telegram_client.send_message(chat_id=chat_id, text=message)
-        except Exception as exc:
+            result = await alert_delivery_service.submit_delivery(
+                request=AlertDeliveryRequest(
+                    deliveries=plan.deliveries,
+                    matched_alerts=plan.matched_alerts,
+                    idempotency_key=idempotency_key,
+                ),
+                request_id=request.state.request_id,
+            )
+        except AlertDeliveryStorageError as exc:
             log_event(
-                "telegram_alert_delivery_failed",
-                request_id="alert_delivery",
+                "telegram_alert_delivery_storage_failed",
+                request_id=request.state.request_id,
                 recipients=len(plan.deliveries),
                 matched_alerts=plan.matched_alerts,
                 error_type=type(exc).__name__,
             )
             raise HTTPException(
                 status_code=503,
-                detail="telegram alert delivery failed",
+                detail="telegram alert delivery unavailable",
             ) from exc
-        return {
-            "status": "sent",
-            "recipients": len(plan.deliveries),
-            "matched_alerts": plan.matched_alerts,
+
+        log_event(
+            "telegram_alert_delivery_submitted",
+            request_id=request.state.request_id,
+            delivery_id=result.delivery_id,
+            status=result.status,
+            recipients=result.recipients,
+            matched_alerts=result.matched_alerts,
+            deduplicated=result.deduplicated,
+        )
+        response_payload = {
+            "status": result.status,
+            "delivery_id": result.delivery_id,
+            "recipients": result.recipients,
+            "matched_alerts": result.matched_alerts,
+            "deduplicated": result.deduplicated,
         }
+        response_status = 200
+        if result.status == "accepted":
+            response_status = 202
+        elif result.status == "failed":
+            response_status = 502
+        return JSONResponse(status_code=response_status, content=response_payload)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
+        if alert_retry_task is not None:
+            alert_retry_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await alert_retry_task
         if polling_task is not None:
             polling_task.cancel()
             with suppress(asyncio.CancelledError):
                 await polling_task
+        if alert_delivery_service is not None:
+            await alert_delivery_service.close()
         if alert_telegram_client is not None:
             await alert_telegram_client.close()
         await bridge_service.close()

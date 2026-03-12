@@ -12,3 +12,4 @@ Index:
 - `0003_memory_foundation.sql`: open when changing memory, embeddings, or retrieval trace tables.
 - `0004_tool_execution_audit.sql`: open when changing tool execution audit persistence.
 - `0005_client_conversation_bindings.sql`: open when reviewing backend-owned client session to canonical conversation bindings.
+- `0006_telegram_alert_outbox.sql`: open when reviewing durable Telegram alert delivery, retry, and target fanout persistence.

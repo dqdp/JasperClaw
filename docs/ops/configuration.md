@@ -910,6 +910,86 @@ Notes:
 - defaults to `false`
 - direct `text`/`message` alert payloads are not filtered by this setting
 
+### `TELEGRAM_ALERT_RETRY_BACKOFF_SECONDS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- fixed backoff before retrying a retryable Telegram alert-delivery target from the durable outbox
+
+Notes:
+
+- defaults to `30`
+
+### `TELEGRAM_ALERT_RETRY_POLL_SECONDS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- polling interval for the background worker that drains due Telegram alert deliveries from the durable outbox
+
+Notes:
+
+- defaults to `5`
+
+### `TELEGRAM_ALERT_CLAIM_TTL_SECONDS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- lease TTL for an in-flight durable Telegram alert delivery before another worker may reclaim it
+
+Notes:
+
+- defaults to `30`
+
+### `TELEGRAM_ALERT_MAX_ATTEMPTS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- maximum number of attempts per Telegram alert-delivery target before the target becomes terminally failed
+
+Notes:
+
+- defaults to `5`
+
+### `TELEGRAM_ALERT_RETRY_WORKER_ENABLED`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- whether the background worker that drains durable Telegram alert retries is enabled
+
+Notes:
+
+- defaults to `true`
+
 ### `AGENT_API_MODEL`
 
 Required: no

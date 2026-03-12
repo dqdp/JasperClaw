@@ -93,6 +93,7 @@ class Settings:
     agent_api_base_url: str = "http://agent-api:8080"
     agent_api_key: str = ""
     agent_api_model: str = "assistant-fast"
+    database_url: str = "postgresql://assistant:change-me@postgres:5432/assistant"
 
     # Telegram bot credentials and webhook guard.
     telegram_bot_token: str = ""
@@ -128,6 +129,11 @@ class Settings:
     telegram_alert_warning_chat_ids: tuple[int, ...] = ()
     telegram_alert_critical_chat_ids: tuple[int, ...] = ()
     telegram_alert_send_resolved: bool = False
+    telegram_alert_retry_backoff_seconds: float = 30.0
+    telegram_alert_retry_poll_seconds: float = 5.0
+    telegram_alert_claim_ttl_seconds: float = 30.0
+    telegram_alert_max_attempts: int = 5
+    telegram_alert_retry_worker_enabled: bool = True
 
     def is_operational(self) -> bool:
         return bool(self.telegram_bot_token and self.agent_api_key)
@@ -135,10 +141,23 @@ class Settings:
 
 @lru_cache
 def get_settings() -> Settings:
+    database_url = os.getenv("DATABASE_URL", "").strip()
+    if not database_url:
+        postgres_host = os.getenv("POSTGRES_HOST", "postgres").strip()
+        postgres_port = os.getenv("POSTGRES_PORT", "5432").strip()
+        postgres_db = os.getenv("POSTGRES_DB", "assistant").strip()
+        postgres_user = os.getenv("POSTGRES_USER", "assistant").strip()
+        postgres_password = os.getenv("POSTGRES_PASSWORD", "change-me")
+        database_url = (
+            f"postgresql://{postgres_user}:{postgres_password}"
+            f"@{postgres_host}:{postgres_port}/{postgres_db}"
+        )
+
     return Settings(
         agent_api_base_url=(os.getenv("AGENT_API_BASE_URL", "http://agent-api:8080").strip()),
         agent_api_key=_strip_secret(os.getenv("AGENT_API_KEY", "")),
         agent_api_model=os.getenv("AGENT_API_MODEL", "assistant-fast").strip(),
+        database_url=database_url,
         telegram_bot_token=_strip_secret(os.getenv("TELEGRAM_BOT_TOKEN", "")),
         telegram_webhook_secret_token=_strip_secret(os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "")),
         telegram_api_base_url=os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org").strip(),
@@ -179,5 +198,25 @@ def get_settings() -> Settings:
         telegram_alert_send_resolved=_get_bool_env(
             "TELEGRAM_ALERT_SEND_RESOLVED",
             False,
+        ),
+        telegram_alert_retry_backoff_seconds=_get_float_env(
+            "TELEGRAM_ALERT_RETRY_BACKOFF_SECONDS",
+            30.0,
+        ),
+        telegram_alert_retry_poll_seconds=_get_float_env(
+            "TELEGRAM_ALERT_RETRY_POLL_SECONDS",
+            5.0,
+        ),
+        telegram_alert_claim_ttl_seconds=_get_float_env(
+            "TELEGRAM_ALERT_CLAIM_TTL_SECONDS",
+            30.0,
+        ),
+        telegram_alert_max_attempts=_get_int_env(
+            "TELEGRAM_ALERT_MAX_ATTEMPTS",
+            5,
+        ),
+        telegram_alert_retry_worker_enabled=_get_bool_env(
+            "TELEGRAM_ALERT_RETRY_WORKER_ENABLED",
+            True,
         ),
     )

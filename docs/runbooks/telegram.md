@@ -27,11 +27,12 @@ This runbook separates:
 - Minimal local command routing is implemented for `/help`, `/status`, and `/ask`.
 - `X-Request-ID` continuity is preserved across ingress handling and downstream `agent-api` calls.
 - Telegram-originated tool actions remain blocked inside `agent-api` policy enforcement.
+- Operational alert delivery uses durable retry/dedupe semantics via a Postgres-backed outbox.
 
 Что не реализовано сейчас:
 
 - richer command/approval model beyond `/help`, `/status`, and `/ask`;
-- production-grade persistent retries/dedupe/escalation for operational alerts beyond the current routing baseline.
+- escalation and terminal-failure handling beyond the current durable alert-delivery baseline.
 
 ## Enterprise pattern (practical baseline)
 
@@ -139,7 +140,7 @@ curl -s -X POST \
 
 - route из Alertmanager/SLO monitor в webhook endpoint,
 - использовать route groups по severity (`default`, `warning`, `critical`),
-- для durable retry/escalation использовать внешний alerting pipeline или отдельный follow-up slice.
+- текущий ingress уже умеет durable retry/dedupe; следующий follow-up slice нужен только для escalation/terminal-failure policy.
 
 ## Incident checks
 

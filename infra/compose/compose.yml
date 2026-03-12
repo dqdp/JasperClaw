@@ -107,9 +107,17 @@ services:
     env_file:
       - path: ../env/telegram.env
         required: false
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: assistant
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     depends_on:
       agent-api:
         condition: service_started
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')\""]
       interval: 10s
@@ -118,6 +126,7 @@ services:
     networks:
       - control
       - frontend
+      - runtime
 
   stt-service:
     build:

@@ -48,8 +48,8 @@ def _wait_for_success(
     while True:
         try:
             last_result = request_fn()
-        except urllib.error.URLError as exc:
-            last_result = (0, {"error": str(exc.reason)})
+        except (urllib.error.URLError, OSError) as exc:
+            last_result = (0, {"error": str(getattr(exc, "reason", exc))})
 
         status, payload = last_result
         if success_predicate(status, payload):
@@ -68,8 +68,8 @@ def main() -> int:
     while True:
         try:
             status, payload = _request_json(f"{base_url}/readyz")
-        except urllib.error.URLError as exc:
-            status, payload = 0, {"error": str(exc.reason)}
+        except (urllib.error.URLError, OSError) as exc:
+            status, payload = 0, {"error": str(getattr(exc, "reason", exc))}
         if status == 200 and payload.get("status") == "ready":
             break
         if time.monotonic() >= deadline:

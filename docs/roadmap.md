@@ -103,12 +103,13 @@ Current baseline:
 - webhook registration and long-polling fallback are both supported
 - operational alert relay is available through a dedicated bot token and auth token
 - alert delivery policy now supports severity-aware routing across default, warning, and critical recipient groups
+- operational alert fanout now has durable retry/dedupe semantics via a Postgres-backed outbox
 - no client-to-client tool bypass; Telegram-originated tool actions remain behind typed capabilities and are currently denied by policy
 - request correlation and audit continuity are preserved across `telegram-ingress` and `agent-api`
 
 Remaining hardening focus:
 
-- add persistent retries, dedupe, and escalation behavior for operational alert fanout
+- add escalation and terminal-failure handling beyond the current durable retry/dedupe alert fanout baseline
 - expand command/approval behavior only when a concrete non-chat operational need justifies it
 
 ## Milestone 3: Voice and Hardening

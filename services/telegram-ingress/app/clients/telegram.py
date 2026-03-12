@@ -6,6 +6,10 @@ import httpx
 class TelegramSendError(RuntimeError):
     """Raised when Telegram sendMessage API returns a transport or protocol failure."""
 
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
 
 class TelegramClient:
     def __init__(
@@ -122,7 +126,10 @@ class TelegramClient:
             raise TelegramSendError(str(exc)) from exc
 
         if response.status_code >= 400:
-            raise TelegramSendError(f"HTTP {response.status_code}: {response.text}")
+            raise TelegramSendError(
+                f"HTTP {response.status_code}: {response.text}",
+                status_code=response.status_code,
+            )
 
         try:
             payload = response.json()

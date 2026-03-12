@@ -304,31 +304,50 @@ def main() -> int:
             }
         ],
     }
-    status, payload = _wait_for_success(
-        request_fn=lambda: _request_json(
-            f"{ingress_base_url}/telegram/alerts",
-            headers={"X-Telegram-Alert-Token": alert_token},
-            body=critical_alert,
-            method="POST",
-        ),
-        success_predicate=lambda status, payload: status == 200,
-        timeout_seconds=30.0,
-        error_context="telegram alert routing did not stabilize before timeout",
-    )
     expected_alert_recipients = {
         *alert_default_chat_ids,
         *alert_warning_chat_ids,
         *alert_critical_chat_ids,
     }
-    _assert(payload.get("status") == "sent", f"unexpected alert routing payload: {payload}")
+    alert_idempotency_key = "smoke-critical-alert-1"
+
+    status, payload = _request_json(
+        f"{fake_base_url}/test/fail-next-send",
+        body={"status_code": 503, "description": "simulated-alert-send-failure"},
+        method="POST",
+    )
+    if status != 200:
+        raise SystemExit(f"failed to arm alert send failure: {status} {payload}")
+
+    status, payload = _request_json(
+        f"{ingress_base_url}/telegram/alerts",
+        headers={
+            "X-Telegram-Alert-Token": alert_token,
+            "X-Telegram-Alert-Idempotency-Key": alert_idempotency_key,
+        },
+        body=critical_alert,
+        method="POST",
+    )
+    _assert(status == 202, f"expected accepted alert payload, got {status} {payload}")
+    _assert(payload.get("status") == "accepted", f"unexpected accepted alert payload: {payload}")
+    _assert(payload.get("deduplicated") is False, f"unexpected accepted dedupe flag: {payload}")
     _assert(
         payload.get("recipients") == len(expected_alert_recipients),
         f"unexpected alert recipient count: {payload}",
     )
-    state = _fake_state(fake_base_url)
+    _, state = _wait_for_success(
+        request_fn=lambda: (200, _fake_state(fake_base_url)),
+        success_predicate=lambda _, state: len(state["sent_messages"]) == len(expected_alert_recipients),
+        timeout_seconds=30.0,
+        error_context="telegram alert retry did not complete before timeout",
+    )
     _assert(
         len(state["sent_messages"]) == len(expected_alert_recipients),
         f"unexpected alert sent state: {state}",
+    )
+    _assert(
+        len(state["send_attempts"]) == len(expected_alert_recipients) + 1,
+        f"unexpected alert attempt count after retry: {state}",
     )
     sent_alert_chats = {message["chat_id"] for message in state["sent_messages"]}
     _assert(
@@ -338,6 +357,28 @@ def main() -> int:
     for message in state["sent_messages"]:
         _assert(message["bot_token"] == alert_bot_token, f"unexpected alert bot token in fake state: {state}")
         _assert("[critical]" in message["text"], f"critical alert text missing severity marker: {state}")
+
+    status, payload = _request_json(
+        f"{ingress_base_url}/telegram/alerts",
+        headers={
+            "X-Telegram-Alert-Token": alert_token,
+            "X-Telegram-Alert-Idempotency-Key": alert_idempotency_key,
+        },
+        body=critical_alert,
+        method="POST",
+    )
+    _assert(status == 200, f"expected deduplicated alert replay 200, got {status} {payload}")
+    _assert(payload.get("status") == "sent", f"unexpected deduplicated alert payload: {payload}")
+    _assert(payload.get("deduplicated") is True, f"expected deduplicated alert replay: {payload}")
+    replay_state = _fake_state(fake_base_url)
+    _assert(
+        replay_state["sent_messages"] == state["sent_messages"],
+        f"deduplicated replay should not send new messages: {replay_state}",
+    )
+    _assert(
+        replay_state["send_attempts"] == state["send_attempts"],
+        f"deduplicated replay should not create new send attempts: {replay_state}",
+    )
 
     resolved_alert = {
         "status": "resolved",
