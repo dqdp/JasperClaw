@@ -167,3 +167,23 @@ Provide a safe Telegram entry point that uses `agent-api` as the only canonical 
 - each epic can map to a project milestone or parent issue
 - each task ID is stable enough to reuse in branch names and commit messages
 - if needed, EPIC 2 and EPIC 3 can run partially in parallel after EPIC 1 is stable
+
+## Suggested Linear items for Telegram ingress
+
+Use this block as a direct starting point when creating EPIC 6 in Linear:
+
+- [Epic] Telegram Channel Ingress
+  - Owner: Platform
+  - Description: Provide a safe Telegram ingress bridge to `agent-api` without bypassing the canonical control plane.
+  - Acceptance criteria:
+    - Telegram messages are handled via `/v1/chat/completions` fan-in.
+    - No public Telegram tool endpoint is introduced.
+    - Side-effect actions are only executed through approved typed capabilities.
+    - Security checklist (token scope, signing, allowlists, idempotency, rate limits) is implemented.
+- [Subtask] TGX-1: Define Telegram bridge contract
+- [Subtask] TGX-2: Normalize Telegram updates to `POST /v1/chat/completions`
+- [Subtask] TGX-3: Map Telegram sessions to `conversation_id`
+- [Subtask] TGX-4: Implement safe outbound send path
+- [Subtask] TGX-5: Add security review checklist and controls
+- [Subtask] TGX-6: Implement policy guards for Telegram-originated tool actions
+- [Subtask] TGX-7: Add observability and audit continuity checks
