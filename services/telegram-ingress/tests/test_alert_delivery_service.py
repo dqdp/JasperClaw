@@ -149,8 +149,19 @@ class _InMemoryAlertDeliveryRepository:
         else:
             pending_targets = [target for target in updated_targets if target.status == "pending"]
             if pending_targets:
+                next_retry_delay_seconds = retry_backoff_seconds
+                for target in pending_targets:
+                    attempt = attempt_map.get(target.chat_id)
+                    if (
+                        attempt is not None
+                        and attempt.retry_after_seconds is not None
+                    ):
+                        next_retry_delay_seconds = max(
+                            next_retry_delay_seconds,
+                            attempt.retry_after_seconds,
+                        )
                 status = "pending"
-                next_attempt_at = completed_at + timedelta(seconds=retry_backoff_seconds)
+                next_attempt_at = completed_at + timedelta(seconds=next_retry_delay_seconds)
                 last_error_code = pending_targets[0].last_error_code
                 last_error_message = pending_targets[0].last_error_message
             else:
@@ -284,6 +295,76 @@ def test_submit_delivery_retries_rate_limited_targets_in_background() -> None:
     assert record.status == "completed"
     assert record.attempt_count == 2
     assert telegram_client.sent_messages == [(11, "critical alert")]
+
+
+def test_submit_delivery_uses_retry_after_when_rate_limit_exceeds_default_backoff() -> None:
+    repository = _InMemoryAlertDeliveryRepository()
+    telegram_client = _SequencedTelegramClient(
+        failures={
+            11: [
+                TelegramSendError(
+                    "rate limited",
+                    status_code=429,
+                    retry_after_seconds=10.0,
+                )
+            ]
+        }
+    )
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        retry_backoff_seconds=1.0,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    submission = asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+    record = repository.get_delivery(delivery_id=submission.delivery_id)
+
+    assert submission.status == "accepted"
+    assert record is not None
+    assert record.status == "pending"
+    assert record.next_attempt_at is not None
+    remaining_seconds = (record.next_attempt_at - datetime.now(timezone.utc)).total_seconds()
+    assert remaining_seconds >= 8.0
+
+
+def test_submit_delivery_keeps_default_backoff_when_retry_after_is_shorter() -> None:
+    repository = _InMemoryAlertDeliveryRepository()
+    telegram_client = _SequencedTelegramClient(
+        failures={
+            11: [
+                TelegramSendError(
+                    "rate limited",
+                    status_code=429,
+                    retry_after_seconds=1.0,
+                )
+            ]
+        }
+    )
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        retry_backoff_seconds=5.0,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    submission = asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+    record = repository.get_delivery(delivery_id=submission.delivery_id)
+
+    assert submission.status == "accepted"
+    assert record is not None
+    assert record.status == "pending"
+    assert record.next_attempt_at is not None
+    remaining_seconds = (record.next_attempt_at - datetime.now(timezone.utc)).total_seconds()
+    assert remaining_seconds >= 4.0
 
 
 def test_duplicate_pending_delivery_does_not_bypass_retry_backoff() -> None:

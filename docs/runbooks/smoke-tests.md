@@ -138,7 +138,7 @@ Expected result:
 - invalid webhook secret is rejected
 - retry-safe downstream failure behavior is preserved
 - `/telegram/alerts` rejects invalid auth
-- retryable `critical` alert delivery returns `accepted`, then completes via durable retry without duplicate sends on replay
+- retryable `critical` alert delivery returns `accepted`, honors Telegram `429 retry_after`, then completes via durable retry without duplicate sends on replay when the same explicit idempotency key is reused
 - `resolved` alert payloads are filtered by default unless explicitly enabled
 
 ## Pass/fail rule

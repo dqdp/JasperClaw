@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from threading import Lock
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 
@@ -16,6 +17,7 @@ class FakeTelegramState:
     updates: list[dict[str, Any]] = field(default_factory=list)
     fail_next_send_status_code: int | None = None
     fail_next_send_description: str = "telegram-fake-send-failure"
+    fail_next_send_retry_after: int | None = None
 
 
 class SendMessageRequest(BaseModel):
@@ -40,6 +42,7 @@ class FailNextSendRequest(BaseModel):
 
     status_code: int = 503
     description: str = "telegram-fake-send-failure"
+    retry_after: int | None = None
 
 
 app = FastAPI(title="telegram-fake", version="0.1.0")
@@ -56,6 +59,7 @@ def _snapshot() -> dict[str, Any]:
             "updates": list(_state.updates),
             "fail_next_send_status_code": _state.fail_next_send_status_code,
             "fail_next_send_description": _state.fail_next_send_description,
+            "fail_next_send_retry_after": _state.fail_next_send_retry_after,
         }
 
 
@@ -78,6 +82,7 @@ def test_reset() -> dict[str, str]:
         _state.updates.clear()
         _state.fail_next_send_status_code = None
         _state.fail_next_send_description = "telegram-fake-send-failure"
+        _state.fail_next_send_retry_after = None
     return {"status": "ok"}
 
 
@@ -86,10 +91,12 @@ def fail_next_send(request: FailNextSendRequest) -> dict[str, Any]:
     with _lock:
         _state.fail_next_send_status_code = request.status_code
         _state.fail_next_send_description = request.description
+        _state.fail_next_send_retry_after = request.retry_after
     return {
         "status": "armed",
         "status_code": request.status_code,
         "description": request.description,
+        "retry_after": request.retry_after,
     }
 
 
@@ -105,13 +112,21 @@ def send_message(bot_token: str, request: SendMessageRequest) -> dict[str, Any]:
         )
         failure_status = _state.fail_next_send_status_code
         failure_description = _state.fail_next_send_description
+        failure_retry_after = _state.fail_next_send_retry_after
         if failure_status is not None:
             _state.fail_next_send_status_code = None
             _state.fail_next_send_description = "telegram-fake-send-failure"
-            raise HTTPException(
-                status_code=failure_status,
-                detail=failure_description,
-            )
+            _state.fail_next_send_retry_after = None
+            failure_payload: dict[str, Any] = {
+                "ok": False,
+                "error_code": failure_status,
+                "description": failure_description,
+            }
+            if failure_retry_after is not None:
+                failure_payload["parameters"] = {
+                    "retry_after": failure_retry_after,
+                }
+            return JSONResponse(status_code=failure_status, content=failure_payload)
 
         _state.sent_messages.append(
             {

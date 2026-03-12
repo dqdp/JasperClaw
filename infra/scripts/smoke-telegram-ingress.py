@@ -313,7 +313,11 @@ def main() -> int:
 
     status, payload = _request_json(
         f"{fake_base_url}/test/fail-next-send",
-        body={"status_code": 503, "description": "simulated-alert-send-failure"},
+        body={
+            "status_code": 429,
+            "description": "simulated-alert-rate-limit",
+            "retry_after": 4,
+        },
         method="POST",
     )
     if status != 200:
@@ -334,6 +338,16 @@ def main() -> int:
     _assert(
         payload.get("recipients") == len(expected_alert_recipients),
         f"unexpected alert recipient count: {payload}",
+    )
+    time.sleep(1.5)
+    state = _fake_state(fake_base_url)
+    _assert(
+        len(state["sent_messages"]) == len(expected_alert_recipients) - 1,
+        f"alert retry should wait for Telegram retry_after before final delivery: {state}",
+    )
+    _assert(
+        len(state["send_attempts"]) == len(expected_alert_recipients),
+        f"alert retry should not create an extra attempt before retry_after: {state}",
     )
     _, state = _wait_for_success(
         request_fn=lambda: (200, _fake_state(fake_base_url)),

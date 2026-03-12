@@ -6,9 +6,16 @@ import httpx
 class TelegramSendError(RuntimeError):
     """Raised when Telegram sendMessage API returns a transport or protocol failure."""
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
 
 
 class TelegramClient:
@@ -126,9 +133,11 @@ class TelegramClient:
             raise TelegramSendError(str(exc)) from exc
 
         if response.status_code >= 400:
+            retry_after_seconds = self._extract_retry_after_seconds(response)
             raise TelegramSendError(
                 f"HTTP {response.status_code}: {response.text}",
                 status_code=response.status_code,
+                retry_after_seconds=retry_after_seconds,
             )
 
         try:
@@ -138,3 +147,21 @@ class TelegramClient:
         if not isinstance(payload, dict):
             raise TelegramSendError("telegram response must be a JSON object")
         return payload
+
+    def _extract_retry_after_seconds(
+        self,
+        response: httpx.Response,
+    ) -> float | None:
+        try:
+            payload = response.json()
+        except ValueError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        parameters = payload.get("parameters")
+        if not isinstance(parameters, dict):
+            return None
+        retry_after = parameters.get("retry_after")
+        if isinstance(retry_after, (int, float)) and retry_after > 0:
+            return float(retry_after)
+        return None

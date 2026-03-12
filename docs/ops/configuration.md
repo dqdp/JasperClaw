@@ -716,6 +716,7 @@ Purpose:
 Notes:
 
 - defaults to `30`
+- when Telegram returns `429` with `parameters.retry_after`, the scheduler uses the larger of this value and the configured default backoff
 
 ### `TELEGRAM_POLLING_BATCH_SIZE`
 
@@ -876,6 +877,12 @@ Used by:
 Purpose:
 
 - shared secret token required in `X-Telegram-Alert-Token` header for `/telegram/alerts`
+
+Notes:
+
+- replay-safe alert dedupe depends on the sender supplying a stable `X-Telegram-Alert-Idempotency-Key`
+- reuse the same key for retries of the same upstream notification
+- generate a new key for each new upstream notification, even when the rendered alert text is unchanged
 
 ### `TELEGRAM_ALERT_API_BASE_URL`
 

@@ -137,3 +137,32 @@ def test_send_message_surfaces_http_status_code_for_retry_classification() -> No
         asyncio.run(client.send_message(chat_id=11, text="hello"))
 
     assert excinfo.value.status_code == 503
+
+
+def test_send_message_extracts_retry_after_from_429_response() -> None:
+    fake_http = _FakeAsyncClient(
+        responses=[
+            _FakeResponse(
+                429,
+                {
+                    "ok": False,
+                    "error_code": 429,
+                    "description": "Too Many Requests: retry later",
+                    "parameters": {"retry_after": 12},
+                },
+                text="rate limited",
+            )
+        ]
+    )
+    client = TelegramClient(
+        bot_token="bot-token",
+        http_client=fake_http,
+    )
+
+    import asyncio
+
+    with pytest.raises(TelegramSendError) as excinfo:
+        asyncio.run(client.send_message(chat_id=11, text="hello"))
+
+    assert excinfo.value.status_code == 429
+    assert excinfo.value.retry_after_seconds == 12.0

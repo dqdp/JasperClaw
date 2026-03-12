@@ -55,3 +55,29 @@ def test_fail_next_send_affects_only_one_attempt() -> None:
     assert state["sent_messages"] == [
         {"bot_token": "bot-token", "chat_id": 7, "text": "second"}
     ]
+
+
+def test_fail_next_send_can_return_telegram_rate_limit_payload() -> None:
+    client = TestClient(app)
+    client.post("/test/reset")
+    client.post(
+        "/test/fail-next-send",
+        json={
+            "status_code": 429,
+            "description": "Too Many Requests: retry later",
+            "retry_after": 9,
+        },
+    )
+
+    response = client.post(
+        "/botbot-token/sendMessage",
+        json={"chat_id": 7, "text": "first"},
+    )
+
+    assert response.status_code == 429
+    assert response.json() == {
+        "ok": False,
+        "error_code": 429,
+        "description": "Too Many Requests: retry later",
+        "parameters": {"retry_after": 9},
+    }

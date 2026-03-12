@@ -105,7 +105,8 @@ When `TELEGRAM_ALLOWED_COMMANDS` is configured, commands outside that allowlist 
 
 - `POST /telegram/alerts` принимает JSON с `text` или `alerts` (формат близкий к Alertmanager webhook),
 - нормализует событие в текст и маршрутизирует его через default/warning/critical recipient groups,
-- использует `TELEGRAM_ALERT_BOT_TOKEN` и требует `X-Telegram-Alert-Token` при наличии `TELEGRAM_ALERT_AUTH_TOKEN`.
+- использует `TELEGRAM_ALERT_BOT_TOKEN` и требует `X-Telegram-Alert-Token` при наличии `TELEGRAM_ALERT_AUTH_TOKEN`,
+- поддерживает replay-safe dedupe только при наличии явного `X-Telegram-Alert-Idempotency-Key` от sender-а.
 
 Policy baseline:
 
@@ -133,14 +134,17 @@ curl -s -X POST \
   https://your-host/telegram/alerts \
   -H 'Content-Type: application/json' \
   -H "X-Telegram-Alert-Token: ${TELEGRAM_ALERT_AUTH_TOKEN}" \
+  -H "X-Telegram-Alert-Idempotency-Key: ${UPSTREAM_NOTIFICATION_ID}" \
   -d '{"alerts":[{"status":"firing","labels":{"alertname":"telegram_ingress_down","service":"telegram-ingress","severity":"critical"},"annotations":{"summary":"ingress down","description":"telegram-ingress cannot accept updates"}}]}'
 ```
 
 Для production-обвязки:
 
 - route из Alertmanager/SLO monitor в webhook endpoint,
+- прокидывать стабильный `X-Telegram-Alert-Idempotency-Key` для одного notification/retry chain;
+- не строить этот key из rendered message text; одинаковый текст у разных notifications должен иметь разные keys;
 - использовать route groups по severity (`default`, `warning`, `critical`),
-- текущий ingress уже умеет durable retry/dedupe; следующий follow-up slice нужен только для escalation/terminal-failure policy.
+- текущий ingress already honors Telegram `429 retry_after` when scheduling durable alert retries; следующий follow-up slice нужен только для escalation/terminal-failure policy.
 
 ## Incident checks
 

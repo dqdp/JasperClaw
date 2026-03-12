@@ -50,6 +50,7 @@ class AlertTargetAttempt:
     status: str
     error_code: str | None = None
     error_message: str | None = None
+    retry_after_seconds: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -333,7 +334,7 @@ class PostgresAlertDeliveryRepository:
         max_attempts: int,
     ) -> AlertDeliveryRecord:
         completed_at_utc = completed_at.astimezone(timezone.utc)
-        next_attempt_at = completed_at_utc + timedelta(seconds=retry_backoff_seconds)
+        attempt_map = {attempt.chat_id: attempt for attempt in attempts}
 
         def write(conn: psycopg.Connection) -> AlertDeliveryRecord:
             with conn.cursor() as cursor:
@@ -401,8 +402,21 @@ class PostgresAlertDeliveryRepository:
                     last_error_code = None
                     last_error_message = None
                 elif pending_targets:
+                    next_retry_delay_seconds = retry_backoff_seconds
+                    for target in pending_targets:
+                        attempt = attempt_map.get(target.chat_id)
+                        if (
+                            attempt is not None
+                            and attempt.retry_after_seconds is not None
+                        ):
+                            next_retry_delay_seconds = max(
+                                next_retry_delay_seconds,
+                                attempt.retry_after_seconds,
+                            )
                     delivery_status = "pending"
-                    delivery_next_attempt_at = next_attempt_at
+                    delivery_next_attempt_at = completed_at_utc + timedelta(
+                        seconds=next_retry_delay_seconds
+                    )
                     pending_target = pending_targets[0]
                     last_error_code = pending_target.last_error_code
                     last_error_message = pending_target.last_error_message
@@ -641,6 +655,7 @@ class AlertDeliveryService:
                         status=self._classified_status(exc),
                         error_code=self._classified_error_code(exc),
                         error_message=str(exc),
+                        retry_after_seconds=exc.retry_after_seconds,
                     )
                 )
             except Exception as exc:
