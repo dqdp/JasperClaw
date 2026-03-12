@@ -222,6 +222,7 @@ class _FakeRepository:
         return ConversationContext(
             conversation_id=conversation_id,
             existing_message_count=0,
+            matched_request_message_count=0,
             conversation_created=conversation_id == "conv_test",
         )
 
@@ -1324,6 +1325,57 @@ def test_chat_completions_metadata_conversation_hint(client, monkeypatch, auth_h
 
     assert response.status_code == 200
     assert repository.success_calls[0]["conversation_id_hint"] == "conv_meta"
+
+
+def test_chat_completions_metadata_client_binding_is_not_treated_as_canonical_hint(
+    client, monkeypatch, auth_headers
+) -> None:
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    _FakeClient.error = None
+    _FakeClient.response = _FakeResponse(
+        200,
+        {"message": {"role": "assistant", "content": "Runtime response"}},
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(
+            metadata={
+                "source": "telegram",
+                "client_conversation_id": "telegram:42",
+            }
+        ),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert repository.success_calls[0]["conversation_id_hint"] is None
+    assert repository.success_calls[0]["client_source"] == "telegram"
+    assert repository.success_calls[0]["client_conversation_id"] == "telegram:42"
+
+
+def test_chat_completions_metadata_chat_id_is_not_used_as_canonical_hint(
+    client, monkeypatch, auth_headers
+) -> None:
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    _FakeClient.error = None
+    _FakeClient.response = _FakeResponse(
+        200,
+        {"message": {"role": "assistant", "content": "Runtime response"}},
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(metadata={"chat_id": "telegram:42"}),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert repository.success_calls[0]["conversation_id_hint"] is None
 
 
 def test_chat_completions_unknown_profile(client, monkeypatch, auth_headers) -> None:

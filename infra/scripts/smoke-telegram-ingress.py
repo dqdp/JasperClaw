@@ -119,10 +119,37 @@ def main() -> int:
     _assert(first_message["chat_id"] == chat_id, f"unexpected chat id in fake state: {state}")
     _assert(bool(first_message["text"].strip()), f"empty telegram reply in fake state: {state}")
 
-    invalid_secret_update = {
+    follow_up_update = {
         "update_id": run_id + 1,
         "message": {
             "message_id": run_id + 101,
+            "chat": {"id": chat_id},
+            "from": {"id": 1234, "is_bot": False},
+            "text": "Second message in the same chat.",
+        },
+    }
+    status, payload = _request_json(
+        f"{ingress_base_url}{webhook_path}",
+        headers={"X-Telegram-Bot-Api-Secret-Token": secret},
+        body=follow_up_update,
+        method="POST",
+    )
+    if status != 200:
+        raise SystemExit(f"telegram continuity happy path failed: {status} {payload}")
+
+    state = _fake_state(fake_base_url)
+    _assert(
+        len(state["sent_messages"]) == 2,
+        f"expected 2 sent telegram messages after continuity check, got {state}",
+    )
+    follow_up_message = state["sent_messages"][-1]
+    _assert(follow_up_message["chat_id"] == chat_id, f"unexpected continuity chat id: {state}")
+    _assert(bool(follow_up_message["text"].strip()), f"empty continuity reply in fake state: {state}")
+
+    invalid_secret_update = {
+        "update_id": run_id + 2,
+        "message": {
+            "message_id": run_id + 102,
             "chat": {"id": chat_id},
             "from": {"id": 1234, "is_bot": False},
             "text": "Should fail auth",
@@ -136,12 +163,12 @@ def main() -> int:
     )
     _assert(status == 401, f"expected webhook auth failure 401, got {status} {payload}")
     state = _fake_state(fake_base_url)
-    _assert(len(state["sent_messages"]) == 1, f"auth failure should not send telegram replies: {state}")
+    _assert(len(state["sent_messages"]) == 2, f"auth failure should not send telegram replies: {state}")
 
     denied_command_update = {
-        "update_id": run_id + 2,
+        "update_id": run_id + 3,
         "message": {
-            "message_id": run_id + 102,
+            "message_id": run_id + 103,
             "chat": {"id": chat_id},
             "from": {"id": 1234, "is_bot": False},
             "text": "/play forbidden command",
@@ -158,7 +185,7 @@ def main() -> int:
     _assert(payload.get("status") == "ignored", f"expected ignored deny payload, got {payload}")
     _assert(payload.get("reason") == "command_not_allowed", f"unexpected deny reason: {payload}")
     state = _fake_state(fake_base_url)
-    _assert(len(state["sent_messages"]) == 1, f"denied command should not send telegram replies: {state}")
+    _assert(len(state["sent_messages"]) == 2, f"denied command should not send telegram replies: {state}")
 
     status, payload = _request_json(
         f"{fake_base_url}/test/fail-next-send",
@@ -169,9 +196,9 @@ def main() -> int:
         raise SystemExit(f"failed to arm telegram send failure: {status} {payload}")
 
     retry_update = {
-        "update_id": run_id + 3,
+        "update_id": run_id + 4,
         "message": {
-            "message_id": run_id + 103,
+            "message_id": run_id + 104,
             "chat": {"id": chat_id},
             "from": {"id": 1234, "is_bot": False},
             "text": "Retry this request.",
@@ -185,8 +212,8 @@ def main() -> int:
     )
     _assert(status == 503, f"expected retryable downstream failure 503, got {status} {payload}")
     state = _fake_state(fake_base_url)
-    _assert(len(state["sent_messages"]) == 1, f"failed send should not add successful messages: {state}")
-    _assert(len(state["send_attempts"]) == 2, f"expected one extra failed send attempt: {state}")
+    _assert(len(state["sent_messages"]) == 2, f"failed send should not add successful messages: {state}")
+    _assert(len(state["send_attempts"]) == 3, f"expected one extra failed send attempt: {state}")
 
     status, payload = _request_json(
         f"{ingress_base_url}{webhook_path}",
@@ -197,8 +224,8 @@ def main() -> int:
     if status != 200:
         raise SystemExit(f"retry after downstream failure did not recover: {status} {payload}")
     state = _fake_state(fake_base_url)
-    _assert(len(state["sent_messages"]) == 2, f"retry should add a successful message: {state}")
-    _assert(len(state["send_attempts"]) == 3, f"retry should create a new send attempt: {state}")
+    _assert(len(state["sent_messages"]) == 3, f"retry should add a successful message: {state}")
+    _assert(len(state["send_attempts"]) == 4, f"retry should create a new send attempt: {state}")
     retry_message = state["sent_messages"][-1]
     _assert(retry_message["chat_id"] == chat_id, f"unexpected retry chat id: {state}")
     _assert(bool(retry_message["text"].strip()), f"retry reply should be non-empty: {state}")

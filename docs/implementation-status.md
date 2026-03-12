@@ -64,7 +64,7 @@ Implemented:
 - request ID attachment via `X-Request-ID`
 - structured request logging for request lifecycle, readiness, runtime, and storage outcomes
 - request-scoped persistence for `conversations`, `messages`, `model_runs`, and baseline `tool_executions`
-- baseline conversation continuity via transcript-prefix matching and optional canonical conversation hints
+- baseline conversation continuity via explicit canonical hints, backend-owned client session bindings, and transcript-prefix fallback
 - optional retrieval-aware prompt assembly with conservative memory materialization from `user` transcript turns
 - retrieval and memory audit persistence through `memory_items`, `retrieval_runs`, and `retrieval_hits`
 - forward-only SQL migration runner for the current canonical text-path schema
@@ -74,7 +74,6 @@ Implemented:
 
 Not yet implemented:
 
-- stronger client-to-backend conversation binding beyond transcript-prefix matching and optional hints
 - structured tracing beyond request ID and JSON event logs
 - richer memory retention, invalidation, and deletion flows
 - production-hardened runtime and storage observability

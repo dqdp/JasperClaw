@@ -111,6 +111,12 @@ class ToolPolicyDecision:
     provider: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ClientConversationBinding:
+    source: str
+    conversation_id: str
+
+
 class ChatService:
     def __init__(
         self,
@@ -137,6 +143,7 @@ class ChatService:
         resolved_conversation_hint = (
             conversation_id_hint or self._extract_conversation_hint(request)
         )
+        client_binding = self._extract_client_conversation_binding(request)
         memory_context = self._prepare_memory_context(
             request_id=request_id,
             request=request,
@@ -172,6 +179,7 @@ class ChatService:
                     request=request,
                     profile=profile,
                     conversation_id_hint=resolved_conversation_hint,
+                    client_binding=client_binding,
                     memory_context=memory_context,
                     tool_context=tool_context,
                     runtime_result=planning_result.runtime_result,
@@ -199,6 +207,7 @@ class ChatService:
                 profile=profile,
                 request=request,
                 conversation_id_hint=resolved_conversation_hint,
+                client_binding=client_binding,
                 started_at=started_at,
                 completed_at=completed_at,
                 error=exc,
@@ -228,6 +237,7 @@ class ChatService:
             request=request,
             profile=profile,
             conversation_id_hint=resolved_conversation_hint,
+            client_binding=client_binding,
             memory_context=memory_context,
             tool_context=tool_context,
             runtime_result=runtime_result,
@@ -247,11 +257,16 @@ class ChatService:
         resolved_conversation_hint = (
             conversation_id_hint or self._extract_conversation_hint(request)
         )
+        client_binding = self._extract_client_conversation_binding(request)
         started_at = datetime.now(timezone.utc)
         context = self._repository.prepare_conversation(
             public_model=profile.public_id,
             request_messages=request.messages,
             conversation_id_hint=resolved_conversation_hint,
+            client_source=client_binding.source if client_binding is not None else None,
+            client_conversation_id=(
+                client_binding.conversation_id if client_binding is not None else None
+            ),
             created_at=started_at,
         )
         memory_context = self._prepare_memory_context(
@@ -289,6 +304,7 @@ class ChatService:
                     request=request,
                     profile=profile,
                     context=context,
+                    client_binding=client_binding,
                     memory_context=memory_context,
                     tool_context=tool_context,
                     started_at=started_at,
@@ -328,6 +344,7 @@ class ChatService:
                 profile=profile,
                 request=request,
                 conversation_id_hint=context.conversation_id,
+                client_binding=client_binding,
                 started_at=started_at,
                 completed_at=completed_at,
                 error=exc,
@@ -358,6 +375,7 @@ class ChatService:
             request=request,
             profile=profile,
             context=context,
+            client_binding=client_binding,
             memory_context=memory_context,
             tool_context=tool_context,
             started_at=started_at,
@@ -380,6 +398,7 @@ class ChatService:
         request: ChatCompletionRequest,
         profile: RuntimeProfile,
         context: ConversationContext,
+        client_binding: ClientConversationBinding | None,
         memory_context: MemoryContext,
         tool_context: ToolContext,
         started_at: datetime,
@@ -422,6 +441,7 @@ class ChatService:
                     profile=profile,
                     request=request,
                     conversation_id_hint=context.conversation_id,
+                    client_binding=client_binding,
                     response_content="".join(content_parts),
                     usage=usage,
                     started_at=started_at,
@@ -472,6 +492,7 @@ class ChatService:
                 profile=profile,
                 request=request,
                 conversation_id_hint=context.conversation_id,
+                client_binding=client_binding,
                 started_at=started_at,
                 completed_at=completed_at,
                 error=exc,
@@ -510,6 +531,7 @@ class ChatService:
         request: ChatCompletionRequest,
         profile: RuntimeProfile,
         conversation_id_hint: str | None,
+        client_binding: ClientConversationBinding | None,
         memory_context: MemoryContext,
         tool_context: ToolContext,
         runtime_result: OllamaChatResult,
@@ -538,6 +560,7 @@ class ChatService:
             profile=profile,
             request=request,
             conversation_id_hint=conversation_id_hint,
+            client_binding=client_binding,
             response_content=runtime_result.content,
             usage=usage,
             started_at=started_at,
@@ -584,6 +607,7 @@ class ChatService:
         request: ChatCompletionRequest,
         profile: RuntimeProfile,
         context: ConversationContext,
+        client_binding: ClientConversationBinding | None,
         memory_context: MemoryContext,
         tool_context: ToolContext,
         started_at: datetime,
@@ -607,6 +631,7 @@ class ChatService:
             profile=profile,
             request=request,
             conversation_id_hint=context.conversation_id,
+            client_binding=client_binding,
             response_content=runtime_result.content,
             usage=usage,
             started_at=started_at,
@@ -644,6 +669,7 @@ class ChatService:
         profile: RuntimeProfile,
         request: ChatCompletionRequest,
         conversation_id_hint: str | None,
+        client_binding: ClientConversationBinding | None,
         response_content: str,
         usage: ChatCompletionUsage | None,
         started_at: datetime,
@@ -656,6 +682,10 @@ class ChatService:
             runtime_model=profile.runtime_model,
             request_messages=request.messages,
             conversation_id_hint=conversation_id_hint,
+            client_source=client_binding.source if client_binding is not None else None,
+            client_conversation_id=(
+                client_binding.conversation_id if client_binding is not None else None
+            ),
             response_content=response_content,
             usage=usage,
             started_at=started_at,
@@ -679,6 +709,7 @@ class ChatService:
         profile: RuntimeProfile,
         request: ChatCompletionRequest,
         conversation_id_hint: str | None,
+        client_binding: ClientConversationBinding | None,
         started_at: datetime,
         completed_at: datetime,
         error: APIError,
@@ -691,6 +722,10 @@ class ChatService:
                 runtime_model=profile.runtime_model,
                 request_messages=request.messages,
                 conversation_id_hint=conversation_id_hint,
+                client_source=client_binding.source if client_binding is not None else None,
+                client_conversation_id=(
+                    client_binding.conversation_id if client_binding is not None else None
+                ),
                 error_type=error.error_type,
                 error_code=error.code,
                 error_message=error.message,
@@ -2061,8 +2096,23 @@ class ChatService:
         if not request.metadata:
             return None
 
-        for key in ("conversation_id", "chat_id", "session_id"):
-            value = request.metadata.get(key)
-            if value:
-                return value
-        return None
+        return request.metadata.get("conversation_id") or None
+
+    def _extract_client_conversation_binding(
+        self,
+        request: ChatCompletionRequest,
+    ) -> ClientConversationBinding | None:
+        if not request.metadata:
+            return None
+
+        source = (request.metadata.get("source") or "").strip()
+        client_conversation_id = (
+            request.metadata.get("client_conversation_id") or ""
+        ).strip()
+        if not source or not client_conversation_id:
+            return None
+
+        return ClientConversationBinding(
+            source=source,
+            conversation_id=client_conversation_id,
+        )

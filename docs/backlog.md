@@ -159,11 +159,11 @@ Provide a safe Telegram entry point that uses `agent-api` as the only canonical 
 
 ### Current repository baseline
 
-- TGX-1 through TGX-4 have working code paths in the repository
+- TGX-1 through TGX-4 have working code paths in the repository, including backend-owned Telegram session binding to canonical conversations
 - TGX-5 baseline controls are in place: webhook secret verification, idempotency, rate limits, command allowlist, and dedicated alert auth/token separation
 - TGX-6 is implemented as a deny-by-policy path for Telegram-originated tool actions inside `agent-api`
 - TGX-7 baseline request correlation and audit continuity are implemented across `telegram-ingress` and `agent-api`
-- automated smoke/gating now exists for deterministic Telegram ingress validation
+- automated smoke/gating now exists for deterministic Telegram ingress validation, including same-chat continuity checks
 - the next Telegram-specific priority is explicit alert delivery policy handling
 
 ## Execution rules

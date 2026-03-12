@@ -62,7 +62,7 @@ Current baseline:
 
 - Telegram-to-chat bridge normalizes incoming Telegram messages into `POST /v1/chat/completions` requests
 - no public Telegram tool endpoint exists; all tool execution remains inside `agent-api` policy gates
-- Telegram currently forwards a stable client-side session hint derived from `chat_id`; canonical conversation continuation remains a separate backlog item
+- Telegram forwards `metadata.source=telegram` plus a stable `metadata.client_conversation_id` derived from `chat_id`; `agent-api` resolves that binding to a canonical backend conversation
 - Telegram-originated requests carry source metadata so tool policy can deny external-effect actions from this ingress
 - request correlation is preserved across ingress, orchestration, and tool-audit paths
 

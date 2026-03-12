@@ -36,6 +36,18 @@ class _InMemoryCursor:
 
     def execute(self, sql, params=None) -> None:
         normalized = " ".join(sql.split())
+        if normalized.startswith(
+            "SELECT conversation_id FROM client_conversation_bindings WHERE client_source = %s"
+        ):
+            client_source, client_conversation_id, public_profile = params
+            binding = self._connection.client_conversation_bindings.get(
+                (client_source, client_conversation_id, public_profile)
+            )
+            self._rows = (
+                [(binding["conversation_id"],)] if binding is not None else []
+            )
+            return
+
         if normalized.startswith("SELECT id FROM conversations WHERE public_profile = %s"):
             public_profile = params[0]
             matches = [
@@ -86,6 +98,33 @@ class _InMemoryCursor:
                 "updated_at": updated_at,
             }
             self._rows = []
+            return
+
+        if normalized.startswith(
+            "INSERT INTO client_conversation_bindings ( client_source, client_conversation_id, public_profile, conversation_id, created_at, updated_at )"
+        ):
+            (
+                client_source,
+                client_conversation_id,
+                public_profile,
+                conversation_id,
+                created_at,
+                updated_at,
+            ) = params
+            key = (client_source, client_conversation_id, public_profile)
+            binding = self._connection.client_conversation_bindings.get(key)
+            if binding is None:
+                self._connection.client_conversation_bindings[key] = {
+                    "client_source": client_source,
+                    "client_conversation_id": client_conversation_id,
+                    "public_profile": public_profile,
+                    "conversation_id": conversation_id,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                }
+                self._rows = [(conversation_id,)]
+            else:
+                self._rows = [(binding["conversation_id"],)]
             return
 
         if normalized.startswith("INSERT INTO messages ( id, conversation_id, message_index, role, content, source, created_at )"):
@@ -335,6 +374,12 @@ class _InMemoryCursor:
             self._rows = []
             return
 
+        if normalized.startswith("DELETE FROM conversations WHERE id = %s"):
+            conversation_id = params[0]
+            self._connection.conversations.pop(conversation_id, None)
+            self._rows = []
+            return
+
         raise AssertionError(f"Unexpected SQL: {normalized}")
 
     def fetchall(self):
@@ -347,6 +392,7 @@ class _InMemoryCursor:
 class _InMemoryConnection:
     def __init__(self) -> None:
         self.conversations: dict[str, dict] = {}
+        self.client_conversation_bindings: dict[tuple[str, str, str], dict] = {}
         self.messages: list[dict] = []
         self.model_runs: list[dict] = []
         self.memory_items: list[dict] = []
@@ -525,6 +571,70 @@ def test_streaming_chat_flow_persists_success_with_real_repository(
     assert connection.model_runs[0]["prompt_tokens"] == 11
     assert connection.model_runs[0]["completion_tokens"] == 7
     assert connection.model_runs[0]["total_tokens"] == 18
+
+
+def test_non_streaming_client_binding_continues_same_conversation(
+    monkeypatch, auth_headers
+) -> None:
+    connection = _InMemoryConnection()
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_ollama_client] = lambda: _MemoryAwareClient()
+
+    first_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [{"role": "user", "content": "First message"}],
+            "stream": False,
+            "metadata": {
+                "source": "telegram",
+                "client_conversation_id": "telegram:42",
+            },
+        },
+        headers=auth_headers,
+    )
+    second_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [{"role": "user", "content": "Second message"}],
+            "stream": False,
+            "metadata": {
+                "source": "telegram",
+                "client_conversation_id": "telegram:42",
+            },
+        },
+        headers=auth_headers,
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert (
+        first_response.headers["x-conversation-id"]
+        == second_response.headers["x-conversation-id"]
+    )
+    assert len(connection.conversations) == 1
+    assert len(connection.client_conversation_bindings) == 1
+    assert len(connection.messages) == 4
+    assert [message["role"] for message in connection.messages] == [
+        "user",
+        "assistant",
+        "user",
+        "assistant",
+    ]
+    assert [message["content"] for message in connection.messages if message["role"] == "user"] == [
+        "First message",
+        "Second message",
+    ]
+    assert len(connection.model_runs) == 2
 
 
 def test_streaming_chat_flow_persists_failure_without_done_sentinel(

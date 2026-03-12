@@ -166,6 +166,7 @@ Optional continuity inputs:
 
 - `metadata.conversation_id` for clients that can carry backend conversation metadata
 - `X-Conversation-ID` header for clients that want to continue a previously resolved canonical conversation directly
+- `metadata.source` plus `metadata.client_conversation_id` for ingress clients that need backend-owned session-to-conversation binding
 
 Supported message roles:
 
@@ -202,7 +203,9 @@ Current Tools Slice 2 baseline:
 Continuity behavior:
 
 - when a valid canonical conversation hint is present, `agent-api` attempts to continue that conversation
+- otherwise, when `metadata.source` and `metadata.client_conversation_id` are present, `agent-api` resolves or creates a stable client-session binding to one canonical conversation
 - otherwise `agent-api` may continue a conversation by matching the stored transcript prefix against the incoming message history
+- if both an explicit canonical hint and a client-session binding are present but disagree, `agent-api` returns an explicit conflict instead of silently rebinding state
 - the canonical conversation identity is returned in the `X-Conversation-ID` response header
 
 ### `POST /v1/audio/transcriptions`

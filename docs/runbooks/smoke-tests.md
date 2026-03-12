@@ -133,6 +133,7 @@ Expected result:
 
 - `telegram-ingress` health responds
 - valid webhook update is accepted
+- a second message in the same Telegram chat continues successfully through the same canonical backend conversation
 - response flows through `telegram-ingress -> agent-api -> outbound send`
 - invalid webhook secret is rejected
 - retry-safe downstream failure behavior is preserved

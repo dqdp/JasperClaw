@@ -157,6 +157,7 @@ curl -s -X POST \
   - expected environment: `telegram-ingress` + `agent-api` + fake model runtime + stubbed Telegram API
 - `telegram-ingress` `GET /healthz` -> 200.
 - отправить сообщение боту в пользовательском чате -> ответный message от бота.
+- отправить второе сообщение в том же чате -> успешное продолжение того же backend conversation path.
 - проверить, что невалидный webhook-secret отбрасывается.
 - отправить короткий burst:
   - 1-й/2-й обработаны,

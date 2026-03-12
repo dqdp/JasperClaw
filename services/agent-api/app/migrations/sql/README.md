@@ -11,3 +11,4 @@ Index:
 - `0002_conversation_updates.sql`: open when reviewing continuity-related schema adjustments.
 - `0003_memory_foundation.sql`: open when changing memory, embeddings, or retrieval trace tables.
 - `0004_tool_execution_audit.sql`: open when changing tool execution audit persistence.
+- `0005_client_conversation_bindings.sql`: open when reviewing backend-owned client session to canonical conversation bindings.

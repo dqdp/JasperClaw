@@ -113,7 +113,8 @@ Current v1 baseline:
 
 - `agent-api` accepts an explicit canonical hint via `X-Conversation-ID`
 - `agent-api` also accepts `metadata.conversation_id` when the client can send it
-- if no hint is available, `agent-api` continues the best matching conversation whose persisted non-empty transcript is a prefix of the incoming message list
+- ingress-style clients may also send `metadata.source` plus `metadata.client_conversation_id` so the backend can bind a stable client session to one canonical conversation
+- if no explicit hint or client-session binding is available, `agent-api` continues the best matching conversation whose persisted non-empty transcript is a prefix of the incoming message list
 - if no matching conversation exists, `agent-api` creates a new canonical conversation
 
 The result of this step is one canonical `conversation_id` used for persistence and tracing.
