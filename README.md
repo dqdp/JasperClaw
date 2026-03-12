@@ -177,7 +177,7 @@ When making trade-offs, prefer:
 
 ## Local Python environment
 
-For local Python development and tests:
+For local Python development and tests, prefer the same Makefile flow:
 
 ```bash
 make venv
@@ -185,6 +185,20 @@ source .venv/bin/activate
 make lint
 make test
 ```
+
+If `make venv` fails on a minimal host with broken `ensurepip`, create the environment explicitly with `virtualenv`:
+
+```bash
+python3.12 -m virtualenv .venv312
+source .venv312/bin/activate
+python -m pip install --upgrade pip setuptools wheel
+pip install -r requirements-dev.txt
+cd services/telegram-ingress
+pytest tests/test_main.py -q
+cd ../..
+```
+
+This single pytest invocation is the local Telegram ingress wiring check before running Docker-based flows.
 
 The local test runner executes tests per service directory rather than with one global `pytest services` invocation. This avoids cross-service import collisions caused by multiple service-local `app/` packages.
 
