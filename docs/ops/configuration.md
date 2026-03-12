@@ -595,6 +595,22 @@ Notes:
 - keep route narrow and stable for operator and firewall allowlisting
 - examples in repo use `/telegram/webhook`
 
+### `TELEGRAM_WEBHOOK_URL`
+
+Required: no when polling fallback enabled
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- absolute Telegram webhook target for automatic `setWebhook` registration during startup
+
+Notes:
+
+- when present, ingress runs in webhook mode and `TELEGRAM_POLLING_ENABLED` is ignored
+
 ### `TELEGRAM_WEBHOOK_SECRET_TOKEN`
 
 Required: yes for Telegram-hosted webhook delivery
@@ -667,6 +683,55 @@ Purpose:
 Notes:
 
 - use the same value as `INTERNAL_OPENAI_API_KEY` unless a dedicated ingress key is required
+
+### `TELEGRAM_POLLING_ENABLED`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- enable long-polling fallback when no webhook URL is configured
+
+Notes:
+
+- default is `false`
+- set `true` only when `TELEGRAM_WEBHOOK_URL` is not configured
+
+### `TELEGRAM_POLLING_TIMEOUT_SECONDS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- Telegram `getUpdates` long-poll timeout in seconds when polling mode is active
+
+Notes:
+
+- defaults to `30`
+
+### `TELEGRAM_POLLING_BATCH_SIZE`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- maximum number of Telegram updates fetched per `getUpdates` poll cycle
+
+Notes:
+
+- defaults to `100`
 
 ### `AGENT_API_MODEL`
 
@@ -829,7 +894,9 @@ Additional required if enabled:
 
 - `TELEGRAM_BOT_TOKEN`
 - `AGENT_API_KEY`
-- `TELEGRAM_WEBHOOK_SECRET_TOKEN`
+- `TELEGRAM_WEBHOOK_SECRET_TOKEN` (required when webhook mode is used)
+- `TELEGRAM_WEBHOOK_URL` (required when webhook mode is used)
+- `TELEGRAM_POLLING_ENABLED` (required only when webhook URL cannot be configured)
 
 ### Voice path
 

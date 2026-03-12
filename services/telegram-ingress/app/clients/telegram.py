@@ -42,9 +42,80 @@ class TelegramClient:
                 response.get("description", "telegram-send-failed")
             )
 
-    async def _request(self, method: str, url: str, json: dict[str, Any]) -> dict[str, Any]:
+    async def set_webhook(
+        self,
+        *,
+        url: str,
+        secret_token: str | None = None,
+        drop_pending_updates: bool = True,
+        max_connections: int | None = None,
+        allowed_updates: list[str] | None = None,
+    ) -> None:
+        payload = {
+            "url": url,
+            "drop_pending_updates": drop_pending_updates,
+        }
+        if secret_token:
+            payload["secret_token"] = secret_token
+        if max_connections is not None:
+            payload["max_connections"] = max_connections
+        if allowed_updates is not None:
+            payload["allowed_updates"] = allowed_updates
+
+        response = await self._request(
+            "POST",
+            f"{self.base_api_url}/setWebhook",
+            json=payload,
+        )
+        if not response.get("ok"):
+            raise TelegramSendError(
+                response.get("description", "telegram-setwebhook-failed")
+            )
+
+    async def get_updates(
+        self,
+        *,
+        timeout: int = 30,
+        offset: int | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"timeout": timeout, "limit": limit}
+        if offset is not None:
+            params["offset"] = offset
+
+        response = await self._request(
+            "GET",
+            f"{self.base_api_url}/getUpdates",
+            params=params,
+        )
+        if not response.get("ok"):
+            raise TelegramSendError(response.get("description", "telegram-getupdates-failed"))
+
+        updates = response.get("result")
+        if not isinstance(updates, list):
+            raise TelegramSendError("telegram getUpdates payload missing result list")
+
+        output: list[dict[str, Any]] = []
+        for update in updates:
+            if isinstance(update, dict):
+                output.append(update)
+        return output
+
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         try:
-            response = await self._http_client.request(method=method, url=url, json=json)
+            response = await self._http_client.request(
+                method=method,
+                url=url,
+                json=json,
+                params=params,
+            )
         except httpx.TimeoutException as exc:
             raise TelegramSendError(str(exc)) from exc
         except httpx.HTTPError as exc:

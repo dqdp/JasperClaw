@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi.testclient import TestClient
 
 from app.clients.agent_api import AgentApiClient
@@ -16,6 +18,64 @@ class _FakeTelegramClient(TelegramClient):
 
     async def send_message(self, *, chat_id: int, text: str) -> None:
         self.sent_messages.append((chat_id, text))
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _StartupTelegramClient(TelegramClient):
+    def __init__(
+        self,
+        *,
+        bot_token: str,
+        api_base_url: str = "https://api.telegram.org",
+        timeout_seconds: float = 5.0,
+        http_client: object | None = None,
+    ) -> None:
+        super().__init__(
+            bot_token=bot_token,
+            api_base_url=api_base_url,
+            timeout_seconds=timeout_seconds,
+            http_client=http_client,
+        )
+        self.webhook_calls: list[dict[str, Any]] = []
+        self.get_updates_calls: list[dict[str, Any]] = []
+        self.closed = False
+
+    async def set_webhook(
+        self,
+        *,
+        url: str,
+        secret_token: str | None = None,
+        drop_pending_updates: bool = True,
+        max_connections: int | None = None,
+        allowed_updates: list[str] | None = None,
+    ) -> None:
+        self.webhook_calls.append(
+            {
+                "url": url,
+                "secret_token": secret_token,
+                "drop_pending_updates": drop_pending_updates,
+                "max_connections": max_connections,
+                "allowed_updates": allowed_updates,
+            }
+        )
+
+    async def get_updates(
+        self,
+        *,
+        timeout: int,
+        offset: int | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, object]]:
+        self.get_updates_calls.append(
+            {
+                "timeout": timeout,
+                "offset": offset,
+                "limit": limit,
+            }
+        )
+        return []
 
     async def close(self) -> None:
         self.closed = True
@@ -56,8 +116,8 @@ def _create_client(
     return TestClient(app), telegram_client, agent_client
 
 
-def _operational_settings(overrides: dict[str, str] | None = None) -> Settings:
-    base: dict[str, str] = {
+def _operational_settings(overrides: dict[str, object] | None = None) -> Settings:
+    base: dict[str, object] = {
         "telegram_bot_token": "bot-token",
         "agent_api_key": "agent-token",
         "webhook_path": "/webhook",
@@ -204,3 +264,80 @@ def test_webhook_releases_http_clients_on_shutdown() -> None:
 
     assert telegram_client.closed is True
     assert agent_client.closed is True
+
+
+def test_webhook_configuration_registers_webhook_on_startup(monkeypatch) -> None:
+    from app import main as main_module
+
+    calls: list[dict[str, Any]] = []
+
+    class _PatchedTelegramClient(_StartupTelegramClient):
+        async def set_webhook(
+            self,
+            *,
+            url: str,
+            secret_token: str | None = None,
+            drop_pending_updates: bool = True,
+            max_connections: int | None = None,
+            allowed_updates: list[str] | None = None,
+        ) -> None:
+            calls.append(
+                {
+                    "url": url,
+                    "secret_token": secret_token,
+                    "drop_pending_updates": drop_pending_updates,
+                    "max_connections": max_connections,
+                    "allowed_updates": allowed_updates,
+                }
+            )
+
+    monkeypatch.setattr(main_module, "TelegramClient", _PatchedTelegramClient)
+
+    settings = _operational_settings(
+        {
+            "telegram_webhook_url": "https://example.com/telegram/webhook",
+            "telegram_webhook_secret_token": "secret",
+            "webhook_path": "/telegram/webhook",
+        }
+    )
+    app = main_module.create_app(settings=settings)
+    with TestClient(app):
+        pass
+
+    assert calls == [
+        {
+            "url": "https://example.com/telegram/webhook",
+            "secret_token": "secret",
+            "drop_pending_updates": True,
+            "max_connections": None,
+            "allowed_updates": None,
+        }
+    ]
+
+
+def test_polling_enabled_starts_background_task(monkeypatch) -> None:
+    from app import main as main_module
+
+    captured: list[_StartupTelegramClient] = []
+
+    class _PatchedTelegramClient(_StartupTelegramClient):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            captured.append(self)
+
+    monkeypatch.setattr(main_module, "TelegramClient", _PatchedTelegramClient)
+
+    settings = _operational_settings(
+        {
+            "telegram_polling_enabled": True,
+            "telegram_webhook_url": "",
+        }
+    )
+    app = main_module.create_app(settings=settings)
+    with TestClient(app):
+        assert app.state.telegram_polling_task is not None
+        assert not app.state.telegram_polling_task.done()
+
+    assert app.state.telegram_polling_task.done()
+
+    assert captured and captured[0].closed

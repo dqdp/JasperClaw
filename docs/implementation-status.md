@@ -117,10 +117,11 @@ Implemented:
 - webhook ingestion service for Telegram updates
 - idempotent update handling in the bridge layer
 - `agent-api` fan-out path with conversation reuse by chat id
+- startup webhook registration when `TELEGRAM_WEBHOOK_URL` is configured
+- optional polling fallback when webhook URL is not configured
 
 Not yet implemented:
 
-- webhook registration automation (`setWebhook`) and polling fallback
 - abuse controls beyond duplicate suppression and token verification
 
 ### Database and memory

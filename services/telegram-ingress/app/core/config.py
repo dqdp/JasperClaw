@@ -40,6 +40,18 @@ def _get_float_env(name: str, default: float) -> float:
         raise ValueError(f"invalid float env var {name}: {raw}") from exc
 
 
+def _get_bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    raise ValueError(f"invalid boolean env var {name}: {raw}")
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     # Canonical chat path in agent-api.
@@ -51,10 +63,15 @@ class Settings:
     telegram_bot_token: str = ""
     telegram_webhook_secret_token: str = ""
     telegram_api_base_url: str = "https://api.telegram.org"
+    telegram_webhook_url: str = ""
 
     # Endpoint-level behavior.
     webhook_path: str = "/webhook"
     request_timeout_seconds: float = 5.0
+
+    telegram_polling_enabled: bool = False
+    telegram_polling_timeout_seconds: int = 30
+    telegram_polling_batch_size: int = 100
 
     # Idempotency control.
     dedupe_window_seconds: float = 3600.0
@@ -76,10 +93,14 @@ def get_settings() -> Settings:
         telegram_bot_token=_strip_secret(os.getenv("TELEGRAM_BOT_TOKEN", "")),
         telegram_webhook_secret_token=_strip_secret(os.getenv("TELEGRAM_WEBHOOK_SECRET_TOKEN", "")),
         telegram_api_base_url=os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org").strip(),
+        telegram_webhook_url=os.getenv("TELEGRAM_WEBHOOK_URL", "").strip(),
         webhook_path=_normalize_webhook_path(
             os.getenv("TELEGRAM_WEBHOOK_PATH", "/webhook"),
         ),
         request_timeout_seconds=_get_float_env("TELEGRAM_REQUEST_TIMEOUT_SECONDS", 5.0),
+        telegram_polling_enabled=_get_bool_env("TELEGRAM_POLLING_ENABLED", False),
+        telegram_polling_timeout_seconds=_get_int_env("TELEGRAM_POLLING_TIMEOUT_SECONDS", 30),
+        telegram_polling_batch_size=_get_int_env("TELEGRAM_POLLING_BATCH_SIZE", 100),
         dedupe_window_seconds=_get_float_env("TELEGRAM_DEDUP_WINDOW_SECONDS", 3600.0),
         dedupe_max_events=_get_int_env("TELEGRAM_DEDUP_MAX_EVENTS", 1024),
         max_reply_chars=_get_int_env("TELEGRAM_MAX_REPLY_CHARS", 4096),
