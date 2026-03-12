@@ -99,15 +99,16 @@ Telegram ingress now exists as an implemented adjunct channel to the same canoni
 Current baseline:
 
 - Telegram updates are normalized into `POST /v1/chat/completions` requests and responses are sent back to the originating chat
-- per-chat conversation reuse is handled in the bridge layer
+- per-chat conversation continuity is resolved in `agent-api` through backend-owned client session bindings
 - webhook registration and long-polling fallback are both supported
 - operational alert relay is available through a dedicated bot token and auth token
+- alert delivery policy now supports severity-aware routing across default, warning, and critical recipient groups
 - no client-to-client tool bypass; Telegram-originated tool actions remain behind typed capabilities and are currently denied by policy
 - request correlation and audit continuity are preserved across `telegram-ingress` and `agent-api`
 
 Remaining hardening focus:
 
-- add richer delivery policies and priority handling for operational alert fanout
+- add persistent retries, dedupe, and escalation behavior for operational alert fanout
 - expand command/approval behavior only when a concrete non-chat operational need justifies it
 
 ## Milestone 3: Voice and Hardening

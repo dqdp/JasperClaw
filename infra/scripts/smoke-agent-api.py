@@ -35,6 +35,30 @@ def _request_json(url: str, *, headers: dict[str, str] | None = None, body: dict
         return exc.code, body_json
 
 
+def _wait_for_success(
+    *,
+    request_fn,
+    success_predicate,
+    timeout_seconds: float,
+    error_context: str,
+) -> tuple[int, dict]:
+    deadline = time.monotonic() + timeout_seconds
+    last_result: tuple[int, dict] = (0, {"error": "not started"})
+
+    while True:
+        try:
+            last_result = request_fn()
+        except urllib.error.URLError as exc:
+            last_result = (0, {"error": str(exc.reason)})
+
+        status, payload = last_result
+        if success_predicate(status, payload):
+            return last_result
+        if time.monotonic() >= deadline:
+            raise SystemExit(f"{error_context}: {status} {payload}")
+        time.sleep(2)
+
+
 def main() -> int:
     base_url = os.getenv("SMOKE_BASE_URL", "http://127.0.0.1:18080").rstrip("/")
     api_key = _require_env("SMOKE_INTERNAL_OPENAI_API_KEY")
@@ -53,24 +77,30 @@ def main() -> int:
         time.sleep(2)
 
     auth_headers = {"Authorization": f"Bearer {api_key}"}
-    status, payload = _request_json(f"{base_url}/v1/models", headers=auth_headers)
-    if status != 200:
-        raise SystemExit(f"/v1/models failed: {status} {payload}")
+    status, payload = _wait_for_success(
+        request_fn=lambda: _request_json(f"{base_url}/v1/models", headers=auth_headers),
+        success_predicate=lambda status, payload: status == 200,
+        timeout_seconds=30.0,
+        error_context="/v1/models did not stabilize before timeout",
+    )
 
     model_ids = {entry.get("id") for entry in payload.get("data", []) if isinstance(entry, dict)}
     if "assistant-fast" not in model_ids:
         raise SystemExit(f"assistant-fast missing from model list: {sorted(model_ids)}")
 
-    status, payload = _request_json(
-        f"{base_url}/v1/chat/completions",
-        headers=auth_headers,
-        body={
-            "model": "assistant-fast",
-            "messages": [{"role": "user", "content": "Reply with ok."}],
-        },
+    status, payload = _wait_for_success(
+        request_fn=lambda: _request_json(
+            f"{base_url}/v1/chat/completions",
+            headers=auth_headers,
+            body={
+                "model": "assistant-fast",
+                "messages": [{"role": "user", "content": "Reply with ok."}],
+            },
+        ),
+        success_predicate=lambda status, payload: status == 200,
+        timeout_seconds=45.0,
+        error_context="/v1/chat/completions did not stabilize before timeout",
     )
-    if status != 200:
-        raise SystemExit(f"/v1/chat/completions failed: {status} {payload}")
 
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:

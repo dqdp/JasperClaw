@@ -18,6 +18,19 @@ def _require_env(name: str) -> str:
     return value
 
 
+def _get_int_list_env(name: str) -> tuple[int, ...]:
+    raw = _get_env(name, "")
+    if not raw:
+        return ()
+    values: list[int] = []
+    for item in raw.split(","):
+        normalized = item.strip()
+        if not normalized:
+            continue
+        values.append(int(normalized))
+    return tuple(values)
+
+
 def _request_json(
     url: str,
     *,
@@ -48,6 +61,30 @@ def _request_json(
         except json.JSONDecodeError:
             body_json = {"raw": payload}
         return exc.code, body_json
+
+
+def _wait_for_success(
+    *,
+    request_fn,
+    success_predicate,
+    timeout_seconds: float,
+    error_context: str,
+) -> tuple[int, dict]:
+    deadline = time.monotonic() + timeout_seconds
+    last_result: tuple[int, dict] = (0, {"error": "not started"})
+
+    while True:
+        try:
+            last_result = request_fn()
+        except urllib.error.URLError as exc:
+            last_result = (0, {"error": str(exc.reason)})
+
+        status, payload = last_result
+        if success_predicate(status, payload):
+            return last_result
+        if time.monotonic() >= deadline:
+            raise SystemExit(f"{error_context}: {status} {payload}")
+        time.sleep(2)
 
 
 def _wait_ready(base_url: str, timeout_seconds: float) -> None:
@@ -82,6 +119,11 @@ def main() -> int:
     webhook_path = _get_env("TELEGRAM_SMOKE_WEBHOOK_PATH", "/telegram/webhook")
     secret = _require_env("TELEGRAM_SMOKE_WEBHOOK_SECRET_TOKEN")
     bot_token = _require_env("TELEGRAM_SMOKE_BOT_TOKEN")
+    alert_token = _require_env("TELEGRAM_SMOKE_ALERT_AUTH_TOKEN")
+    alert_bot_token = _require_env("TELEGRAM_SMOKE_ALERT_BOT_TOKEN")
+    alert_default_chat_ids = _get_int_list_env("TELEGRAM_SMOKE_ALERT_CHAT_IDS")
+    alert_warning_chat_ids = _get_int_list_env("TELEGRAM_SMOKE_ALERT_WARNING_CHAT_IDS")
+    alert_critical_chat_ids = _get_int_list_env("TELEGRAM_SMOKE_ALERT_CRITICAL_CHAT_IDS")
     timeout_seconds = float(_get_env("TELEGRAM_SMOKE_TIMEOUT_SECONDS", "180"))
 
     _wait_ready(ingress_base_url, timeout_seconds)
@@ -103,14 +145,17 @@ def main() -> int:
             "text": "Reply with ok.",
         },
     }
-    status, payload = _request_json(
-        f"{ingress_base_url}{webhook_path}",
-        headers={"X-Telegram-Bot-Api-Secret-Token": secret},
-        body=valid_update,
-        method="POST",
+    status, payload = _wait_for_success(
+        request_fn=lambda: _request_json(
+            f"{ingress_base_url}{webhook_path}",
+            headers={"X-Telegram-Bot-Api-Secret-Token": secret},
+            body=valid_update,
+            method="POST",
+        ),
+        success_predicate=lambda status, payload: status == 200,
+        timeout_seconds=30.0,
+        error_context="telegram happy path did not stabilize before timeout",
     )
-    if status != 200:
-        raise SystemExit(f"telegram happy path failed: {status} {payload}")
 
     state = _fake_state(fake_base_url)
     _assert(len(state["sent_messages"]) == 1, f"expected 1 sent telegram message, got {state}")
@@ -229,6 +274,107 @@ def main() -> int:
     retry_message = state["sent_messages"][-1]
     _assert(retry_message["chat_id"] == chat_id, f"unexpected retry chat id: {state}")
     _assert(bool(retry_message["text"].strip()), f"retry reply should be non-empty: {state}")
+
+    status, payload = _request_json(f"{fake_base_url}/test/reset", body={}, method="POST")
+    if status != 200:
+        raise SystemExit(f"fake telegram reset before alert policy checks failed: {status} {payload}")
+
+    status, payload = _request_json(
+        f"{ingress_base_url}/telegram/alerts",
+        headers={"X-Telegram-Alert-Token": "wrong-alert-token"},
+        body={"text": "alert auth should fail"},
+        method="POST",
+    )
+    _assert(status == 401, f"expected alert auth failure 401, got {status} {payload}")
+    state = _fake_state(fake_base_url)
+    _assert(not state["sent_messages"], f"alert auth failure should not send telegram messages: {state}")
+
+    critical_alert = {
+        "status": "firing",
+        "alerts": [
+            {
+                "labels": {
+                    "alertname": "telegram_ingress_down",
+                    "severity": "critical",
+                    "service": "telegram-ingress",
+                },
+                "annotations": {
+                    "description": "Ingress health failed",
+                },
+            }
+        ],
+    }
+    status, payload = _wait_for_success(
+        request_fn=lambda: _request_json(
+            f"{ingress_base_url}/telegram/alerts",
+            headers={"X-Telegram-Alert-Token": alert_token},
+            body=critical_alert,
+            method="POST",
+        ),
+        success_predicate=lambda status, payload: status == 200,
+        timeout_seconds=30.0,
+        error_context="telegram alert routing did not stabilize before timeout",
+    )
+    expected_alert_recipients = {
+        *alert_default_chat_ids,
+        *alert_warning_chat_ids,
+        *alert_critical_chat_ids,
+    }
+    _assert(payload.get("status") == "sent", f"unexpected alert routing payload: {payload}")
+    _assert(
+        payload.get("recipients") == len(expected_alert_recipients),
+        f"unexpected alert recipient count: {payload}",
+    )
+    state = _fake_state(fake_base_url)
+    _assert(
+        len(state["sent_messages"]) == len(expected_alert_recipients),
+        f"unexpected alert sent state: {state}",
+    )
+    sent_alert_chats = {message["chat_id"] for message in state["sent_messages"]}
+    _assert(
+        sent_alert_chats == expected_alert_recipients,
+        f"unexpected alert chat ids in fake state: {state}",
+    )
+    for message in state["sent_messages"]:
+        _assert(message["bot_token"] == alert_bot_token, f"unexpected alert bot token in fake state: {state}")
+        _assert("[critical]" in message["text"], f"critical alert text missing severity marker: {state}")
+
+    resolved_alert = {
+        "status": "resolved",
+        "alerts": [
+            {
+                "labels": {
+                    "alertname": "telegram_ingress_down",
+                    "severity": "warning",
+                    "service": "telegram-ingress",
+                },
+                "annotations": {
+                    "description": "Ingress recovered",
+                },
+            }
+        ],
+    }
+    status, payload = _request_json(
+        f"{ingress_base_url}/telegram/alerts",
+        headers={"X-Telegram-Alert-Token": alert_token},
+        body=resolved_alert,
+        method="POST",
+    )
+    if status != 200:
+        raise SystemExit(f"telegram resolved alert policy check failed: {status} {payload}")
+    _assert(
+        payload == {
+            "status": "ignored",
+            "reason": "alert_policy_filtered",
+            "matched_alerts": 0,
+        },
+        f"unexpected resolved alert policy payload: {payload}",
+    )
+    state = _fake_state(fake_base_url)
+    _assert(
+        len(state["sent_messages"]) == len(expected_alert_recipients),
+        f"resolved alert should not add sent messages: {state}",
+    )
 
     print("Telegram ingress smoke checks passed")
     return 0

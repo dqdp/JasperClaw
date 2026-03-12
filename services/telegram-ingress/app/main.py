@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass
 import hmac
 import logging
 from contextlib import suppress
@@ -19,6 +20,37 @@ from app.services.bridge import (
 
 configure_logging()
 logger = logging.getLogger(__name__)
+
+_ALERT_SEVERITY_RANK = {
+    "info": 10,
+    "warning": 20,
+    "critical": 30,
+}
+_ALERT_SEVERITY_ALIASES = {
+    "informational": "info",
+    "warn": "warning",
+    "error": "critical",
+    "fatal": "critical",
+}
+_ALERT_ACCEPTED_STATUSES = frozenset({"firing", "resolved"})
+
+
+@dataclass(frozen=True, slots=True)
+class AlertDeliveryPlan:
+    deliveries: tuple[tuple[int, str], ...]
+    matched_alerts: int
+
+
+def _unique_chat_ids(*groups: tuple[int, ...]) -> tuple[int, ...]:
+    ordered: list[int] = []
+    seen: set[int] = set()
+    for group in groups:
+        for chat_id in group:
+            if chat_id in seen:
+                continue
+            seen.add(chat_id)
+            ordered.append(chat_id)
+    return tuple(ordered)
 
 
 def create_app(
@@ -60,7 +92,11 @@ def create_app(
             api_base_url=config.telegram_api_base_url,
             timeout_seconds=config.request_timeout_seconds,
         )
-        if config.telegram_alert_bot_token and config.telegram_alert_chat_ids:
+        if config.telegram_alert_bot_token and _unique_chat_ids(
+            config.telegram_alert_chat_ids,
+            config.telegram_alert_warning_chat_ids,
+            config.telegram_alert_critical_chat_ids,
+        ):
             alert_telegram_client = TelegramClient(
                 bot_token=config.telegram_alert_bot_token,
                 api_base_url=config.telegram_alert_api_base_url,
@@ -164,49 +200,115 @@ def create_app(
                 return value.strip()
         return ""
 
-    def _format_alert_message(payload: dict[str, object]) -> str:
+    def _normalize_alert_status(raw_status: str) -> str | None:
+        normalized = raw_status.strip().lower()
+        if normalized in _ALERT_ACCEPTED_STATUSES:
+            return normalized
+        return None
+
+    def _normalize_alert_severity(raw_severity: str) -> str | None:
+        normalized = raw_severity.strip().lower()
+        normalized = _ALERT_SEVERITY_ALIASES.get(normalized, normalized)
+        if normalized in _ALERT_SEVERITY_RANK:
+            return normalized
+        return None
+
+    def _alert_line(
+        *,
+        alert: dict[str, object],
+        fallback_status: str | None,
+    ) -> tuple[str, str] | None:
+        status = _normalize_alert_status(
+            _extract_field("status", source=alert) or (fallback_status or ""),
+        )
+        if status is None:
+            return None
+        if status == "resolved" and not config.telegram_alert_send_resolved:
+            return None
+
+        labels = alert.get("labels")
+        labels_map: dict[str, str] = {}
+        if isinstance(labels, dict):
+            for key, value in labels.items():
+                if isinstance(value, str):
+                    labels_map[key] = value
+
+        annotations = alert.get("annotations")
+        annotations_map: dict[str, str] = {}
+        if isinstance(annotations, dict):
+            for key, value in annotations.items():
+                if isinstance(value, str):
+                    annotations_map[key] = value
+
+        severity = _normalize_alert_severity(labels_map.get("severity", ""))
+        if severity is None:
+            return None
+
+        name = labels_map.get("alertname") or annotations_map.get("summary") or "alert"
+        description = annotations_map.get("description") or annotations_map.get("summary") or name
+        component = labels_map.get("service") or labels_map.get("instance") or "unknown"
+        generator_url = _extract_field("generatorURL", "generator_url", source=alert)
+
+        line = f"{status.upper()} {name} [{severity}] on {component}: {description}"
+        if generator_url:
+            line = f"{line} ({generator_url})"
+        return severity, line
+
+    def _route_chat_ids_for_severity(severity: str) -> tuple[int, ...]:
+        rank = _ALERT_SEVERITY_RANK[severity]
+        groups: list[tuple[int, ...]] = [config.telegram_alert_chat_ids]
+        if rank >= _ALERT_SEVERITY_RANK["warning"]:
+            groups.append(config.telegram_alert_warning_chat_ids)
+        if rank >= _ALERT_SEVERITY_RANK["critical"]:
+            groups.append(config.telegram_alert_critical_chat_ids)
+        return _unique_chat_ids(*groups)
+
+    def _manual_alert_chat_ids() -> tuple[int, ...]:
+        if config.telegram_alert_chat_ids:
+            return _unique_chat_ids(config.telegram_alert_chat_ids)
+        return _unique_chat_ids(
+            config.telegram_alert_warning_chat_ids,
+            config.telegram_alert_critical_chat_ids,
+        )
+
+    def _plan_alert_delivery(payload: dict[str, object]) -> AlertDeliveryPlan:
         direct_text = _extract_field("text", "message", source=payload)
         if direct_text:
-            return direct_text
+            recipients = _manual_alert_chat_ids()
+            return AlertDeliveryPlan(
+                deliveries=tuple((chat_id, direct_text) for chat_id in recipients),
+                matched_alerts=1,
+            )
 
         alerts_value = payload.get("alerts")
         if isinstance(alerts_value, list) and alerts_value:
-            lines: list[str] = []
-            status = _extract_field("status", source=payload).upper() or "ALERT"
-
+            recipient_lines: dict[int, list[str]] = {}
+            matched_alerts = 0
+            fallback_status = _normalize_alert_status(_extract_field("status", source=payload))
             for alert in alerts_value:
                 if not isinstance(alert, dict):
                     continue
+                line_result = _alert_line(alert=alert, fallback_status=fallback_status)
+                if line_result is None:
+                    continue
+                severity, line = line_result
+                matched_alerts += 1
+                for chat_id in _route_chat_ids_for_severity(severity):
+                    lines = recipient_lines.setdefault(chat_id, [])
+                    if line not in lines:
+                        lines.append(line)
 
-                labels = alert.get("labels")
-                labels_map: dict[str, str] = {}
-                if isinstance(labels, dict):
-                    for key, value in labels.items():
-                        if isinstance(value, str):
-                            labels_map[key] = value
+            deliveries = tuple(
+                (chat_id, "\n".join(lines))
+                for chat_id, lines in recipient_lines.items()
+                if lines
+            )
+            return AlertDeliveryPlan(
+                deliveries=deliveries,
+                matched_alerts=matched_alerts,
+            )
 
-                annotations = alert.get("annotations")
-                annotations_map: dict[str, str] = {}
-                if isinstance(annotations, dict):
-                    for key, value in annotations.items():
-                        if isinstance(value, str):
-                            annotations_map[key] = value
-
-                name = labels_map.get("alertname") or annotations_map.get("summary") or "alert"
-                severity = labels_map.get("severity") or "unknown"
-                description = annotations_map.get("description") or annotations_map.get("summary") or name
-                component = labels_map.get("service") or labels_map.get("instance") or "unknown"
-                generator_url = _extract_field("generatorURL", "generator_url", source=alert)
-
-                line = f"{status} {name} [{severity}] on {component}: {description}"
-                if generator_url:
-                    line = f"{line} ({generator_url})"
-                lines.append(line)
-
-            if lines:
-                return "\n".join(lines)
-
-        return str(payload)
+        return AlertDeliveryPlan(deliveries=(), matched_alerts=0)
 
     @app.post(config.webhook_path)
     async def webhook(
@@ -246,7 +348,11 @@ def create_app(
         payload: dict[str, object] = Body(...),
         x_telegram_alert_token: str | None = Header(default=None, alias="X-Telegram-Alert-Token"),
     ) -> dict[str, object]:
-        if alert_telegram_client is None or not config.telegram_alert_chat_ids:
+        if alert_telegram_client is None or not _unique_chat_ids(
+            config.telegram_alert_chat_ids,
+            config.telegram_alert_warning_chat_ids,
+            config.telegram_alert_critical_chat_ids,
+        ):
             raise HTTPException(
                 status_code=503,
                 detail="telegram alert relay is not configured",
@@ -261,10 +367,34 @@ def create_app(
         ):
             raise HTTPException(status_code=401, detail="invalid alert token")
 
-        message = _format_alert_message(payload)
-        for chat_id in config.telegram_alert_chat_ids:
-            await alert_telegram_client.send_message(chat_id=chat_id, text=message)
-        return {"status": "sent", "recipients": len(config.telegram_alert_chat_ids)}
+        plan = _plan_alert_delivery(payload)
+        if not plan.deliveries:
+            return {
+                "status": "ignored",
+                "reason": "alert_policy_filtered",
+                "matched_alerts": plan.matched_alerts,
+            }
+
+        try:
+            for chat_id, message in plan.deliveries:
+                await alert_telegram_client.send_message(chat_id=chat_id, text=message)
+        except Exception as exc:
+            log_event(
+                "telegram_alert_delivery_failed",
+                request_id="alert_delivery",
+                recipients=len(plan.deliveries),
+                matched_alerts=plan.matched_alerts,
+                error_type=type(exc).__name__,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="telegram alert delivery failed",
+            ) from exc
+        return {
+            "status": "sent",
+            "recipients": len(plan.deliveries),
+            "matched_alerts": plan.matched_alerts,
+        }
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:

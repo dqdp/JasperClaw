@@ -31,8 +31,7 @@ This runbook separates:
 Что не реализовано сейчас:
 
 - richer command/approval model beyond `/help`, `/status`, and `/ask`;
-- отдельные политики доставки по уровню важности/приоритетам для operational alert fanout;
-- production-grade priority policy for operational alerts beyond the current baseline.
+- production-grade persistent retries/dedupe/escalation for operational alerts beyond the current routing baseline.
 
 ## Enterprise pattern (practical baseline)
 
@@ -104,8 +103,16 @@ When `TELEGRAM_ALLOWED_COMMANDS` is configured, commands outside that allowlist 
 `telegram-ingress` в текущей реализации предоставляет endpoint для alert-ретрансляции:
 
 - `POST /telegram/alerts` принимает JSON с `text` или `alerts` (формат близкий к Alertmanager webhook),
-- нормализует событие в текст и отправляет его на `TELEGRAM_ALERT_CHAT_IDS`,
+- нормализует событие в текст и маршрутизирует его через default/warning/critical recipient groups,
 - использует `TELEGRAM_ALERT_BOT_TOKEN` и требует `X-Telegram-Alert-Token` при наличии `TELEGRAM_ALERT_AUTH_TOKEN`.
+
+Policy baseline:
+
+- `TELEGRAM_ALERT_CHAT_IDS` получает все принятые alert payloads и direct `text`/`message` payloads;
+- `TELEGRAM_ALERT_WARNING_CHAT_IDS` получает `warning` и `critical`;
+- `TELEGRAM_ALERT_CRITICAL_CHAT_IDS` получает только `critical`;
+- `resolved` alerts по умолчанию фильтруются, если не включен `TELEGRAM_ALERT_SEND_RESOLVED=true`;
+- overlap chat ids дедуплицируется на один message per request.
 
 Текущая эксплуатация:
 
@@ -131,8 +138,8 @@ curl -s -X POST \
 Для production-обвязки:
 
 - route из Alertmanager/SLO monitor в webhook endpoint,
-- dedupe/retry в алерт-ретрансляторе,
-- фильтрация по severity (`warning`, `critical`).
+- использовать route groups по severity (`default`, `warning`, `critical`),
+- для durable retry/escalation использовать внешний alerting pipeline или отдельный follow-up slice.
 
 ## Incident checks
 
@@ -159,6 +166,9 @@ curl -s -X POST \
 - отправить сообщение боту в пользовательском чате -> ответный message от бота.
 - отправить второе сообщение в том же чате -> успешное продолжение того же backend conversation path.
 - проверить, что невалидный webhook-secret отбрасывается.
+- проверить, что невалидный `X-Telegram-Alert-Token` на `/telegram/alerts` отбрасывается.
+- отправить `critical firing` alert payload -> доставка во все matching alert routes.
+- отправить `resolved` alert payload -> default drop unless `TELEGRAM_ALERT_SEND_RESOLVED=true`.
 - отправить короткий burst:
   - 1-й/2-й обработаны,
   - 3-й блокируется согласно лимитам.

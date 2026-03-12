@@ -125,6 +125,9 @@ class Settings:
     telegram_alert_auth_token: str = ""
     telegram_alert_api_base_url: str = "https://api.telegram.org"
     telegram_alert_chat_ids: tuple[int, ...] = ()
+    telegram_alert_warning_chat_ids: tuple[int, ...] = ()
+    telegram_alert_critical_chat_ids: tuple[int, ...] = ()
+    telegram_alert_send_resolved: bool = False
 
     def is_operational(self) -> bool:
         return bool(self.telegram_bot_token and self.agent_api_key)
@@ -165,4 +168,16 @@ def get_settings() -> Settings:
         ).strip(),
         telegram_alert_auth_token=_strip_secret(os.getenv("TELEGRAM_ALERT_AUTH_TOKEN", "")),
         telegram_alert_chat_ids=_get_int_list_env("TELEGRAM_ALERT_CHAT_IDS", ()),
+        telegram_alert_warning_chat_ids=_get_int_list_env(
+            "TELEGRAM_ALERT_WARNING_CHAT_IDS",
+            (),
+        ),
+        telegram_alert_critical_chat_ids=_get_int_list_env(
+            "TELEGRAM_ALERT_CRITICAL_CHAT_IDS",
+            (),
+        ),
+        telegram_alert_send_resolved=_get_bool_env(
+            "TELEGRAM_ALERT_SEND_RESOLVED",
+            False,
+        ),
     )

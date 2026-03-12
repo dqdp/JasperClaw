@@ -137,6 +137,9 @@ Expected result:
 - response flows through `telegram-ingress -> agent-api -> outbound send`
 - invalid webhook secret is rejected
 - retry-safe downstream failure behavior is preserved
+- `/telegram/alerts` rejects invalid auth
+- `critical` alert payloads route to the configured Telegram alert recipient groups
+- `resolved` alert payloads are filtered by default unless explicitly enabled
 
 ## Pass/fail rule
 

@@ -65,6 +65,7 @@ Current baseline:
 - Telegram forwards `metadata.source=telegram` plus a stable `metadata.client_conversation_id` derived from `chat_id`; `agent-api` resolves that binding to a canonical backend conversation
 - Telegram-originated requests carry source metadata so tool policy can deny external-effect actions from this ingress
 - request correlation is preserved across ingress, orchestration, and tool-audit paths
+- operational alert delivery uses a dedicated alert bot plus auth token, with severity-aware routing for default/warning/critical recipient groups
 
 Safety note:
 
@@ -74,7 +75,7 @@ Safety note:
 
 Remaining hardening:
 
-- alert delivery policies remain intentionally conservative and need explicit priority/severity handling before expansion
+- persistent alert retries/dedupe/escalation remain follow-up work beyond the current routing policy baseline
 
 ## Safe Telegram integration requirements
 

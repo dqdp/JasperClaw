@@ -839,7 +839,31 @@ Used by:
 
 Purpose:
 
-- comma-separated list of Telegram chat IDs that receive operational alerts
+- comma-separated default Telegram chat IDs that receive accepted operational alerts and direct text alert payloads
+
+### `TELEGRAM_ALERT_WARNING_CHAT_IDS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- comma-separated Telegram chat IDs that additionally receive `warning` and `critical` alert payloads
+
+### `TELEGRAM_ALERT_CRITICAL_CHAT_IDS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- comma-separated Telegram chat IDs that additionally receive only `critical` alert payloads
 
 ### `TELEGRAM_ALERT_AUTH_TOKEN`
 
@@ -868,6 +892,23 @@ Purpose:
 Notes:
 
 - defaults to `https://api.telegram.org`
+
+### `TELEGRAM_ALERT_SEND_RESOLVED`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- whether `resolved` Alertmanager-style payloads are delivered instead of being filtered by policy
+
+Notes:
+
+- defaults to `false`
+- direct `text`/`message` alert payloads are not filtered by this setting
 
 ### `AGENT_API_MODEL`
 

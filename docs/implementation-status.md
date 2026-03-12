@@ -118,10 +118,11 @@ Implemented:
 
 - webhook ingestion service for Telegram updates
 - idempotent update handling in the bridge layer
-- `agent-api` fan-out path with conversation reuse by chat id
+- `agent-api` fan-out path with backend-owned conversation continuity for Telegram chats
 - startup webhook registration when `TELEGRAM_WEBHOOK_URL` is configured
 - optional polling fallback when webhook URL is not configured
 - operational alert relay via `/telegram/alerts` using a dedicated alert bot token
+- severity-aware alert routing via default/warning/critical Telegram recipient groups
 - minimal command routing for `/help`, `/status`, and `/ask`
 - slash-command allowlist and request ID continuity across ingress handling
 - Telegram-originated tool actions are tagged at ingress and denied inside `agent-api`
@@ -129,7 +130,7 @@ Implemented:
 Not yet implemented:
 
 - richer command/approval routing beyond the current local command set
-- delivery policies and priority handling for operational alert fanout
+- persistent alert retries, dedupe, and escalation behavior for operational fanout
 
 ### Database and memory
 
