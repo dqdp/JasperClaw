@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.api import deps
 from app.clients.ollama import OllamaChatResult, OllamaChatStreamChunk
+from app.core.config import get_settings
 from app.core.errors import APIError
 from app.main import app
 from app.repositories import PostgresChatRepository
@@ -461,6 +462,34 @@ class _SearchStub:
         ]
 
 
+class _ModelDrivenSearchClient:
+    def __init__(self) -> None:
+        self.chat_calls: list[list] = []
+
+    def chat(self, model, messages):
+        _ = model
+        self.chat_calls.append(list(messages))
+        if len(self.chat_calls) == 1:
+            return OllamaChatResult(
+                content='{"tool":"web-search","query":"latest assistant release notes"}',
+                prompt_tokens=3,
+                completion_tokens=2,
+                total_tokens=5,
+            )
+        return OllamaChatResult(
+            content="Final answer with cited release notes.",
+            prompt_tokens=11,
+            completion_tokens=7,
+            total_tokens=18,
+        )
+
+    def stream_chat(self, model, messages):
+        raise AssertionError("Unexpected streaming runtime call")
+
+    def embed(self, model, input_text):
+        raise AssertionError("Unexpected embedding call")
+
+
 def test_streaming_chat_flow_persists_success_with_real_repository(
     monkeypatch, auth_headers
 ) -> None:
@@ -652,3 +681,44 @@ def test_non_streaming_web_search_flow_records_tool_execution_audit(
     assert connection.tool_executions[0]["response_payload_json"]["results"][0]["url"] == (
         "https://example.test/changelog"
     )
+
+
+def test_model_driven_web_search_flow_persists_only_final_answer_and_tool_audit(
+    monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    connection = _InMemoryConnection()
+    runtime_client = _ModelDrivenSearchClient()
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_ollama_client] = lambda: runtime_client
+    client.app.dependency_overrides[deps.get_web_search_client] = lambda: _SearchStub()
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_payload(stream=False),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "Final answer with cited release notes."
+    )
+    assert len(runtime_client.chat_calls) == 2
+    assert len(connection.messages) == 2
+    assert [message["role"] for message in connection.messages] == ["user", "assistant"]
+    assert connection.messages[1]["content"] == "Final answer with cited release notes."
+    assert '{"tool":"web-search"' not in connection.messages[1]["content"]
+    assert len(connection.tool_executions) == 1
+    assert connection.tool_executions[0]["request_payload_json"] == {
+        "query": "latest assistant release notes",
+        "limit": 3,
+    }

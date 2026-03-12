@@ -40,11 +40,12 @@ The initial v1 tool catalog is intentionally small:
 - `spotify-pause`
 - `spotify-next`
 
-Current Tools Slice 1 baseline:
+Current Tools Slice 2 baseline:
 
 - only `web-search` is implemented
 - tool use remains internal to `agent-api` and is not exposed as a public HTTP API
-- `web-search` is invoked only through `POST /v1/chat/completions` with explicit request metadata opt-in
+- `web-search` may run either through explicit `metadata.web_search=true` or through one bounded internal planning pass inside `POST /v1/chat/completions`
+- the model-driven path is capped at one tool hop per request
 - tool failures are fail-open relative to the core text response path, but must still be logged and audited
 
 New tool IDs must be stable, explicit, and versioned by name rather than inferred from provider internals.
@@ -143,6 +144,7 @@ Current `web-search` adapter baseline:
 - provider contract: `GET {SEARCH_BASE_URL}/search?q=<query>&limit=<k>`
 - bearer authentication uses `SEARCH_API_KEY`
 - normalized result items contain `title`, `url`, and `snippet`
+- in the model-driven path, the planner may request only `{"tool":"web-search","query":"..."}` as a strict JSON directive
 
 ## Error contract
 

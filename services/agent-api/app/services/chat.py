@@ -1,3 +1,4 @@
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -77,6 +78,19 @@ class ToolContext:
     execution: ToolExecutionRecord | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ToolPlanningDecision:
+    tool_name: str
+    query: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolPlanningResult:
+    runtime_result: OllamaChatResult
+    decision: ToolPlanningDecision | None
+    content_outcome: str
+
+
 class ChatService:
     def __init__(
         self,
@@ -105,15 +119,46 @@ class ChatService:
             request_id=request_id,
             request=request,
         )
-        tool_context = self._prepare_tool_context(
-            request_id=request_id,
-            request=request,
-            base_messages=memory_context.runtime_messages,
-        )
+        tool_context = ToolContext(runtime_messages=memory_context.runtime_messages)
         started_at = datetime.now(timezone.utc)
         runtime_started = perf_counter()
 
         try:
+            planning_result = self._maybe_run_tool_planning_pass(
+                request_id=request_id,
+                request=request,
+                profile=profile,
+                base_messages=memory_context.runtime_messages,
+            )
+            if self._is_web_search_requested(request):
+                tool_context = self._prepare_tool_context(
+                    request_id=request_id,
+                    request=request,
+                    base_messages=memory_context.runtime_messages,
+                )
+            elif planning_result is not None and planning_result.decision is not None:
+                tool_context = self._prepare_model_driven_tool_context(
+                    request_id=request_id,
+                    base_messages=memory_context.runtime_messages,
+                    decision=planning_result.decision,
+                )
+            elif planning_result is not None:
+                completed_at = datetime.now(timezone.utc)
+                return self._build_success_result(
+                    request_id=request_id,
+                    request=request,
+                    profile=profile,
+                    conversation_id_hint=resolved_conversation_hint,
+                    memory_context=memory_context,
+                    tool_context=tool_context,
+                    runtime_result=planning_result.runtime_result,
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    runtime_started=runtime_started,
+                    log_runtime=False,
+                )
+
+            runtime_started = perf_counter()
             runtime_result = self._ollama_client.chat(
                 model=profile.runtime_model,
                 messages=tool_context.runtime_messages,
@@ -190,18 +235,54 @@ class ChatService:
             request_id=request_id,
             request=request,
         )
-        tool_context = self._prepare_tool_context(
-            request_id=request_id,
-            request=request,
-            base_messages=memory_context.runtime_messages,
-        )
+        tool_context = ToolContext(runtime_messages=memory_context.runtime_messages)
         runtime_started = perf_counter()
-        stream = self._ollama_client.stream_chat(
-            model=profile.runtime_model,
-            messages=tool_context.runtime_messages,
-        )
 
         try:
+            planning_result = self._maybe_run_tool_planning_pass(
+                request_id=request_id,
+                request=request,
+                profile=profile,
+                base_messages=memory_context.runtime_messages,
+            )
+            if self._is_web_search_requested(request):
+                tool_context = self._prepare_tool_context(
+                    request_id=request_id,
+                    request=request,
+                    base_messages=memory_context.runtime_messages,
+                )
+            elif planning_result is not None and planning_result.decision is not None:
+                tool_context = self._prepare_model_driven_tool_context(
+                    request_id=request_id,
+                    base_messages=memory_context.runtime_messages,
+                    decision=planning_result.decision,
+                )
+            elif planning_result is not None:
+                response_id = f"chatcmpl_{uuid4().hex[:12]}"
+                created = int(time())
+                events = self._stream_precomputed_result(
+                    request_id=request_id,
+                    request=request,
+                    profile=profile,
+                    context=context,
+                    memory_context=memory_context,
+                    tool_context=tool_context,
+                    started_at=started_at,
+                    runtime_result=planning_result.runtime_result,
+                )
+                return ChatStreamSession(
+                    response_id=response_id,
+                    created=created,
+                    public_model=profile.public_id,
+                    conversation_id=context.conversation_id,
+                    events=events,
+                )
+
+            runtime_started = perf_counter()
+            stream = self._ollama_client.stream_chat(
+                model=profile.runtime_model,
+                messages=tool_context.runtime_messages,
+            )
             first_chunk = next(stream)
         except StopIteration as exc:
             raise APIError(
@@ -411,6 +492,7 @@ class ChatService:
         started_at: datetime,
         completed_at: datetime,
         runtime_started: float,
+        log_runtime: bool = True,
     ) -> ChatResult:
         response_id = f"chatcmpl_{uuid4().hex[:12]}"
         created = int(time())
@@ -420,12 +502,13 @@ class ChatService:
             total_tokens=runtime_result.total_tokens,
         )
 
-        self._log_runtime_success(
-            request_id=request_id,
-            profile=profile,
-            runtime_started=runtime_started,
-            usage=usage,
-        )
+        if log_runtime:
+            self._log_runtime_success(
+                request_id=request_id,
+                profile=profile,
+                runtime_started=runtime_started,
+                usage=usage,
+            )
         persistence = self._persist_successful_completion(
             request_id=request_id,
             profile=profile,
@@ -468,6 +551,66 @@ class ChatService:
                 )
             ],
             usage=usage,
+        )
+
+    def _stream_precomputed_result(
+        self,
+        *,
+        request_id: str,
+        request: ChatCompletionRequest,
+        profile: RuntimeProfile,
+        context: ConversationContext,
+        memory_context: MemoryContext,
+        tool_context: ToolContext,
+        started_at: datetime,
+        runtime_result: OllamaChatResult,
+    ) -> Iterator[ChatStreamEvent]:
+        if runtime_result.content:
+            yield ChatStreamEvent(
+                content=runtime_result.content,
+                role="assistant",
+                finish_reason=None,
+            )
+
+        completed_at = datetime.now(timezone.utc)
+        usage = self._build_usage(
+            prompt_tokens=runtime_result.prompt_tokens,
+            completion_tokens=runtime_result.completion_tokens,
+            total_tokens=runtime_result.total_tokens,
+        )
+        persistence = self._persist_successful_completion(
+            request_id=request_id,
+            profile=profile,
+            request=request,
+            conversation_id_hint=context.conversation_id,
+            response_content=runtime_result.content,
+            usage=usage,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+        self._record_memory_retrieval(
+            request_id=request_id,
+            profile=profile,
+            conversation_id=persistence.conversation_id,
+            memory_context=memory_context,
+            created_at=completed_at,
+        )
+        self._record_tool_execution(
+            request_id=request_id,
+            conversation_id=persistence.conversation_id,
+            model_run_id=persistence.model_run_id,
+            tool_context=tool_context,
+        )
+        self._store_memory_items(
+            request_id=request_id,
+            conversation_id=persistence.conversation_id,
+            persistence=persistence,
+            created_at=completed_at,
+        )
+        yield ChatStreamEvent(
+            content=None,
+            role=None,
+            finish_reason="stop",
         )
 
     def _persist_successful_completion(
@@ -634,6 +777,42 @@ class ChatService:
         if not query_text:
             return ToolContext(runtime_messages=list(base_messages))
 
+        return self._execute_web_search(
+            request_id=request_id,
+            base_messages=base_messages,
+            query_text=query_text,
+            annotate_failures=False,
+        )
+
+    def _prepare_model_driven_tool_context(
+        self,
+        *,
+        request_id: str,
+        base_messages: list[ChatMessage],
+        decision: ToolPlanningDecision,
+    ) -> ToolContext:
+        if decision.tool_name != "web-search":
+            return ToolContext(runtime_messages=list(base_messages))
+
+        return self._execute_web_search(
+            request_id=request_id,
+            base_messages=base_messages,
+            query_text=decision.query,
+            annotate_failures=True,
+        )
+
+    def _execute_web_search(
+        self,
+        *,
+        request_id: str,
+        base_messages: list[ChatMessage],
+        query_text: str,
+        annotate_failures: bool,
+    ) -> ToolContext:
+        query_text = query_text.strip()
+        if not query_text:
+            return ToolContext(runtime_messages=list(base_messages))
+
         started_at = datetime.now(timezone.utc)
         tool_started = perf_counter()
         invocation_id = f"tool_{uuid4().hex[:12]}"
@@ -656,7 +835,13 @@ class ChatService:
                 error_code="tool_not_allowed",
             )
             self._log_tool_execution(request_id=request_id, execution=execution)
-            return ToolContext(runtime_messages=list(base_messages), execution=execution)
+            return ToolContext(
+                runtime_messages=self._apply_tool_failure_policy(
+                    base_messages=base_messages,
+                    annotate_failures=annotate_failures,
+                ),
+                execution=execution,
+            )
 
         if self._web_search_client is None:
             completed_at = datetime.now(timezone.utc)
@@ -677,7 +862,13 @@ class ChatService:
                 error_code="tool_not_configured",
             )
             self._log_tool_execution(request_id=request_id, execution=execution)
-            return ToolContext(runtime_messages=list(base_messages), execution=execution)
+            return ToolContext(
+                runtime_messages=self._apply_tool_failure_policy(
+                    base_messages=base_messages,
+                    annotate_failures=annotate_failures,
+                ),
+                execution=execution,
+            )
 
         try:
             raw_results = self._web_search_client.search(
@@ -744,7 +935,13 @@ class ChatService:
                 error_code=exc.code,
             )
             self._log_tool_execution(request_id=request_id, execution=execution)
-            return ToolContext(runtime_messages=list(base_messages), execution=execution)
+            return ToolContext(
+                runtime_messages=self._apply_tool_failure_policy(
+                    base_messages=base_messages,
+                    annotate_failures=annotate_failures,
+                ),
+                execution=execution,
+            )
 
     def _record_tool_execution(
         self,
@@ -1000,6 +1197,159 @@ class ChatService:
             *messages[insert_at:],
         ]
 
+    def _augment_messages_with_tool_unavailable(
+        self,
+        messages: list[ChatMessage],
+    ) -> list[ChatMessage]:
+        unavailable_message = ChatMessage(
+            role="system",
+            content=(
+                "Web search was requested but is currently unavailable. "
+                "Answer using existing knowledge only, and be explicit when fresh "
+                "facts may be uncertain."
+            ),
+        )
+        insert_at = 0
+        while insert_at < len(messages) and messages[insert_at].role == "system":
+            insert_at += 1
+        return [
+            *messages[:insert_at],
+            unavailable_message,
+            *messages[insert_at:],
+        ]
+
+    def _build_tool_planning_messages(
+        self,
+        messages: list[ChatMessage],
+    ) -> list[ChatMessage]:
+        planning_message = ChatMessage(
+            role="system",
+            content=(
+                "You may either answer the user directly or request exactly one tool. "
+                "The only available tool is web-search. If web search is required, "
+                'reply with only JSON in the form {"tool":"web-search","query":"..."} '
+                "and no other text. Otherwise answer the user directly."
+            ),
+        )
+        insert_at = 0
+        while insert_at < len(messages) and messages[insert_at].role == "system":
+            insert_at += 1
+        return [
+            *messages[:insert_at],
+            planning_message,
+            *messages[insert_at:],
+        ]
+
+    def _maybe_run_tool_planning_pass(
+        self,
+        *,
+        request_id: str,
+        request: ChatCompletionRequest,
+        profile: RuntimeProfile,
+        base_messages: list[ChatMessage],
+    ) -> ToolPlanningResult | None:
+        if not self._should_attempt_model_driven_web_search(request):
+            return None
+
+        planning_messages = self._build_tool_planning_messages(base_messages)
+        runtime_started = perf_counter()
+        runtime_result = self._ollama_client.chat(
+            model=profile.runtime_model,
+            messages=planning_messages,
+        )
+
+        usage = self._build_usage(
+            prompt_tokens=runtime_result.prompt_tokens,
+            completion_tokens=runtime_result.completion_tokens,
+            total_tokens=runtime_result.total_tokens,
+        )
+        decision = self._parse_tool_planning_decision(runtime_result.content)
+        content_outcome = self._tool_planning_content_outcome(
+            runtime_result.content,
+            decision,
+        )
+        self._log_runtime_success(
+            request_id=request_id,
+            profile=profile,
+            runtime_started=runtime_started,
+            usage=usage,
+            phase="planning",
+        )
+        self._log_tool_planning(
+            request_id=request_id,
+            outcome=content_outcome,
+            decision=decision,
+        )
+        return ToolPlanningResult(
+            runtime_result=runtime_result,
+            decision=decision,
+            content_outcome=content_outcome,
+        )
+
+    def _parse_tool_planning_decision(
+        self,
+        content: str,
+    ) -> ToolPlanningDecision | None:
+        stripped_content = content.strip()
+        if not stripped_content.startswith("{"):
+            return None
+
+        try:
+            payload = json.loads(stripped_content)
+        except ValueError:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+        if set(payload.keys()) != {"tool", "query"}:
+            return None
+
+        tool_name = payload.get("tool")
+        query = payload.get("query")
+        if tool_name != "web-search" or not isinstance(query, str):
+            return None
+        query = query.strip()
+        if not query:
+            return None
+        return ToolPlanningDecision(tool_name=tool_name, query=query)
+
+    def _tool_planning_content_outcome(
+        self,
+        content: str,
+        decision: ToolPlanningDecision | None,
+    ) -> str:
+        if decision is not None:
+            return "tool_requested"
+        if content.strip().startswith("{"):
+            return "invalid_directive"
+        return "respond_directly"
+
+    def _log_tool_planning(
+        self,
+        *,
+        request_id: str,
+        outcome: str,
+        decision: ToolPlanningDecision | None,
+    ) -> None:
+        level = logging.INFO if outcome != "invalid_directive" else logging.WARNING
+        log_event(
+            "chat_tool_planning_completed",
+            level=level,
+            request_id=request_id,
+            outcome=outcome,
+            tool_name=decision.tool_name if decision is not None else None,
+        )
+
+    def _apply_tool_failure_policy(
+        self,
+        *,
+        base_messages: list[ChatMessage],
+        annotate_failures: bool,
+    ) -> list[ChatMessage]:
+        if not annotate_failures:
+            return list(base_messages)
+        return self._augment_messages_with_tool_unavailable(base_messages)
+
     def _latest_user_message(self, messages: list[ChatMessage]) -> str | None:
         for message in reversed(messages):
             content = message.content.strip()
@@ -1049,6 +1399,18 @@ class ChatService:
             return False
         return value.strip().casefold() in {"1", "true", "yes", "on"}
 
+    def _should_attempt_model_driven_web_search(
+        self,
+        request: ChatCompletionRequest,
+    ) -> bool:
+        if request.metadata and "web_search" in request.metadata:
+            return False
+        if not self._settings.web_search_enabled:
+            return False
+        if self._web_search_client is None:
+            return False
+        return self._latest_user_message(request.messages) is not None
+
     def _require_single_embedding(
         self,
         embeddings: list[list[float]],
@@ -1079,6 +1441,7 @@ class ChatService:
         profile: RuntimeProfile,
         runtime_started: float,
         usage: ChatCompletionUsage | None,
+        phase: str = "final",
     ) -> None:
         log_event(
             "chat_runtime_completed",
@@ -1086,6 +1449,7 @@ class ChatService:
             public_model=profile.public_id,
             runtime_model=profile.runtime_model,
             dependency="ollama",
+            phase=phase,
             outcome="success",
             duration_ms=round((perf_counter() - runtime_started) * 1000, 2),
             prompt_tokens=usage.prompt_tokens if usage else None,
@@ -1100,6 +1464,7 @@ class ChatService:
         profile: RuntimeProfile,
         runtime_started: float,
         error: APIError,
+        phase: str = "final",
     ) -> None:
         log_event(
             "chat_runtime_completed",
@@ -1108,6 +1473,7 @@ class ChatService:
             public_model=profile.public_id,
             runtime_model=profile.runtime_model,
             dependency="ollama",
+            phase=phase,
             outcome="error",
             duration_ms=round((perf_counter() - runtime_started) * 1000, 2),
             error_type=error.error_type,

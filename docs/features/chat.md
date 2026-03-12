@@ -154,14 +154,16 @@ Current Memory Slice 1 baseline:
 
 ### 7. Optional tool context
 
-If an explicitly enabled safe tool is requested, `agent-api` may perform tool execution before the model call and inject the normalized result into the runtime prompt.
+If a safe tool is selected, `agent-api` may perform one bounded tool step before the final model answer and inject the normalized result into the runtime prompt.
 
-Current Tools Slice 1 baseline:
+Current Tools Slice 2 baseline:
 
 - the only implemented tool is read-only `web-search`
-- tool use is explicit via `metadata.web_search=true`
-- search results are injected as an additional `system` message for runtime prompt assembly only
-- tool failures degrade to `no tool context` and do not fail the core chat request
+- `metadata.web_search=true` still forces the existing direct tool path
+- otherwise, when `web-search` is enabled and configured, `agent-api` performs one internal planning pass that may request exactly one `web-search` call
+- search results augment only the runtime prompt, not the canonical stored transcript
+- malformed or unknown tool directives are treated as ordinary assistant output, not orchestration errors
+- if model-driven `web-search` fails, `agent-api` runs one final answer pass with a `web-search unavailable` system note instead of failing the core chat request
 - each tool execution is logged and persisted through `tool_executions`
 
 ### 8. Model-run initialization
@@ -263,7 +265,8 @@ Minimum events:
 - `profile_resolved`
 - `conversation_resolved`
 - `retrieval_started` and `retrieval_completed` when retrieval is enabled
-- `tool_completed` and tool audit completion when a tool is explicitly requested
+- `tool_planning_completed` when bounded model-driven planning runs
+- `tool_completed` and tool audit completion when a tool is executed
 - `model_run_started`
 - `dependency_call_completed`
 - `persistence_write_completed`
@@ -316,7 +319,7 @@ To make this flow real in code, the first text-path delivery should proceed in t
 
 ## Explicitly deferred
 
-- full tool-planning behavior inside the text flow
+- unbounded or multi-hop tool-planning behavior inside the text flow
 - document retrieval insertion into the prompt
 - voice-triggered transcript continuation
 - cross-client conversation merge semantics

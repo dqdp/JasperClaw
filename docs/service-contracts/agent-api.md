@@ -191,11 +191,13 @@ Current Memory Slice 1 baseline:
 - retrieved memory augments only the runtime prompt, not the canonical stored transcript
 - retrieval failures degrade to `no memory` instead of failing the core text request
 
-Current Tools Slice 1 baseline:
+Current Tools Slice 2 baseline:
 
-- `metadata.web_search=true` explicitly opts the request into `web-search`
+- `metadata.web_search=true` still explicitly opts the request into the direct `web-search` path
+- otherwise, when `web-search` is enabled and configured, `agent-api` may perform one internal planning pass that either returns a final answer directly or requests exactly one `web-search` call
 - `web-search` augments only the runtime prompt, not the canonical stored transcript
-- tool execution failures degrade to `no tool context` instead of failing the core text request
+- malformed or unknown tool directives are treated as ordinary assistant output
+- model-driven tool failures degrade to one final answer pass with `no fresh search context` instead of failing the core text request
 
 Continuity behavior:
 

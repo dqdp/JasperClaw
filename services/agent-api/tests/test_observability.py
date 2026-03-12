@@ -122,6 +122,72 @@ def test_chat_request_emits_tool_events_when_web_search_runs(
     assert audit_event["outcome"] == "success"
 
 
+def test_chat_request_emits_tool_planning_events_for_model_driven_search(
+    client, monkeypatch, caplog, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"web-search","query":"latest assistant release notes"}',
+                },
+                "prompt_eval_count": 3,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Final answer with cited release notes.",
+                },
+                "prompt_eval_count": 11,
+                "eval_count": 7,
+            },
+        ),
+    ]
+    _FakeSearchClient.results = [
+        {
+            "title": "Assistant release notes",
+            "url": "https://example.test/releases",
+            "snippet": "Latest release notes for the assistant runtime.",
+        }
+    ]
+
+    with caplog.at_level(logging.INFO, logger="agent_api"):
+        response = client.post(
+            "/v1/chat/completions",
+            json=_chat_payload(),
+            headers={**auth_headers, "X-Request-ID": "req_toolplan"},
+        )
+
+    assert response.status_code == 200
+    events = _events(caplog)
+    planning_event = next(
+        event for event in events if event["event"] == "chat_tool_planning_completed"
+    )
+    assert planning_event["request_id"] == "req_toolplan"
+    assert planning_event["outcome"] == "tool_requested"
+    assert planning_event["tool_name"] == "web-search"
+
+    runtime_events = [
+        event for event in events if event["event"] == "chat_runtime_completed"
+    ]
+    assert [event["phase"] for event in runtime_events] == ["planning", "final"]
+
+
 def test_readyz_emits_readiness_log(client, caplog) -> None:
     client.app.dependency_overrides[deps.get_readiness_service] = lambda: type(
         "ReadinessStub",

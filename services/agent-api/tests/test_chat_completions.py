@@ -70,6 +70,10 @@ class _FakeClient:
     last_json = None
     last_stream_url = None
     last_stream_json = None
+    chat_calls = []
+    stream_calls = []
+    response_queue = []
+    stream_response_queue = []
     embed_calls = []
 
     def __init__(self, *args, **kwargs):
@@ -90,15 +94,21 @@ class _FakeClient:
             return _FakeClient.embed_response
         _FakeClient.last_url = url
         _FakeClient.last_json = json
+        _FakeClient.chat_calls.append({"url": url, "json": json})
         if _FakeClient.error is not None:
             raise _FakeClient.error
+        if _FakeClient.response_queue:
+            return _FakeClient.response_queue.pop(0)
         return _FakeClient.response
 
     def stream(self, method, url, json):
         _FakeClient.last_stream_url = url
         _FakeClient.last_stream_json = json
+        _FakeClient.stream_calls.append({"method": method, "url": url, "json": json})
         if _FakeClient.stream_error is not None:
             raise _FakeClient.stream_error
+        if _FakeClient.stream_response_queue:
+            return _FakeClient.stream_response_queue.pop(0)
         return _FakeClient.stream_response
 
     def get(self, url):
@@ -126,6 +136,10 @@ def _patch_http_client(monkeypatch):
     _FakeClient.last_json = None
     _FakeClient.last_stream_url = None
     _FakeClient.last_stream_json = None
+    _FakeClient.chat_calls = []
+    _FakeClient.stream_calls = []
+    _FakeClient.response_queue = []
+    _FakeClient.stream_response_queue = []
     _FakeClient.embed_calls = []
     deps.get_ollama_client.cache_clear()
 
@@ -429,6 +443,242 @@ def test_chat_completions_web_search_failure_degrades_without_breaking_chat(
     assert tool_execution.status == "failed"
     assert tool_execution.error_code == "dependency_timeout"
     assert tool_execution.output is None
+
+
+def test_chat_completions_non_streaming_model_driven_web_search_uses_bounded_two_pass(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"web-search","query":"latest assistant release notes"}',
+                },
+                "prompt_eval_count": 3,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Final answer with cited release notes.",
+                },
+                "prompt_eval_count": 11,
+                "eval_count": 7,
+            },
+        ),
+    ]
+    _FakeSearchClient.results = [
+        {
+            "title": "Assistant release notes",
+            "url": "https://example.test/releases",
+            "snippet": "Latest release notes for the assistant runtime.",
+        }
+    ]
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["message"]["content"] == "Final answer with cited release notes."
+    assert body["usage"] == {
+        "prompt_tokens": 11,
+        "completion_tokens": 7,
+        "total_tokens": 18,
+    }
+    assert len(_FakeClient.chat_calls) == 2
+    planning_messages = _FakeClient.chat_calls[0]["json"]["messages"]
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert planning_messages[-1] == {"role": "user", "content": "Hello"}
+    assert final_messages[0]["role"] == "system"
+    assert "Relevant web search results" in final_messages[0]["content"]
+    assert "Assistant release notes" in final_messages[0]["content"]
+    assert _FakeSearchClient.calls == [
+        {"query": "latest assistant release notes", "limit": 3}
+    ]
+    assert len(repository.success_calls) == 1
+    assert repository.success_calls[0]["response_content"] == (
+        "Final answer with cited release notes."
+    )
+    assert len(repository.tool_execution_calls) == 1
+    assert repository.tool_execution_calls[0]["tool_execution"].status == "completed"
+
+
+def test_chat_completions_streaming_model_driven_web_search_hides_planning_pass(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"web-search","query":"latest assistant release notes"}',
+                },
+                "prompt_eval_count": 3,
+                "eval_count": 2,
+            },
+        )
+    ]
+    _FakeClient.stream_response_queue = [
+        _FakeStreamResponse(
+            200,
+            [
+                '{"message":{"role":"assistant","content":"Final "},"done":false}',
+                '{"message":{"role":"assistant","content":"response"},"done":true,"prompt_eval_count":11,"eval_count":7}',
+            ],
+        )
+    ]
+    _FakeSearchClient.results = [
+        {
+            "title": "Assistant release notes",
+            "url": "https://example.test/releases",
+            "snippet": "Latest release notes for the assistant runtime.",
+        }
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(stream=True),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert "[DONE]" in response.text
+    assert '{"tool":"web-search"' not in response.text
+    assert "Final " in response.text
+    assert "response" in response.text
+    assert len(_FakeClient.chat_calls) == 1
+    assert len(_FakeClient.stream_calls) == 1
+    final_messages = _FakeClient.stream_calls[0]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Relevant web search results" in final_messages[0]["content"]
+    assert _FakeSearchClient.calls == [
+        {"query": "latest assistant release notes", "limit": 3}
+    ]
+    assert len(repository.tool_execution_calls) == 1
+    assert repository.tool_execution_calls[0]["tool_execution"].status == "completed"
+
+
+def test_chat_completions_model_driven_malformed_tool_json_is_treated_as_final_answer(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"web-search"',
+                },
+                "prompt_eval_count": 5,
+                "eval_count": 4,
+            },
+        )
+    ]
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == '{"tool":"web-search"'
+    assert len(_FakeClient.chat_calls) == 1
+    assert _FakeSearchClient.calls == []
+    assert repository.tool_execution_calls == []
+
+
+def test_chat_completions_model_driven_tool_failure_runs_final_fallback_pass(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"web-search","query":"latest assistant release notes"}',
+                },
+                "prompt_eval_count": 3,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "I could not verify fresh results, so this answer uses built-in knowledge.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+    _FakeSearchClient.error = APIError(
+        status_code=504,
+        error_type="dependency_unavailable",
+        code="dependency_timeout",
+        message="Search provider timed out",
+    )
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "I could not verify fresh results, so this answer uses built-in knowledge."
+    )
+    assert len(_FakeClient.chat_calls) == 2
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Web search was requested but is currently unavailable." in final_messages[0][
+        "content"
+    ]
+    assert _FakeSearchClient.calls == [
+        {"query": "latest assistant release notes", "limit": 3}
+    ]
+    assert len(repository.tool_execution_calls) == 1
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.status == "failed"
+    assert tool_execution.error_code == "dependency_timeout"
 
 
 def test_chat_completions_non_streaming_memory_retrieval_augments_runtime_prompt(
