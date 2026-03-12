@@ -52,6 +52,28 @@ New tool IDs must be stable, explicit, and versioned by name rather than inferre
 
 Each tool registration must also declare policy metadata such as risk class, confirmation requirements, allowed scopes, and audit fields.
 
+## Planned Telegram integration
+
+Telegram is planned as an external ingress channel, not a replacement for the canonical client contract.
+
+Current intention:
+
+- first phase: Telegram-to-chat bridge that normalizes incoming Telegram messages into `POST /v1/chat/completions` requests
+- no public Telegram tool endpoint; all tool execution remains inside `agent-api` policy gates
+- session mapping between Telegram `chat_id`/`message_id` and canonical `conversation_id` is handled by the bridge layer, not by tools
+
+## Safe Telegram integration requirements
+
+Telegram integration is explicitly sensitive because it touches external user messaging channels and credentials.
+
+- treat all Telegram-originated external effects as at least `R3` in `docs/ops/agent-action-policy.md`
+- avoid raw provider calls from model output or unvalidated handlers
+- require typed tool envelopes for any action that can mutate external state
+- enforce explicit allow/deny policy and confirmation requirements through the same policy layer as other tools
+- keep Telegram credentials scoped, never persisted into prompt context, and rotated according to deployment policy
+- enforce webhook verification, idempotency by Telegram message identity, and strict rate limits
+- persist audit rows with `request_id`, `conversation_id`, and `model_run_id` for every side-effect path
+
 ## Canonical request envelope
 
 Every tool execution is normalized into one typed internal request shape.

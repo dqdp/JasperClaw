@@ -134,6 +134,29 @@ The platform becomes repeatable to deploy, observe, and roll back.
 4. EPIC 4: Voice Path
 5. EPIC 5: Operations and Hardening
 
+## EPIC 6: Telegram Channel Ingress
+
+### Outcome
+
+Provide a safe Telegram entry point that uses `agent-api` as the only canonical chat ingress.
+
+### Tasks
+
+- TGX-1: Define Telegram bridge contract (webhook and/or polling, update semantics, retry behavior, idempotency keys)
+- TGX-2: Add message normalization from Telegram updates to `POST /v1/chat/completions`
+- TGX-3: Add per-chat/session mapping to canonical conversation IDs
+- TGX-4: Add outbound send path back to Telegram with attachment/type safety guardrails
+- TGX-5: Add security review checklist for token scope, webhook signing, and abuse protection
+- TGX-6: Add explicit policy guardrails for any future Telegram-originated tool actions
+- TGX-7: Add observability and audit assertions (correlation ids, request lifecycle, and tool audit continuity)
+
+### Exit criteria
+
+- Telegram messages are consumed and answered through `agent-api` without bypassing the control plane
+- external side-effect actions are blocked unless explicitly modeled as approved typed capabilities
+- audit and approval state are persisted for any execution path that mutates external systems
+- security controls are documented and enforced for runtime credentials
+
 ## Execution rules
 
 - EPIC 1 is the first real delivery slice and should be complete before EPIC 4 begins

@@ -92,6 +92,21 @@ Add durable assistant memory and typed tool execution without bypassing the cont
 - tool executions are auditable
 - retrieval materially influences responses
 
+### Planned Telegram channel extension (not in current milestone)
+
+The next integration axis is adding Telegram as an external ingress channel to the same canonical `agent-api` control plane.
+
+- the initial phase is intentionally non-intrusive: Telegram receives messages, forwards them as normalized chat requests to `/v1/chat/completions`, and returns responses back to the chat
+- no client-to-client tool bypass; the full request path continues to flow through `agent-api`
+- tool-like side effects (if/when added later) remain behind typed capabilities and policy gates
+
+Safe integration is a hard requirement and will be enforced in design, policy, and deployment docs before implementation:
+
+- no raw provider calls from Telegram handlers
+- no arbitrary command execution
+- explicit approval and audit controls for any `R3`-class action
+- scope-restricted credentials and explicit allowlists
+
 ## Milestone 3: Voice and Hardening
 
 ### Goal

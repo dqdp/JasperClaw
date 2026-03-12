@@ -115,6 +115,7 @@ Not yet implemented:
 - web search adapter
 - Spotify adapters
 - tool policy and audit persistence
+- Telegram ingress integration (planned as a separate safe bridge to `agent-api`, see roadmap/backlog)
 
 ### Database and memory
 
