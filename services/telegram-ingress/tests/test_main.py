@@ -247,6 +247,68 @@ def test_webhook_ignores_messages_from_other_bots() -> None:
     assert not agent_client.calls
 
 
+def test_webhook_ignores_messages_that_exceed_input_limit() -> None:
+    settings = _operational_settings({"telegram_max_input_chars": 4})
+    client, telegram_client, agent_client = _create_client(settings=settings)
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 500,
+            "message": {"message_id": 6, "chat": {"id": 88}, "text": "toolong"},
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+    assert response.json()["reason"] == "input_too_large"
+    assert not telegram_client.sent_messages
+    assert not agent_client.calls
+
+
+def test_webhook_applies_per_chat_rate_limits() -> None:
+    settings = _operational_settings(
+        {
+            "telegram_rate_limit_per_chat": 2,
+            "telegram_rate_limit_global": 1000,
+            "rate_limit_window_seconds": 60.0,
+        }
+    )
+    client, telegram_client, agent_client = _create_client(settings=settings)
+    base_payload = {
+        "message": {"message_id": 1, "chat": {"id": 123}, "text": "hi"},
+    }
+    first = client.post("/webhook", json={**base_payload, "update_id": 1000, "message_id": 1})
+    second = client.post("/webhook", json={**base_payload, "update_id": 1001, "message": {"message_id": 2, "chat": {"id": 123}, "text": "hi"}})
+    third = client.post("/webhook", json={**base_payload, "update_id": 1002, "message": {"message_id": 3, "chat": {"id": 123}, "text": "hi"}})
+    assert first.json()["status"] == "processed"
+    assert second.json()["status"] == "processed"
+    assert third.json()["status"] == "ignored"
+    assert third.json()["reason"] == "rate_limited_chat"
+    assert len(agent_client.calls) == 2
+    assert len(telegram_client.sent_messages) == 2
+
+
+def test_webhook_applies_global_rate_limits() -> None:
+    settings = _operational_settings(
+        {
+            "telegram_rate_limit_per_chat": 1000,
+            "telegram_rate_limit_global": 2,
+            "rate_limit_window_seconds": 60.0,
+        }
+    )
+    client, telegram_client, agent_client = _create_client(settings=settings)
+    responses = [
+        client.post("/webhook", json={"update_id": 2000, "message": {"message_id": 10, "chat": {"id": 10}, "text": "x"}}),
+        client.post("/webhook", json={"update_id": 2001, "message": {"message_id": 20, "chat": {"id": 20}, "text": "x"}}),
+        client.post("/webhook", json={"update_id": 2002, "message": {"message_id": 30, "chat": {"id": 30}, "text": "x"}}),
+    ]
+    assert responses[0].json()["status"] == "processed"
+    assert responses[1].json()["status"] == "processed"
+    assert responses[2].json()["status"] == "ignored"
+    assert responses[2].json()["reason"] == "rate_limited_global"
+    assert len(agent_client.calls) == 2
+    assert len(telegram_client.sent_messages) == 2
+
+
 def test_webhook_releases_http_clients_on_shutdown() -> None:
     settings = _operational_settings({})
     telegram_client = _FakeTelegramClient()

@@ -1,6 +1,7 @@
 import asyncio
 from dataclasses import asdict, dataclass
 from time import perf_counter
+from collections import deque
 from typing import Any
 
 from app.clients.agent_api import AgentApiClient, AgentApiError
@@ -94,6 +95,34 @@ class DedupCache:
             self._evict(now)
 
 
+class RateLimiter:
+    """Sliding-window rate limiter with bounded history per key."""
+
+    def __init__(self, *, limit_per_window: int, window_seconds: float) -> None:
+        self._limit_per_window = max(0, limit_per_window)
+        self._window_seconds = max(0.0, window_seconds)
+        self._history: dict[str, deque[float]] = {}
+        self._lock = asyncio.Lock()
+
+    async def allow(self, key: str) -> bool:
+        if self._limit_per_window <= 0 or self._window_seconds <= 0:
+            return True
+
+        now = perf_counter()
+        async with self._lock:
+            events = self._history.setdefault(key, deque())
+            cutoff = now - self._window_seconds
+
+            while events and events[0] < cutoff:
+                events.popleft()
+
+            if len(events) >= self._limit_per_window:
+                return False
+
+            events.append(now)
+            return True
+
+
 class TelegramBridgeService:
     """Single-pass webhook bridge from Telegram update -> agent-api -> telegram send."""
 
@@ -111,11 +140,28 @@ class TelegramBridgeService:
             ttl_seconds=self._settings.dedupe_window_seconds,
             max_events=self._settings.dedupe_max_events,
         )
+        self._chat_rate_limiter = RateLimiter(
+            limit_per_window=self._settings.telegram_rate_limit_per_chat,
+            window_seconds=self._settings.rate_limit_window_seconds,
+        )
+        self._global_rate_limiter = RateLimiter(
+            limit_per_window=self._settings.telegram_rate_limit_global,
+            window_seconds=self._settings.rate_limit_window_seconds,
+        )
 
     async def process_update(self, payload: dict[str, object]) -> WebhookResult:
         update = self._parse_update(payload)
         if update is None:
             return WebhookResult.ignored(reason="message not text or missing chat")
+
+        if len(update.text) > self._settings.telegram_max_input_chars:
+            return WebhookResult(
+                status="ignored",
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                reason="input_too_large",
+            )
 
         cache_key = self._cache_key(update)
         if not await self._dedupe.should_process(cache_key):
@@ -126,6 +172,10 @@ class TelegramBridgeService:
                 message_id=update.message_id,
                 reason="duplicate_update",
             )
+        if not await self._global_rate_limiter.allow("global"):
+            return WebhookResult.ignored(reason="rate_limited_global")
+        if not await self._chat_rate_limiter.allow(str(update.chat_id)):
+            return WebhookResult.ignored(reason="rate_limited_chat")
 
         conversation_id = f"telegram:{update.chat_id}"
         try:

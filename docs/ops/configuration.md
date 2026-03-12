@@ -733,6 +733,70 @@ Notes:
 
 - defaults to `100`
 
+### `TELEGRAM_RATE_LIMIT_WINDOW_SECONDS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- controls the sliding-window period for chat-level and global rate limits
+
+Notes:
+
+- defaults to `60`
+
+### `TELEGRAM_RATE_LIMIT_PER_CHAT`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- maximum number of accepted Telegram messages allowed per chat within the window
+
+Notes:
+
+- defaults to `20`
+
+### `TELEGRAM_RATE_LIMIT_GLOBAL`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- maximum number of accepted Telegram messages allowed across all chats within the window
+
+Notes:
+
+- defaults to `500`
+
+### `TELEGRAM_MAX_INPUT_CHARS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- maximum size of incoming message text in characters before update is ignored
+
+Notes:
+
+- defaults to `4000`
+
 ### `AGENT_API_MODEL`
 
 Required: no
@@ -897,6 +961,7 @@ Additional required if enabled:
 - `TELEGRAM_WEBHOOK_SECRET_TOKEN` (required when webhook mode is used)
 - `TELEGRAM_WEBHOOK_URL` (required when webhook mode is used)
 - `TELEGRAM_POLLING_ENABLED` (required only when webhook URL cannot be configured)
+- `TELEGRAM_RATE_LIMIT_*` values should be tuned for expected traffic and abuse tolerance
 
 ### Voice path
 
