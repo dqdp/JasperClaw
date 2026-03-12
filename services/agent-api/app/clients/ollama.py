@@ -68,6 +68,7 @@ class OllamaChatClient:
         payload = self._build_payload(model=model, messages=messages, stream=True)
 
         attempt = 0
+        yielded_any = False
         while attempt <= self._max_retries:
             attempt += 1
             try:
@@ -87,14 +88,15 @@ class OllamaChatClient:
                                 raise self._bad_response_error(
                                     "Model runtime returned invalid streaming JSON"
                                 ) from exc
+                            yielded_any = True
                             yield self._parse_stream_chunk(data)
                 return
             except httpx.TimeoutException as exc:
-                if attempt <= self._max_retries:
+                if not yielded_any and attempt <= self._max_retries:
                     continue
                 raise self._timeout_error() from exc
             except httpx.RequestError as exc:
-                if attempt <= self._max_retries:
+                if not yielded_any and attempt <= self._max_retries:
                     continue
                 raise self._runtime_unavailable_error() from exc
 

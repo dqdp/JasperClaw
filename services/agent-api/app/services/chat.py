@@ -1181,21 +1181,26 @@ class ChatService:
                     execution=execution,
                 )
 
-        track_uri = self._normalize_track_uri(decision.arguments)
         device_id = self._normalize_optional_device_id(decision.arguments)
-        tool_arguments = {"track_uri": track_uri}
-        if device_id:
-            tool_arguments["device_id"] = device_id
 
         try:
             if decision.tool_name == "spotify-play":
+                track_uri = self._normalize_track_uri(decision.arguments)
+                tool_arguments: dict[str, object] = {"track_uri": track_uri}
+                if device_id:
+                    tool_arguments["device_id"] = device_id
                 self._spotify_client.play_track(
                     track_uri=track_uri,
                     device_id=device_id,
                 )
-            elif decision.tool_name == "spotify-pause":
-                self._spotify_client.pause_playback(device_id=device_id)
             else:
+                tool_arguments = {}
+                if device_id:
+                    tool_arguments["device_id"] = device_id
+
+            if decision.tool_name == "spotify-pause":
+                self._spotify_client.pause_playback(device_id=device_id)
+            elif decision.tool_name == "spotify-next":
                 self._spotify_client.next_track(device_id=device_id)
 
             completed_at = datetime.now(timezone.utc)

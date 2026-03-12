@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
-from app.clients.agent_api import AgentApiClient
+from app.clients.agent_api import AgentApiClient, AgentApiError
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings
 from app.main import create_app
@@ -90,6 +93,27 @@ class _FakeAgentApiClient(AgentApiClient):
     async def complete(self, *, model: str, text: str, conversation_id: str) -> str:
         self.calls.append({"model": model, "text": text, "conversation_id": conversation_id})
         return self.reply_text
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FailingAgentApiClient(AgentApiClient):
+    def __init__(
+        self,
+        *,
+        base_url: str = "",
+        api_key: str = "",
+        timeout_seconds: float = 5.0,
+        http_client: object | None = None,
+    ) -> None:
+        _ = base_url, api_key, timeout_seconds, http_client
+        self.calls: list[dict[str, str]] = []
+        self.closed = False
+
+    async def complete(self, *, model: str, text: str, conversation_id: str) -> str:
+        self.calls.append({"model": model, "text": text, "conversation_id": conversation_id})
+        raise AgentApiError("agent-api unavailable")
 
     async def close(self) -> None:
         self.closed = True
@@ -213,6 +237,29 @@ def test_webhook_processes_text_update() -> None:
         {"model": "assistant-fast", "text": "привет", "conversation_id": "telegram:42"},
     ]
     assert telegram_client.sent_messages == [(42, "ok")]
+
+
+def test_webhook_returns_503_when_agent_api_fails() -> None:
+    settings = _operational_settings({})
+    app = create_app(
+        settings=settings,
+        bridge_service=TelegramBridgeService(
+            agent_client=_FailingAgentApiClient(),
+            telegram_client=_FakeTelegramClient(),
+            settings=settings,
+        ),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 101,
+            "message": {"message_id": 2, "chat": {"id": 42}, "text": "привет"},
+        },
+    )
+
+    assert response.status_code == 503
 
 
 def test_webhook_rejects_unknown_command_when_command_allowlist_is_enabled() -> None:
@@ -653,6 +700,25 @@ def test_webhook_configuration_registers_webhook_on_startup(monkeypatch) -> None
     ]
 
 
+def test_webhook_configuration_requires_secret_token(monkeypatch) -> None:
+    from app import main as main_module
+
+    monkeypatch.setattr(main_module, "TelegramClient", _StartupTelegramClient)
+
+    settings = _operational_settings(
+        {
+            "telegram_webhook_url": "https://example.com/telegram/webhook",
+            "telegram_webhook_secret_token": "",
+            "webhook_path": "/telegram/webhook",
+        }
+    )
+    app = main_module.create_app(settings=settings)
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_WEBHOOK_SECRET_TOKEN"):
+        with TestClient(app):
+            pass
+
+
 def test_polling_enabled_starts_background_task(monkeypatch) -> None:
     from app import main as main_module
 
@@ -679,3 +745,66 @@ def test_polling_enabled_starts_background_task(monkeypatch) -> None:
     assert app.state.telegram_polling_task.done()
 
     assert captured and captured[0].closed
+
+
+def test_polling_keeps_offset_when_bridge_processing_fails(monkeypatch) -> None:
+    from app import main as main_module
+
+    captured: list[_StartupTelegramClient] = []
+    original_sleep = asyncio.sleep
+
+    class _PatchedTelegramClient(_StartupTelegramClient):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            captured.append(self)
+
+        async def get_updates(
+            self,
+            *,
+            timeout: int,
+            offset: int | None = None,
+            limit: int = 100,
+        ) -> list[dict[str, object]]:
+            self.get_updates_calls.append(
+                {
+                    "timeout": timeout,
+                    "offset": offset,
+                    "limit": limit,
+                }
+            )
+            return [
+                {
+                    "update_id": 10,
+                    "message": {
+                        "message_id": 1,
+                        "chat": {"id": 22},
+                        "text": "retry me",
+                    },
+                }
+            ]
+
+    async def _fast_sleep(_: float) -> None:
+        await original_sleep(0)
+
+    monkeypatch.setattr(main_module, "TelegramClient", _PatchedTelegramClient)
+    monkeypatch.setattr(main_module, "AgentApiClient", _FailingAgentApiClient)
+    monkeypatch.setattr(main_module.asyncio, "sleep", _fast_sleep)
+
+    settings = _operational_settings(
+        {
+            "telegram_polling_enabled": True,
+            "telegram_webhook_url": "",
+        }
+    )
+    app = main_module.create_app(settings=settings)
+    with TestClient(app):
+        deadline = time.time() + 1.0
+        while (
+            (not captured or len(captured[0].get_updates_calls) < 2)
+            and time.time() < deadline
+        ):
+            time.sleep(0.01)
+
+    assert captured
+    assert captured[0].get_updates_calls[0]["offset"] is None
+    assert captured[0].get_updates_calls[1]["offset"] == 10

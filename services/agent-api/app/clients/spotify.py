@@ -9,6 +9,7 @@ from app.core.errors import APIError
 
 
 _DEFAULT_TOKEN_ENDPOINT = "/api/token"
+_SPOTIFY_ACCOUNTS_BASE_URL = "https://accounts.spotify.com"
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +145,7 @@ class SpotifyClient:
         }
         response = self._raw_request(
             "POST",
-            f"{self._base_url}{_DEFAULT_TOKEN_ENDPOINT}",
+            f"{_SPOTIFY_ACCOUNTS_BASE_URL}{_DEFAULT_TOKEN_ENDPOINT}",
             headers=headers,
             data=urlencode({"grant_type": "client_credentials"}),
         )

@@ -9,7 +9,11 @@ from fastapi import Body, FastAPI, Header, HTTPException
 from app.clients.agent_api import AgentApiClient
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings, get_settings
-from app.services.bridge import TelegramBridgeService, WebhookResult
+from app.services.bridge import (
+    TelegramBridgeRetryableError,
+    TelegramBridgeService,
+    WebhookResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,29 +73,44 @@ def create_app(
                 continue
 
             if updates:
-                max_seen_update_id: int | None = next_offset
+                max_seen_update_id: int | None = None
                 for update in updates:
                     update_id = update.get("update_id")
                     if isinstance(update_id, int) and update_id > 0:
-                        if max_seen_update_id is None:
-                            max_seen_update_id = update_id
-                        else:
-                            max_seen_update_id = max(max_seen_update_id, update_id)
-                        await bridge_service.process_update(update)
+                        try:
+                            await bridge_service.process_update(update)
+                        except TelegramBridgeRetryableError:
+                            logger.exception(
+                                "telegram update processing failed, will retry update %s",
+                                update_id,
+                            )
+                            next_offset = update_id
+                            await asyncio.sleep(1)
+                            break
+                        max_seen_update_id = (
+                            update_id
+                            if max_seen_update_id is None
+                            else max(max_seen_update_id, update_id)
+                        )
                     else:
                         logger.warning(
                             "telegram poll update missing update_id: %s",
                             update.get("update_id"),
                         )
-
-                if max_seen_update_id is not None:
-                    next_offset = max_seen_update_id + 1
+                else:
+                    if max_seen_update_id is not None:
+                        next_offset = max_seen_update_id + 1
             else:
                 await asyncio.sleep(1.0)
 
     @app.on_event("startup")
     async def _startup() -> None:
         nonlocal polling_task
+        if config.telegram_webhook_url and not config.telegram_webhook_secret_token:
+            raise RuntimeError(
+                "TELEGRAM_WEBHOOK_SECRET_TOKEN is required when "
+                "TELEGRAM_WEBHOOK_URL is configured"
+            )
         if not config.is_operational() or telegram_client is None:
             return
 
@@ -179,7 +198,13 @@ def create_app(
         if not isinstance(update, dict):
             return WebhookResult.ignored(reason="invalid_payload").as_dict()
 
-        result = await bridge_service.process_update(update)
+        try:
+            result = await bridge_service.process_update(update)
+        except TelegramBridgeRetryableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="telegram bridge downstream unavailable",
+            ) from exc
         return result.as_dict()
 
     @app.post("/telegram/alerts")

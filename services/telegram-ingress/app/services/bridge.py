@@ -9,6 +9,10 @@ from app.clients.telegram import TelegramClient, TelegramSendError
 from app.core.config import Settings
 
 
+class TelegramBridgeRetryableError(RuntimeError):
+    """Raised when an update should be retried instead of acknowledged."""
+
+
 @dataclass(frozen=True, slots=True)
 class TelegramUpdate:
     update_id: int
@@ -209,7 +213,9 @@ class TelegramBridgeService:
             )
         except (AgentApiError, TelegramSendError):
             await self._dedupe.release(cache_key)
-            return WebhookResult.ignored(reason="agent_or_telegram_failed")
+            raise TelegramBridgeRetryableError(
+                "telegram bridge downstream unavailable"
+            )
 
     async def close(self) -> None:
         await self._agent_client.close()
