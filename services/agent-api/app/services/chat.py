@@ -32,6 +32,15 @@ from app.schemas.chat import (
     ChatMessage,
 )
 
+_SUPPORTED_TOOL_NAMES = (
+    "web-search",
+    "spotify-search",
+    "spotify-play",
+    "spotify-pause",
+    "spotify-next",
+)
+_IMPLEMENTED_TOOL_NAMES = ("web-search",)
+
 
 @dataclass(slots=True)
 class RuntimeProfile:
@@ -81,7 +90,7 @@ class ToolContext:
 @dataclass(frozen=True, slots=True)
 class ToolPlanningDecision:
     tool_name: str
-    query: str
+    arguments: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +98,17 @@ class ToolPlanningResult:
     runtime_result: OllamaChatResult
     decision: ToolPlanningDecision | None
     content_outcome: str
+
+
+@dataclass(frozen=True, slots=True)
+class ToolPolicyDecision:
+    allowed: bool
+    policy_decision: str
+    error_type: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    adapter_name: str | None = None
+    provider: str | None = None
 
 
 class ChatService:
@@ -777,10 +797,13 @@ class ChatService:
         if not query_text:
             return ToolContext(runtime_messages=list(base_messages))
 
-        return self._execute_web_search(
+        return self._execute_tool_decision(
             request_id=request_id,
             base_messages=base_messages,
-            query_text=query_text,
+            decision=ToolPlanningDecision(
+                tool_name="web-search",
+                arguments={"query": query_text},
+            ),
             annotate_failures=False,
         )
 
@@ -791,73 +814,148 @@ class ChatService:
         base_messages: list[ChatMessage],
         decision: ToolPlanningDecision,
     ) -> ToolContext:
-        if decision.tool_name != "web-search":
-            return ToolContext(runtime_messages=list(base_messages))
-
-        return self._execute_web_search(
+        return self._execute_tool_decision(
             request_id=request_id,
             base_messages=base_messages,
-            query_text=decision.query,
+            decision=decision,
             annotate_failures=True,
         )
 
-    def _execute_web_search(
+    def _execute_tool_decision(
         self,
         *,
         request_id: str,
         base_messages: list[ChatMessage],
-        query_text: str,
+        decision: ToolPlanningDecision,
         annotate_failures: bool,
     ) -> ToolContext:
-        query_text = query_text.strip()
-        if not query_text:
-            return ToolContext(runtime_messages=list(base_messages))
-
+        policy = self._evaluate_tool_policy(decision.tool_name)
         started_at = datetime.now(timezone.utc)
         tool_started = perf_counter()
         invocation_id = f"tool_{uuid4().hex[:12]}"
 
-        if not self._settings.web_search_enabled:
+        if not policy.allowed:
             execution = ToolExecutionRecord(
                 invocation_id=invocation_id,
-                tool_name="web-search",
+                tool_name=decision.tool_name,
                 status="failed",
-                arguments={
-                    "query": query_text,
-                    "limit": self._settings.web_search_top_k,
-                },
+                arguments=decision.arguments,
                 latency_ms=0.0,
                 started_at=started_at,
                 completed_at=started_at,
-                adapter_name="search-http",
-                policy_decision="deny",
-                error_type="policy_error",
-                error_code="tool_not_allowed",
+                adapter_name=policy.adapter_name,
+                provider=policy.provider,
+                policy_decision=policy.policy_decision,
+                error_type=policy.error_type,
+                error_code=policy.error_code,
             )
             self._log_tool_execution(request_id=request_id, execution=execution)
             return ToolContext(
                 runtime_messages=self._apply_tool_failure_policy(
                     base_messages=base_messages,
                     annotate_failures=annotate_failures,
+                    tool_name=decision.tool_name,
                 ),
                 execution=execution,
             )
+
+        return self._execute_web_search(
+            request_id=request_id,
+            base_messages=base_messages,
+            decision=decision,
+            annotate_failures=annotate_failures,
+            started_at=started_at,
+            tool_started=tool_started,
+            invocation_id=invocation_id,
+            policy=policy,
+        )
+
+    def _evaluate_tool_policy(
+        self,
+        tool_name: str,
+    ) -> ToolPolicyDecision:
+        normalized_tool = self._normalize_tool_name(tool_name)
+
+        if normalized_tool not in _SUPPORTED_TOOL_NAMES:
+            return ToolPolicyDecision(
+                allowed=False,
+                policy_decision="deny",
+                error_type="policy_error",
+                error_code="tool_not_allowed",
+                error_message=(
+                    f"Tool '{normalized_tool}' is not declared in the policy catalog."
+                ),
+            )
+
+        if normalized_tool not in _IMPLEMENTED_TOOL_NAMES:
+            return ToolPolicyDecision(
+                allowed=False,
+                policy_decision="deny",
+                error_type="policy_error",
+                error_code="tool_not_allowed",
+                error_message=(
+                    f"Tool '{normalized_tool}' is intentionally not implemented in v1."
+                ),
+            )
+
+        if not self._settings.web_search_enabled:
+            return ToolPolicyDecision(
+                allowed=False,
+                policy_decision="deny",
+                error_type="policy_error",
+                error_code="tool_not_allowed",
+                error_message=(
+                    "web-search is currently disabled by deployment policy."
+                ),
+                adapter_name="search-http",
+                provider="search-provider",
+            )
+
+        return ToolPolicyDecision(
+            allowed=True,
+            policy_decision="allow",
+            adapter_name="search-http",
+            provider="search-provider",
+        )
+
+    def _normalize_tool_name(self, tool_name: str) -> str:
+        return tool_name.strip().casefold()
+
+    def _execute_web_search(
+        self,
+        *,
+        request_id: str,
+        base_messages: list[ChatMessage],
+        decision: ToolPlanningDecision,
+        annotate_failures: bool,
+        started_at: datetime,
+        tool_started: float,
+        invocation_id: str,
+        policy: ToolPolicyDecision,
+    ) -> ToolContext:
+        raw_query = decision.arguments.get("query")
+        query_text = raw_query.strip() if isinstance(raw_query, str) else ""
+        if not query_text:
+            return ToolContext(runtime_messages=list(base_messages))
+
+        tool_arguments = {
+            "query": query_text,
+            "limit": self._settings.web_search_top_k,
+        }
 
         if self._web_search_client is None:
             completed_at = datetime.now(timezone.utc)
             execution = ToolExecutionRecord(
                 invocation_id=invocation_id,
-                tool_name="web-search",
+                tool_name=decision.tool_name,
                 status="failed",
-                arguments={
-                    "query": query_text,
-                    "limit": self._settings.web_search_top_k,
-                },
+                arguments=tool_arguments,
                 latency_ms=round((perf_counter() - tool_started) * 1000, 2),
                 started_at=started_at,
                 completed_at=completed_at,
-                adapter_name="search-http",
-                policy_decision="allow",
+                adapter_name=policy.adapter_name,
+                provider=policy.provider,
+                policy_decision=policy.policy_decision,
                 error_type="dependency_unavailable",
                 error_code="tool_not_configured",
             )
@@ -866,6 +964,7 @@ class ChatService:
                 runtime_messages=self._apply_tool_failure_policy(
                     base_messages=base_messages,
                     annotate_failures=annotate_failures,
+                    tool_name=decision.tool_name,
                 ),
                 execution=execution,
             )
@@ -879,12 +978,9 @@ class ChatService:
             completed_at = datetime.now(timezone.utc)
             execution = ToolExecutionRecord(
                 invocation_id=invocation_id,
-                tool_name="web-search",
+                tool_name=decision.tool_name,
                 status="completed",
-                arguments={
-                    "query": query_text,
-                    "limit": self._settings.web_search_top_k,
-                },
+                arguments=tool_arguments,
                 output={
                     "results": [
                         {
@@ -898,9 +994,9 @@ class ChatService:
                 latency_ms=round((perf_counter() - tool_started) * 1000, 2),
                 started_at=started_at,
                 completed_at=completed_at,
-                adapter_name="search-http",
-                provider="search-provider",
-                policy_decision="allow",
+                adapter_name=policy.adapter_name,
+                provider=policy.provider,
+                policy_decision=policy.policy_decision,
             )
             self._log_tool_execution(request_id=request_id, execution=execution)
             if not results:
@@ -919,18 +1015,15 @@ class ChatService:
             completed_at = datetime.now(timezone.utc)
             execution = ToolExecutionRecord(
                 invocation_id=invocation_id,
-                tool_name="web-search",
+                tool_name=decision.tool_name,
                 status="failed",
-                arguments={
-                    "query": query_text,
-                    "limit": self._settings.web_search_top_k,
-                },
+                arguments=tool_arguments,
                 latency_ms=round((perf_counter() - tool_started) * 1000, 2),
                 started_at=started_at,
                 completed_at=completed_at,
-                adapter_name="search-http",
-                provider="search-provider",
-                policy_decision="allow",
+                adapter_name=policy.adapter_name,
+                provider=policy.provider,
+                policy_decision=policy.policy_decision,
                 error_type=exc.error_type,
                 error_code=exc.code,
             )
@@ -939,6 +1032,7 @@ class ChatService:
                 runtime_messages=self._apply_tool_failure_policy(
                     base_messages=base_messages,
                     annotate_failures=annotate_failures,
+                    tool_name=decision.tool_name,
                 ),
                 execution=execution,
             )
@@ -1200,14 +1294,24 @@ class ChatService:
     def _augment_messages_with_tool_unavailable(
         self,
         messages: list[ChatMessage],
+        tool_name: str,
     ) -> list[ChatMessage]:
-        unavailable_message = ChatMessage(
-            role="system",
-            content=(
+        normalized_tool = tool_name.strip().casefold()
+        if normalized_tool == "web-search":
+            unavailable_text = (
                 "Web search was requested but is currently unavailable. "
                 "Answer using existing knowledge only, and be explicit when fresh "
                 "facts may be uncertain."
-            ),
+            )
+        else:
+            unavailable_text = (
+                f"The tool '{tool_name}' is currently unavailable or blocked by policy. "
+                "Answer the request using existing context without external calls."
+            )
+
+        unavailable_message = ChatMessage(
+            role="system",
+            content=unavailable_text,
         )
         insert_at = 0
         while insert_at < len(messages) and messages[insert_at].role == "system":
@@ -1226,9 +1330,10 @@ class ChatService:
             role="system",
             content=(
                 "You may either answer the user directly or request exactly one tool. "
-                "The only available tool is web-search. If web search is required, "
-                'reply with only JSON in the form {"tool":"web-search","query":"..."} '
-                "and no other text. Otherwise answer the user directly."
+                "The only tool currently exposed to planning is web-search. "
+                'If web search is required, reply with only JSON in the form '
+                '{"tool":"web-search","query":"..."} and no other text. '
+                "Otherwise answer the user directly."
             ),
         )
         insert_at = 0
@@ -1301,17 +1406,32 @@ class ChatService:
 
         if not isinstance(payload, dict):
             return None
-        if set(payload.keys()) != {"tool", "query"}:
-            return None
 
         tool_name = payload.get("tool")
-        query = payload.get("query")
-        if tool_name != "web-search" or not isinstance(query, str):
+        if not isinstance(tool_name, str):
             return None
-        query = query.strip()
-        if not query:
+
+        tool_name = self._normalize_tool_name(tool_name)
+        if not tool_name:
             return None
-        return ToolPlanningDecision(tool_name=tool_name, query=query)
+
+        arguments: dict[str, object] = {
+            key: value for key, value in payload.items() if key != "tool"
+        }
+
+        if tool_name == "web-search":
+            query = arguments.get("query")
+            if not isinstance(query, str):
+                return None
+            query = query.strip()
+            if not query:
+                return None
+            arguments["query"] = query
+
+        if tool_name not in _SUPPORTED_TOOL_NAMES:
+            return None
+
+        return ToolPlanningDecision(tool_name=tool_name, arguments=arguments)
 
     def _tool_planning_content_outcome(
         self,
@@ -1345,10 +1465,11 @@ class ChatService:
         *,
         base_messages: list[ChatMessage],
         annotate_failures: bool,
+        tool_name: str,
     ) -> list[ChatMessage]:
         if not annotate_failures:
             return list(base_messages)
-        return self._augment_messages_with_tool_unavailable(base_messages)
+        return self._augment_messages_with_tool_unavailable(base_messages, tool_name)
 
     def _latest_user_message(self, messages: list[ChatMessage]) -> str | None:
         for message in reversed(messages):

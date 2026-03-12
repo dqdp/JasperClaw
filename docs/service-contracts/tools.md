@@ -43,10 +43,12 @@ The initial v1 tool catalog is intentionally small:
 Current Tools Slice 2 baseline:
 
 - only `web-search` is implemented
+- all declared tool IDs exist in policy catalog, but only `web-search` is executable in this milestone
 - tool use remains internal to `agent-api` and is not exposed as a public HTTP API
 - `web-search` may run either through explicit `metadata.web_search=true` or through one bounded internal planning pass inside `POST /v1/chat/completions`
 - the model-driven path is capped at one tool hop per request
 - tool failures are fail-open relative to the core text response path, but must still be logged and audited
+- unsupported or not-yet-implemented tool requests are denied by policy and surfaced to the final model path with a policy failure note when fallback is enabled
 
 New tool IDs must be stable, explicit, and versioned by name rather than inferred from provider internals.
 
@@ -61,6 +63,12 @@ Current intention:
 - first phase: Telegram-to-chat bridge that normalizes incoming Telegram messages into `POST /v1/chat/completions` requests
 - no public Telegram tool endpoint; all tool execution remains inside `agent-api` policy gates
 - session mapping between Telegram `chat_id`/`message_id` and canonical `conversation_id` is handled by the bridge layer, not by tools
+
+Safety note:
+
+- Telegram is treated as untrusted inbound traffic until normalized and converted into canonical `POST /v1/chat/completions` requests.
+- all Telegram-driven action paths must pass the same typed tool policy as native clients before execution.
+- every side-effect-capable action from Telegram requires explicit allow rules, approval flow if applicable, and immutable audit context (`request_id`, `conversation_id`, `model_run_id`).
 
 ## Safe Telegram integration requirements
 

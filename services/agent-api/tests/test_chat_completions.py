@@ -681,6 +681,95 @@ def test_chat_completions_model_driven_tool_failure_runs_final_fallback_pass(
     assert tool_execution.error_code == "dependency_timeout"
 
 
+def test_chat_completions_model_driven_unimplemented_tool_is_denied_with_policy_and_fallback(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"spotify-play","track_uri":"abc123"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "I cannot perform playback actions in this deployment.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert len(_FakeClient.chat_calls) == 2
+    assert _FakeSearchClient.calls == []
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "spotify-play" in final_messages[0]["content"]
+    assert "currently unavailable or blocked by policy" in final_messages[0]["content"]
+    assert len(repository.tool_execution_calls) == 1
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "spotify-play"
+    assert tool_execution.status == "failed"
+    assert tool_execution.error_type == "policy_error"
+    assert tool_execution.error_code == "tool_not_allowed"
+
+
+def test_chat_completions_model_driven_unsupported_tool_directive_is_passed_as_content(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    _FakeClient.response = _FakeResponse(
+        200,
+        {
+            "message": {
+                "role": "assistant",
+                "content": '{"tool":"unknown-action","query":"x"}',
+            },
+            "prompt_eval_count": 11,
+            "eval_count": 7,
+        },
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(stream=False),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        '{"tool":"unknown-action","query":"x"}'
+    )
+    assert len(_FakeClient.chat_calls) == 1
+    assert repository.tool_execution_calls == []
+
+
 def test_chat_completions_non_streaming_memory_retrieval_augments_runtime_prompt(
     client, monkeypatch, auth_headers
 ) -> None:

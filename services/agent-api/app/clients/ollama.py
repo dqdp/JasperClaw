@@ -26,29 +26,39 @@ class OllamaChatStreamChunk:
 
 
 class OllamaChatClient:
-    def __init__(self, base_url: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: float,
+        max_retries: int = 1,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
+        self._max_retries = max(max_retries, 0)
 
     def chat(self, model: str, messages: list[ChatMessage]) -> OllamaChatResult:
         payload = self._build_payload(model=model, messages=messages, stream=False)
 
-        try:
-            with httpx.Client(timeout=self._timeout_seconds) as client:
-                response = client.post(f"{self._base_url}/api/chat", json=payload)
-        except httpx.TimeoutException as exc:
-            raise self._timeout_error() from exc
-        except httpx.RequestError as exc:
-            raise self._runtime_unavailable_error() from exc
-
-        self._validate_response_status(response.status_code)
-
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise self._bad_response_error("Model runtime returned invalid JSON") from exc
-
-        return self._parse_chat_result(data)
+        attempt = 0
+        while attempt <= self._max_retries:
+            attempt += 1
+            try:
+                with httpx.Client(timeout=self._timeout_seconds) as client:
+                    response = client.post(f"{self._base_url}/api/chat", json=payload)
+                self._validate_response_status(response.status_code)
+                try:
+                    data = response.json()
+                except ValueError as exc:
+                    raise self._bad_response_error("Model runtime returned invalid JSON") from exc
+                return self._parse_chat_result(data)
+            except httpx.TimeoutException as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise self._timeout_error() from exc
+            except httpx.RequestError as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise self._runtime_unavailable_error() from exc
 
     def stream_chat(
         self,
@@ -57,46 +67,64 @@ class OllamaChatClient:
     ) -> Iterator[OllamaChatStreamChunk]:
         payload = self._build_payload(model=model, messages=messages, stream=True)
 
-        try:
-            with httpx.Client(timeout=self._timeout_seconds) as client:
-                with client.stream(
-                    "POST",
-                    f"{self._base_url}/api/chat",
-                    json=payload,
-                ) as response:
-                    self._validate_response_status(response.status_code)
-                    for line in response.iter_lines():
-                        if not line:
-                            continue
-                        try:
-                            data = json.loads(line)
-                        except ValueError as exc:
-                            raise self._bad_response_error(
-                                "Model runtime returned invalid streaming JSON"
-                            ) from exc
-                        yield self._parse_stream_chunk(data)
-        except httpx.TimeoutException as exc:
-            raise self._timeout_error() from exc
-        except httpx.RequestError as exc:
-            raise self._runtime_unavailable_error() from exc
+        attempt = 0
+        while attempt <= self._max_retries:
+            attempt += 1
+            try:
+                with httpx.Client(timeout=self._timeout_seconds) as client:
+                    with client.stream(
+                        "POST",
+                        f"{self._base_url}/api/chat",
+                        json=payload,
+                    ) as response:
+                        self._validate_response_status(response.status_code)
+                        for line in response.iter_lines():
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                            except ValueError as exc:
+                                raise self._bad_response_error(
+                                    "Model runtime returned invalid streaming JSON"
+                                ) from exc
+                            yield self._parse_stream_chunk(data)
+                return
+            except httpx.TimeoutException as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise self._timeout_error() from exc
+            except httpx.RequestError as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise self._runtime_unavailable_error() from exc
 
     def embed(self, model: str, input_text: str | list[str]) -> list[list[float]]:
         payload = {"model": model, "input": input_text}
 
-        try:
-            with httpx.Client(timeout=self._timeout_seconds) as client:
-                response = client.post(f"{self._base_url}/api/embed", json=payload)
-        except httpx.TimeoutException as exc:
-            raise self._timeout_error() from exc
-        except httpx.RequestError as exc:
-            raise self._runtime_unavailable_error() from exc
+        attempt = 0
+        while attempt <= self._max_retries:
+            attempt += 1
+            try:
+                with httpx.Client(timeout=self._timeout_seconds) as client:
+                    response = client.post(f"{self._base_url}/api/embed", json=payload)
+                self._validate_response_status(response.status_code)
+                try:
+                    data = response.json()
+                except ValueError as exc:
+                    raise self._bad_response_error("Model runtime returned invalid JSON") from exc
 
-        self._validate_response_status(response.status_code)
+                if not isinstance(data, dict):
+                    raise self._bad_response_error("Model runtime returned an unexpected payload")
 
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise self._bad_response_error("Model runtime returned invalid JSON") from exc
+                break
+            except httpx.TimeoutException as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise self._timeout_error() from exc
+            except httpx.RequestError as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise self._runtime_unavailable_error() from exc
 
         if not isinstance(data, dict):
             raise self._bad_response_error("Model runtime returned an unexpected payload")
@@ -121,15 +149,24 @@ class OllamaChatClient:
         return parsed_embeddings
 
     def check_ready(self, models: tuple[str, ...]) -> None:
-        try:
-            with httpx.Client(timeout=self._timeout_seconds) as client:
-                response = client.get(f"{self._base_url}/api/tags")
-        except httpx.TimeoutException as exc:
-            raise self._timeout_error() from exc
-        except httpx.RequestError as exc:
-            raise self._runtime_unavailable_error() from exc
+        attempt = 0
+        response = None
+        while attempt <= self._max_retries:
+            attempt += 1
+            try:
+                with httpx.Client(timeout=self._timeout_seconds) as client:
+                    response = client.get(f"{self._base_url}/api/tags")
+                break
+            except httpx.TimeoutException as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise self._timeout_error() from exc
+            except httpx.RequestError as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise self._runtime_unavailable_error() from exc
 
-        if response.status_code != 200:
+        if response is None or response.status_code != 200:
             raise self._runtime_unavailable_error()
 
         try:

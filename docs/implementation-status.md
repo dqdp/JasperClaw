@@ -63,7 +63,7 @@ Implemented:
 - stable error envelopes for request validation and runtime/storage failures
 - request ID attachment via `X-Request-ID`
 - structured request logging for request lifecycle, readiness, runtime, and storage outcomes
-- minimal request-scoped persistence for `conversations`, `messages`, and `model_runs`
+- request-scoped persistence for `conversations`, `messages`, `model_runs`, and baseline `tool_executions`
 - baseline conversation continuity via transcript-prefix matching and optional canonical conversation hints
 - forward-only SQL migration runner for the current canonical text-path schema
 - explicit `python -m app.cli migrate` command for applying pending schema changes before service traffic
@@ -74,7 +74,6 @@ Not yet implemented:
 
 - stronger client-to-backend conversation binding beyond transcript-prefix matching and optional hints
 - retrieval-aware or memory-backed prompt assembly
-- tool execution
 - structured tracing beyond request ID and JSON event logs
 - memory retrieval
 - production-hardened runtime and storage observability
@@ -108,13 +107,12 @@ Not yet implemented:
 Implemented:
 
 - accepted architectural decision that tools live in-process inside `agent-api` in v1
+- in-process `web-search` policy-gated execution in `agent-api`
+- canonical `tool_executions` persistence and basic tool planning audit
 
 Not yet implemented:
 
-- actual in-process tool adapter layer
-- web search adapter
 - Spotify adapters
-- tool policy and audit persistence
 - Telegram ingress integration (planned as a separate safe bridge to `agent-api`, see roadmap/backlog)
 
 ### Database and memory

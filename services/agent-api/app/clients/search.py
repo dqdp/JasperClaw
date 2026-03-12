@@ -19,36 +19,55 @@ class WebSearchClient:
         base_url: str,
         api_key: str,
         timeout_seconds: float,
+        max_retries: int = 1,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout_seconds = timeout_seconds
+        self._max_retries = max(max_retries, 0)
 
     def search(self, *, query: str, limit: int) -> list[WebSearchResultItem]:
         headers = {"Authorization": f"Bearer {self._api_key}"}
         params = {"q": query, "limit": str(limit)}
 
-        try:
-            with httpx.Client(timeout=self._timeout_seconds) as client:
-                response = client.get(
-                    f"{self._base_url}/search",
-                    headers=headers,
-                    params=params,
-                )
-        except httpx.TimeoutException as exc:
-            raise APIError(
-                status_code=504,
-                error_type="dependency_unavailable",
-                code="dependency_timeout",
-                message="Search provider timed out",
-            ) from exc
-        except httpx.RequestError as exc:
+        attempt = 0
+        response = None
+        while attempt <= self._max_retries:
+            attempt += 1
+            try:
+                with httpx.Client(timeout=self._timeout_seconds) as client:
+                    response = client.get(
+                        f"{self._base_url}/search",
+                        headers=headers,
+                        params=params,
+                    )
+                    break
+            except httpx.TimeoutException as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise APIError(
+                    status_code=504,
+                    error_type="dependency_unavailable",
+                    code="dependency_timeout",
+                    message="Search provider timed out",
+                ) from exc
+            except httpx.RequestError as exc:
+                if attempt <= self._max_retries:
+                    continue
+                raise APIError(
+                    status_code=503,
+                    error_type="dependency_unavailable",
+                    code="provider_unavailable",
+                    message="Search provider unavailable",
+                ) from exc
+
+        if response is None:
             raise APIError(
                 status_code=503,
                 error_type="dependency_unavailable",
                 code="provider_unavailable",
                 message="Search provider unavailable",
-            ) from exc
+            )
 
         if response.status_code >= 500:
             raise APIError(
