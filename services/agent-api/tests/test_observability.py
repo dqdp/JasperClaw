@@ -122,6 +122,68 @@ def test_chat_request_emits_tool_events_when_web_search_runs(
     assert audit_event["outcome"] == "success"
 
 
+def test_chat_request_emits_tool_audit_events_for_telegram_tool_denial(
+    client, monkeypatch, caplog, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"web-search","query":"latest status"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "I cannot verify fresh results from Telegram.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    with caplog.at_level(logging.INFO, logger="agent_api"):
+        response = client.post(
+            "/v1/chat/completions",
+            json=_chat_payload(metadata={"source": "telegram"}),
+            headers={**auth_headers, "X-Request-ID": "req_tg_tooldeny"},
+        )
+
+    assert response.status_code == 200
+    events = _events(caplog)
+
+    tool_event = next(event for event in events if event["event"] == "chat_tool_completed")
+    assert tool_event["request_id"] == "req_tg_tooldeny"
+    assert tool_event["tool_name"] == "web-search"
+    assert tool_event["outcome"] == "failed"
+    assert tool_event["error_code"] == "tool_not_allowed"
+
+    audit_event = next(
+        event for event in events if event["event"] == "chat_tool_audit_completed"
+    )
+    assert audit_event["request_id"] == "req_tg_tooldeny"
+    assert audit_event["tool_name"] == "web-search"
+    assert audit_event["tool_status"] == "failed"
+    assert audit_event["outcome"] == "success"
+
+
 def test_chat_request_emits_tool_planning_events_for_model_driven_search(
     client, monkeypatch, caplog, auth_headers
 ) -> None:

@@ -25,7 +25,14 @@ class AgentApiClient:
         if self._owns_client:
             await self._http_client.aclose()
 
-    async def complete(self, *, model: str, text: str, conversation_id: str) -> str:
+    async def complete(
+        self,
+        *,
+        model: str,
+        text: str,
+        conversation_id: str,
+        request_id: str,
+    ) -> str:
         response = await self._request(
             method="POST",
             url=f"{self._base_url}/v1/chat/completions",
@@ -37,7 +44,10 @@ class AgentApiClient:
                     "source": "telegram",
                 },
             },
-            extra_headers={"X-Conversation-ID": conversation_id},
+            extra_headers={
+                "X-Conversation-ID": conversation_id,
+                "X-Request-ID": request_id,
+            },
         )
         return response["choices"][0]["message"]["content"]
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 import time
 from typing import Any
 
@@ -12,6 +14,14 @@ from app.clients.telegram import TelegramClient
 from app.core.config import Settings
 from app.main import create_app
 from app.services.bridge import TelegramBridgeService
+
+
+def _events(caplog) -> list[dict[str, object]]:
+    return [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == "telegram_ingress"
+    ]
 
 
 class _FakeTelegramClient(TelegramClient):
@@ -90,8 +100,22 @@ class _FakeAgentApiClient(AgentApiClient):
         self.closed = False
         self.reply_text = reply_text
 
-    async def complete(self, *, model: str, text: str, conversation_id: str) -> str:
-        self.calls.append({"model": model, "text": text, "conversation_id": conversation_id})
+    async def complete(
+        self,
+        *,
+        model: str,
+        text: str,
+        conversation_id: str,
+        request_id: str,
+    ) -> str:
+        self.calls.append(
+            {
+                "model": model,
+                "text": text,
+                "conversation_id": conversation_id,
+                "request_id": request_id,
+            }
+        )
         return self.reply_text
 
     async def close(self) -> None:
@@ -111,8 +135,22 @@ class _FailingAgentApiClient(AgentApiClient):
         self.calls: list[dict[str, str]] = []
         self.closed = False
 
-    async def complete(self, *, model: str, text: str, conversation_id: str) -> str:
-        self.calls.append({"model": model, "text": text, "conversation_id": conversation_id})
+    async def complete(
+        self,
+        *,
+        model: str,
+        text: str,
+        conversation_id: str,
+        request_id: str,
+    ) -> str:
+        self.calls.append(
+            {
+                "model": model,
+                "text": text,
+                "conversation_id": conversation_id,
+                "request_id": request_id,
+            }
+        )
         raise AgentApiError("agent-api unavailable")
 
     async def close(self) -> None:
@@ -234,9 +272,95 @@ def test_webhook_processes_text_update() -> None:
     assert data["update_id"] == 100
     assert data["conversation_id"] == "telegram:42"
     assert agent_client.calls == [
-        {"model": "assistant-fast", "text": "привет", "conversation_id": "telegram:42"},
+        {
+            "model": "assistant-fast",
+            "text": "привет",
+            "conversation_id": "telegram:42",
+            "request_id": response.headers["X-Request-ID"],
+        },
     ]
     assert telegram_client.sent_messages == [(42, "ok")]
+
+
+def test_webhook_propagates_request_id_and_logs_update_context(caplog) -> None:
+    settings = _operational_settings({})
+    client, _, agent_client = _create_client(settings=settings)
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        response = client.post(
+            "/webhook",
+            headers={"X-Request-ID": "req_telegram_obs"},
+            json={
+                "update_id": 102,
+                "message": {"message_id": 7, "chat": {"id": 99}, "text": "status?"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["X-Request-ID"] == "req_telegram_obs"
+    assert agent_client.calls == [
+        {
+            "model": "assistant-fast",
+            "text": "status?",
+            "conversation_id": "telegram:99",
+            "request_id": "req_telegram_obs",
+        }
+    ]
+
+    events = _events(caplog)
+    request_started = next(event for event in events if event["event"] == "request_started")
+    assert request_started["request_id"] == "req_telegram_obs"
+
+    update_received = next(
+        event for event in events if event["event"] == "telegram_update_received"
+    )
+    assert update_received["request_id"] == "req_telegram_obs"
+    assert update_received["update_id"] == 102
+    assert update_received["chat_id"] == 99
+    assert update_received["message_id"] == 7
+    assert update_received["conversation_id"] == "telegram:99"
+
+    update_completed = next(
+        event for event in events if event["event"] == "telegram_update_completed"
+    )
+    assert update_completed["request_id"] == "req_telegram_obs"
+    assert update_completed["outcome"] == "processed"
+    assert update_completed["update_id"] == 102
+    assert update_completed["chat_id"] == 99
+    assert update_completed["message_id"] == 7
+    assert update_completed["conversation_id"] == "telegram:99"
+
+    request_completed = next(
+        event for event in events if event["event"] == "request_completed"
+    )
+    assert request_completed["request_id"] == "req_telegram_obs"
+    assert request_completed["status_code"] == 200
+
+
+def test_webhook_generates_request_id_when_missing(caplog) -> None:
+    settings = _operational_settings({})
+    client, _, agent_client = _create_client(settings=settings)
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        response = client.post(
+            "/webhook",
+            json={
+                "update_id": 103,
+                "message": {"message_id": 8, "chat": {"id": 77}, "text": "hello"},
+            },
+        )
+
+    request_id = response.headers["X-Request-ID"]
+    assert response.status_code == 200
+    assert request_id.startswith("req_")
+    assert agent_client.calls[0]["request_id"] == request_id
+
+    update_completed = next(
+        event
+        for event in _events(caplog)
+        if event["event"] == "telegram_update_completed"
+    )
+    assert update_completed["request_id"] == request_id
 
 
 def test_webhook_returns_503_when_agent_api_fails() -> None:
@@ -260,6 +384,47 @@ def test_webhook_returns_503_when_agent_api_fails() -> None:
     )
 
     assert response.status_code == 503
+
+
+def test_webhook_logs_retryable_failure_with_request_context(caplog) -> None:
+    settings = _operational_settings({})
+    app = create_app(
+        settings=settings,
+        bridge_service=TelegramBridgeService(
+            agent_client=_FailingAgentApiClient(),
+            telegram_client=_FakeTelegramClient(),
+            settings=settings,
+        ),
+    )
+    client = TestClient(app)
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        response = client.post(
+            "/webhook",
+            headers={"X-Request-ID": "req_retryable"},
+            json={
+                "update_id": 104,
+                "message": {"message_id": 9, "chat": {"id": 55}, "text": "retry me"},
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.headers["X-Request-ID"] == "req_retryable"
+
+    events = _events(caplog)
+    update_failed = next(
+        event for event in events if event["event"] == "telegram_update_failed"
+    )
+    assert update_failed["request_id"] == "req_retryable"
+    assert update_failed["outcome"] == "retryable_error"
+    assert update_failed["update_id"] == 104
+    assert update_failed["chat_id"] == 55
+    assert update_failed["message_id"] == 9
+    assert update_failed["conversation_id"] == "telegram:55"
+
+    request_failed = next(event for event in events if event["event"] == "request_failed")
+    assert request_failed["request_id"] == "req_retryable"
+    assert request_failed["status_code"] == 503
 
 
 def test_webhook_rejects_unknown_command_when_command_allowlist_is_enabled() -> None:
@@ -372,6 +537,7 @@ def test_webhook_ask_command_forwards_stripped_text_to_agent_api() -> None:
             "model": "assistant-fast",
             "text": "what is the status?",
             "conversation_id": "telegram:77",
+            "request_id": response.headers["X-Request-ID"],
         }
     ]
     assert telegram_client.sent_messages == [(77, "ok")]
@@ -878,3 +1044,117 @@ def test_polling_keeps_offset_when_bridge_processing_fails(monkeypatch) -> None:
     assert captured
     assert captured[0].get_updates_calls[0]["offset"] is None
     assert captured[0].get_updates_calls[1]["offset"] == 10
+
+
+def test_polling_generates_request_id_and_logs_update_context(monkeypatch, caplog) -> None:
+    from app import main as main_module
+
+    captured: list[_StartupTelegramClient] = []
+    agent_calls: list[dict[str, str]] = []
+    original_sleep = asyncio.sleep
+
+    class _PatchedTelegramClient(_StartupTelegramClient):
+        def __init__(self, **kwargs: object) -> None:
+            super().__init__(**kwargs)
+            captured.append(self)
+            self._delivered = False
+            self.sent_messages: list[tuple[int, str]] = []
+
+        async def get_updates(
+            self,
+            *,
+            timeout: int,
+            offset: int | None = None,
+            limit: int = 100,
+        ) -> list[dict[str, object]]:
+            self.get_updates_calls.append(
+                {
+                    "timeout": timeout,
+                    "offset": offset,
+                    "limit": limit,
+                }
+            )
+            if self._delivered:
+                return []
+            self._delivered = True
+            return [
+                {
+                    "update_id": 12,
+                    "message": {
+                        "message_id": 2,
+                        "chat": {"id": 44},
+                        "text": "poll me",
+                    },
+                }
+            ]
+
+        async def send_message(self, *, chat_id: int, text: str) -> None:
+            self.sent_messages.append((chat_id, text))
+
+    class _PatchedAgentApiClient(AgentApiClient):
+        def __init__(
+            self,
+            *,
+            base_url: str,
+            api_key: str,
+            timeout_seconds: float = 5.0,
+            http_client: object | None = None,
+        ) -> None:
+            _ = base_url, api_key, timeout_seconds, http_client
+
+        async def complete(
+            self,
+            *,
+            model: str,
+            text: str,
+            conversation_id: str,
+            request_id: str,
+        ) -> str:
+            agent_calls.append(
+                {
+                    "model": model,
+                    "text": text,
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                }
+            )
+            return "ok"
+
+        async def close(self) -> None:
+            return None
+
+    async def _fast_sleep(_: float) -> None:
+        await original_sleep(0)
+
+    monkeypatch.setattr(main_module, "TelegramClient", _PatchedTelegramClient)
+    monkeypatch.setattr(main_module, "AgentApiClient", _PatchedAgentApiClient)
+    monkeypatch.setattr(main_module.asyncio, "sleep", _fast_sleep)
+
+    settings = _operational_settings(
+        {
+            "telegram_polling_enabled": True,
+            "telegram_webhook_url": "",
+        }
+    )
+    app = main_module.create_app(settings=settings)
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        with TestClient(app):
+            deadline = time.time() + 1.0
+            while not agent_calls and time.time() < deadline:
+                time.sleep(0.01)
+
+    assert agent_calls
+    request_id = agent_calls[0]["request_id"]
+    assert request_id.startswith("req_")
+    assert agent_calls[0]["conversation_id"] == "telegram:44"
+    assert captured[0].sent_messages == [(44, "ok")]
+
+    update_completed = next(
+        event
+        for event in _events(caplog)
+        if event["event"] == "telegram_update_completed"
+        and event["update_id"] == 12
+    )
+    assert update_completed["request_id"] == request_id
+    assert update_completed["conversation_id"] == "telegram:44"

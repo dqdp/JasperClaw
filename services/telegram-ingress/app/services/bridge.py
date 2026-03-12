@@ -1,12 +1,14 @@
 import asyncio
+import logging
 from dataclasses import asdict, dataclass
-from time import perf_counter
 from collections import deque
+from time import perf_counter
 from typing import Any
 
 from app.clients.agent_api import AgentApiClient, AgentApiError
 from app.clients.telegram import TelegramClient, TelegramSendError
 from app.core.config import Settings
+from app.core.logging import log_event
 
 
 class TelegramBridgeRetryableError(RuntimeError):
@@ -153,64 +155,170 @@ class TelegramBridgeService:
             window_seconds=self._settings.rate_limit_window_seconds,
         )
 
-    async def process_update(self, payload: dict[str, object]) -> WebhookResult:
+    async def process_update(
+        self,
+        payload: dict[str, object],
+        *,
+        request_id: str,
+    ) -> WebhookResult:
+        started = perf_counter()
+        context = self._payload_context(payload)
+        log_event(
+            "telegram_update_received",
+            request_id=request_id,
+            **context,
+        )
         update = self._parse_update(payload)
         if update is None:
-            return WebhookResult.ignored(reason="message not text or missing chat")
+            return self._log_update_result(
+                request_id=request_id,
+                started=started,
+                result=WebhookResult.ignored(reason="message not text or missing chat"),
+                **context,
+            )
 
         if len(update.text) > self._settings.telegram_max_input_chars:
-            return WebhookResult(
-                status="ignored",
+            return self._log_update_result(
+                request_id=request_id,
+                started=started,
+                result=WebhookResult(
+                    status="ignored",
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    message_id=update.message_id,
+                    reason="input_too_large",
+                ),
                 update_id=update.update_id,
                 chat_id=update.chat_id,
                 message_id=update.message_id,
-                reason="input_too_large",
+                conversation_id=f"telegram:{update.chat_id}",
             )
 
         cache_key = self._cache_key(update)
         if not await self._dedupe.should_process(cache_key):
-            return WebhookResult(
-                status="ignored",
+            return self._log_update_result(
+                request_id=request_id,
+                started=started,
+                result=WebhookResult(
+                    status="ignored",
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    message_id=update.message_id,
+                    reason="duplicate_update",
+                ),
                 update_id=update.update_id,
                 chat_id=update.chat_id,
                 message_id=update.message_id,
-                reason="duplicate_update",
+                conversation_id=f"telegram:{update.chat_id}",
             )
         if not await self._global_rate_limiter.allow("global"):
-            return WebhookResult.ignored(reason="rate_limited_global")
+            return self._log_update_result(
+                request_id=request_id,
+                started=started,
+                result=WebhookResult.ignored(reason="rate_limited_global"),
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=f"telegram:{update.chat_id}",
+            )
         if not await self._chat_rate_limiter.allow(str(update.chat_id)):
-            return WebhookResult.ignored(reason="rate_limited_chat")
+            return self._log_update_result(
+                request_id=request_id,
+                started=started,
+                result=WebhookResult.ignored(reason="rate_limited_chat"),
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=f"telegram:{update.chat_id}",
+            )
 
         conversation_id = f"telegram:{update.chat_id}"
         command = self._extract_command(update.text)
         if command is not None:
             if not self._is_command_allowed(update.text):
-                return WebhookResult(
+                return self._log_update_result(
+                    request_id=request_id,
+                    started=started,
+                    result=WebhookResult(
+                        status="ignored",
+                        update_id=update.update_id,
+                        chat_id=update.chat_id,
+                        message_id=update.message_id,
+                        reason="command_not_allowed",
+                    ),
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    message_id=update.message_id,
+                    conversation_id=conversation_id,
+                )
+            try:
+                handled = await self._handle_command(
+                    update=update,
+                    command=command,
+                    conversation_id=conversation_id,
+                    request_id=request_id,
+                )
+            except TelegramBridgeRetryableError:
+                self._log_update_failure(
+                    request_id=request_id,
+                    started=started,
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    message_id=update.message_id,
+                    conversation_id=conversation_id,
+                )
+                raise
+            if handled is not None:
+                return self._log_update_result(
+                    request_id=request_id,
+                    started=started,
+                    result=handled,
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    message_id=update.message_id,
+                    conversation_id=conversation_id,
+                )
+            return self._log_update_result(
+                request_id=request_id,
+                started=started,
+                result=WebhookResult(
                     status="ignored",
                     update_id=update.update_id,
                     chat_id=update.chat_id,
                     message_id=update.message_id,
                     reason="command_not_allowed",
-                )
-            handled = await self._handle_command(
-                update=update,
-                command=command,
-                conversation_id=conversation_id,
-            )
-            if handled is not None:
-                return handled
-            return WebhookResult(
-                status="ignored",
+                ),
                 update_id=update.update_id,
                 chat_id=update.chat_id,
                 message_id=update.message_id,
-                reason="command_not_allowed",
+                conversation_id=conversation_id,
             )
 
-        return await self._complete_and_send(
-            update=update,
+        try:
+            result = await self._complete_and_send(
+                update=update,
+                conversation_id=conversation_id,
+                prompt_text=update.text,
+                request_id=request_id,
+            )
+        except TelegramBridgeRetryableError:
+            self._log_update_failure(
+                request_id=request_id,
+                started=started,
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=conversation_id,
+            )
+            raise
+        return self._log_update_result(
+            request_id=request_id,
+            started=started,
+            result=result,
+            update_id=update.update_id,
+            chat_id=update.chat_id,
+            message_id=update.message_id,
             conversation_id=conversation_id,
-            prompt_text=update.text,
         )
 
     async def _handle_command(
@@ -219,6 +327,7 @@ class TelegramBridgeService:
         update: TelegramUpdate,
         command: str,
         conversation_id: str,
+        request_id: str,
     ) -> WebhookResult | None:
         if command == "/help":
             return await self._send_local_reply(
@@ -244,6 +353,7 @@ class TelegramBridgeService:
                 update=update,
                 conversation_id=conversation_id,
                 prompt_text=prompt_text,
+                request_id=request_id,
             )
         return None
 
@@ -278,12 +388,14 @@ class TelegramBridgeService:
         update: TelegramUpdate,
         conversation_id: str,
         prompt_text: str,
+        request_id: str,
     ) -> WebhookResult:
         try:
             response = await self._agent_client.complete(
                 model=self._settings.agent_api_model,
                 text=prompt_text,
                 conversation_id=conversation_id,
+                request_id=request_id,
             )
             if len(response) > self._settings.max_reply_chars:
                 response = response[: self._settings.max_reply_chars]
@@ -416,3 +528,69 @@ class TelegramBridgeService:
         if isinstance(value, bool):
             return default
         return value
+
+    def _payload_context(self, payload: dict[str, object]) -> dict[str, object]:
+        update_id = self._coerce_int(payload.get("update_id"), None)
+        message = self._extract_message(payload)
+        chat_id = None
+        message_id = None
+        conversation_id = None
+        if message is not None:
+            chat_id = self._coerce_int(message.get("chat"), None, key="id")
+            message_id = self._coerce_int(message, None, key="message_id")
+            if isinstance(chat_id, int) and chat_id > 0:
+                conversation_id = f"telegram:{chat_id}"
+        return {
+            "update_id": update_id,
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "conversation_id": conversation_id,
+        }
+
+    def _log_update_result(
+        self,
+        *,
+        request_id: str,
+        started: float,
+        result: WebhookResult,
+        update_id: int | None,
+        chat_id: int | None,
+        message_id: int | None,
+        conversation_id: str | None,
+    ) -> WebhookResult:
+        level = logging.INFO if result.status == "processed" else logging.WARNING
+        log_event(
+            "telegram_update_completed",
+            level=level,
+            request_id=request_id,
+            outcome=result.status,
+            duration_ms=round((perf_counter() - started) * 1000, 2),
+            update_id=update_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            reason=result.reason,
+        )
+        return result
+
+    def _log_update_failure(
+        self,
+        *,
+        request_id: str,
+        started: float,
+        update_id: int | None,
+        chat_id: int | None,
+        message_id: int | None,
+        conversation_id: str | None,
+    ) -> None:
+        log_event(
+            "telegram_update_failed",
+            level=logging.WARNING,
+            request_id=request_id,
+            outcome="retryable_error",
+            duration_ms=round((perf_counter() - started) * 1000, 2),
+            update_id=update_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            conversation_id=conversation_id,
+        )

@@ -2,19 +2,22 @@ import asyncio
 import hmac
 import logging
 from contextlib import suppress
+from time import perf_counter
 from typing import Any
 
-from fastapi import Body, FastAPI, Header, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException, Request
 
 from app.clients.agent_api import AgentApiClient
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings, get_settings
+from app.core.logging import configure_logging, log_event, new_request_id
 from app.services.bridge import (
     TelegramBridgeRetryableError,
     TelegramBridgeService,
     WebhookResult,
 )
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +28,29 @@ def create_app(
 ) -> FastAPI:
     config = settings if settings is not None else get_settings()
     app = FastAPI(title="telegram-ingress", version="0.1.0")
+
+    @app.middleware("http")
+    async def attach_request_id(request: Request, call_next):
+        request.state.request_id = request.headers.get("X-Request-ID") or new_request_id()
+        started = perf_counter()
+        log_event(
+            "request_started",
+            request_id=request.state.request_id,
+            method=request.method,
+            path=request.url.path,
+        )
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request.state.request_id
+        event = "request_completed" if response.status_code < 400 else "request_failed"
+        log_event(
+            event,
+            request_id=request.state.request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            duration_ms=round((perf_counter() - started) * 1000, 2),
+        )
+        return response
 
     telegram_client = None
     alert_telegram_client = None
@@ -77,8 +103,12 @@ def create_app(
                 for update in updates:
                     update_id = update.get("update_id")
                     if isinstance(update_id, int) and update_id > 0:
+                        request_id = new_request_id()
                         try:
-                            await bridge_service.process_update(update)
+                            await bridge_service.process_update(
+                                update,
+                                request_id=request_id,
+                            )
                         except TelegramBridgeRetryableError:
                             logger.exception(
                                 "telegram update processing failed, will retry update %s",
@@ -180,6 +210,7 @@ def create_app(
 
     @app.post(config.webhook_path)
     async def webhook(
+        request: Request,
         update: dict[str, object] = Body(...),
         x_telegram_secret_token: str | None = Header(default=None, alias="X-Telegram-Bot-Api-Secret-Token"),
     ) -> dict[str, object]:
@@ -199,7 +230,10 @@ def create_app(
             return WebhookResult.ignored(reason="invalid_payload").as_dict()
 
         try:
-            result = await bridge_service.process_update(update)
+            result = await bridge_service.process_update(
+                update,
+                request_id=request.state.request_id,
+            )
         except TelegramBridgeRetryableError as exc:
             raise HTTPException(
                 status_code=503,
