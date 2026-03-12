@@ -817,6 +817,58 @@ Notes:
 - example: `/help,/status,/retry`
 - defaults to disabled (empty), meaning no command filtering is enforced
 
+### `TELEGRAM_ALERT_BOT_TOKEN`
+
+Required: no unless alert relaying is enabled
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- dedicated Telegram bot token used for operational alert delivery
+
+### `TELEGRAM_ALERT_CHAT_IDS`
+
+Required: no unless alert relaying is enabled
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- comma-separated list of Telegram chat IDs that receive operational alerts
+
+### `TELEGRAM_ALERT_AUTH_TOKEN`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- shared secret token required in `X-Telegram-Alert-Token` header for `/telegram/alerts`
+
+### `TELEGRAM_ALERT_API_BASE_URL`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- Telegram Bot API base URL for the alert bot
+
+Notes:
+
+- defaults to `https://api.telegram.org`
+
 ### `AGENT_API_MODEL`
 
 Required: no

@@ -95,6 +95,34 @@ class _FakeAgentApiClient(AgentApiClient):
         self.closed = True
 
 
+class _StartupAlertTelegramClient(TelegramClient):
+    def __init__(
+        self,
+        *,
+        bot_token: str,
+        api_base_url: str = "https://api.telegram.org",
+        timeout_seconds: float = 5.0,
+        http_client: object | None = None,
+    ) -> None:
+        super().__init__(
+            bot_token=bot_token,
+            api_base_url=api_base_url,
+            timeout_seconds=timeout_seconds,
+            http_client=http_client,
+        )
+        self.bot_token = bot_token
+        self.api_base_url = api_base_url
+        self.timeout_seconds = timeout_seconds
+        self.sent_messages: list[tuple[int, str]] = []
+        self.closed = False
+
+    async def send_message(self, *, chat_id: int, text: str) -> None:
+        self.sent_messages.append((chat_id, text))
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 def _create_client(
     *,
     settings: Settings | None = None,
@@ -311,6 +339,188 @@ def test_webhook_ignores_messages_from_other_bots() -> None:
     assert response.json()["reason"] == "message not text or missing chat"
     assert not telegram_client.sent_messages
     assert not agent_client.calls
+
+
+def test_alerts_endpoint_returns_503_when_alerting_is_not_configured() -> None:
+    settings = _operational_settings({})
+    client = TestClient(
+        create_app(
+            settings=settings,
+            bridge_service=TelegramBridgeService(
+                agent_client=_FakeAgentApiClient(),
+                telegram_client=_FakeTelegramClient(),
+                settings=settings,
+            ),
+        )
+    )
+    response = client.post("/telegram/alerts", json={"text": "downtime"})
+    assert response.status_code == 503
+
+
+def test_alerts_endpoint_requires_auth_token_when_configured() -> None:
+    from app import main as main_module
+
+    settings = _operational_settings(
+        {
+            "telegram_alert_bot_token": "alert-bot-token",
+            "telegram_alert_auth_token": "alert-secret",
+            "telegram_alert_chat_ids": (11,),
+        }
+    )
+    captured: list[_StartupAlertTelegramClient] = []
+
+    class _PatchedTelegramClient(_StartupAlertTelegramClient):
+        def __init__(
+            self,
+            *,
+            bot_token: str,
+            api_base_url: str = "https://api.telegram.org",
+            timeout_seconds: float = 5.0,
+            http_client: object | None = None,
+        ) -> None:
+            super().__init__(
+                bot_token=bot_token,
+                api_base_url=api_base_url,
+                timeout_seconds=timeout_seconds,
+                http_client=http_client,
+            )
+            captured.append(self)
+
+    original_client = main_module.TelegramClient
+    main_module.TelegramClient = _PatchedTelegramClient
+    try:
+        app = main_module.create_app(settings=settings)
+        with TestClient(app) as alert_client:
+            response = alert_client.post(
+                "/telegram/alerts",
+                json={"text": "downtime"},
+                headers={"X-Telegram-Alert-Token": "wrong"},
+            )
+    finally:
+        main_module.TelegramClient = original_client
+
+    assert response.status_code == 401
+    assert captured[0].sent_messages == []
+
+
+def test_alerts_endpoint_sends_to_all_configured_chats() -> None:
+    from app import main as main_module
+
+    settings = _operational_settings(
+        {
+            "telegram_alert_bot_token": "alert-bot-token",
+            "telegram_alert_auth_token": "alert-secret",
+            "telegram_alert_chat_ids": (11, 22),
+        }
+    )
+    captured: list[_StartupAlertTelegramClient] = []
+
+    class _PatchedTelegramClient(_StartupAlertTelegramClient):
+        def __init__(
+            self,
+            *,
+            bot_token: str,
+            api_base_url: str = "https://api.telegram.org",
+            timeout_seconds: float = 5.0,
+            http_client: object | None = None,
+        ) -> None:
+            super().__init__(
+                bot_token=bot_token,
+                api_base_url=api_base_url,
+                timeout_seconds=timeout_seconds,
+                http_client=http_client,
+            )
+            captured.append(self)
+
+    original_client = main_module.TelegramClient
+    main_module.TelegramClient = _PatchedTelegramClient
+    try:
+        app = main_module.create_app(settings=settings)
+        with TestClient(app) as alert_client:
+            response = alert_client.post(
+                "/telegram/alerts",
+                json={"text": "downtime"},
+                headers={"X-Telegram-Alert-Token": "alert-secret"},
+            )
+    finally:
+        main_module.TelegramClient = original_client
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "sent"
+    assert response.json()["recipients"] == 2
+
+    alert_client = next(
+        client for client in captured if client.bot_token == "alert-bot-token"
+    )
+    assert alert_client.sent_messages == [(11, "downtime"), (22, "downtime")]
+
+
+def test_alerts_endpoint_formats_alert_payload() -> None:
+    from app import main as main_module
+
+    settings = _operational_settings(
+        {
+            "telegram_alert_bot_token": "alert-bot-token",
+            "telegram_alert_auth_token": "alert-secret",
+            "telegram_alert_chat_ids": (11,),
+        }
+    )
+    captured: list[_StartupAlertTelegramClient] = []
+
+    class _PatchedTelegramClient(_StartupAlertTelegramClient):
+        def __init__(
+            self,
+            *,
+            bot_token: str,
+            api_base_url: str = "https://api.telegram.org",
+            timeout_seconds: float = 5.0,
+            http_client: object | None = None,
+        ) -> None:
+            super().__init__(
+                bot_token=bot_token,
+                api_base_url=api_base_url,
+                timeout_seconds=timeout_seconds,
+                http_client=http_client,
+            )
+            captured.append(self)
+
+    original_client = main_module.TelegramClient
+    main_module.TelegramClient = _PatchedTelegramClient
+    try:
+        app = main_module.create_app(settings=settings)
+        with TestClient(app) as alert_client:
+            response = alert_client.post(
+                "/telegram/alerts",
+                json={
+                    "status": "firing",
+                    "alerts": [
+                        {
+                            "status": "firing",
+                            "labels": {
+                                "alertname": "high_cpu",
+                                "severity": "critical",
+                                "service": "agent-api",
+                            },
+                            "annotations": {
+                                "summary": "CPU usage too high",
+                                "description": "CPU usage exceeded 90% for 5m",
+                            },
+                        }
+                    ],
+                },
+                headers={"X-Telegram-Alert-Token": "alert-secret"},
+            )
+    finally:
+        main_module.TelegramClient = original_client
+
+    assert response.status_code == 200
+    alert_client = next(
+        client for client in captured if client.bot_token == "alert-bot-token"
+    )
+    assert alert_client.sent_messages
+    text = alert_client.sent_messages[0][1]
+    assert text == "FIRING high_cpu [critical] on agent-api: CPU usage exceeded 90% for 5m"
+    assert response.json()["status"] == "sent"
 
 
 def test_webhook_ignores_messages_that_exceed_input_limit() -> None:

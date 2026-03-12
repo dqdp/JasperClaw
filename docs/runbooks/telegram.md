@@ -28,7 +28,6 @@ This runbook separates:
 Что не реализовано сейчас:
 
 - сложная командная модель (`/play`, `/status`, approval flow) до модели;
-- отдельный поток для критических операционных алертов через Telegram;
 - отдельные политики доставки по уровню важности/приоритетам для Telegram-команд.
 
 ## Enterprise pattern (practical baseline)
@@ -66,6 +65,11 @@ This runbook separates:
    - отправить тестовое сообщение боту;
    - убедиться, что пришел ответ.
 
+7. Для алерт-бота настроить отдельные переменные:
+   - `TELEGRAM_ALERT_BOT_TOKEN` — token отдельного Telegram-бота для алертов
+   - `TELEGRAM_ALERT_AUTH_TOKEN` — статический секрет для входа в `/telegram/alerts`
+   - `TELEGRAM_ALERT_CHAT_IDS` — список chat_id через запятую для доставки алертов
+
 If webhook cannot be set publicly, set:
 
 - `TELEGRAM_POLLING_ENABLED=true`
@@ -93,9 +97,13 @@ When `TELEGRAM_ALLOWED_COMMANDS` is configured, commands outside that allowlist 
 
 ## Alerting via Telegram
 
-Алертинг в текущей кодовой базе не реализован как часть `telegram-ingress`.
+`telegram-ingress` в текущей реализации предоставляет endpoint для alert-ретрансляции:
 
-Рекомендуемая схема:
+- `POST /telegram/alerts` принимает JSON с `text` или `alerts` (формат близкий к Alertmanager webhook),
+- нормализует событие в текст и отправляет его на `TELEGRAM_ALERT_CHAT_IDS`,
+- использует `TELEGRAM_ALERT_BOT_TOKEN` и требует `X-Telegram-Alert-Token` при наличии `TELEGRAM_ALERT_AUTH_TOKEN`.
+
+Текущая эксплуатация:
 
 - использовать отдельный alert-bot (отдельный токен и, по возможности, отдельный Telegram account/channel),
 - отправлять алерты только из наблюдаемости/мониторинга (not from user chat path),
@@ -110,9 +118,10 @@ When `TELEGRAM_ALLOWED_COMMANDS` is configured, commands outside that allowlist 
 
 ```bash
 curl -s -X POST \
-  "https://api.telegram.org/bot${ALERTS_TELEGRAM_BOT_TOKEN}/sendMessage" \
+  https://your-host/telegram/alerts \
   -H 'Content-Type: application/json' \
-  -d '{"chat_id":"'${ALERT_CHAT_ID}'","text":"[ALERT] telegram-ingress degraded: ..."}'
+  -H "X-Telegram-Alert-Token: ${TELEGRAM_ALERT_AUTH_TOKEN}" \
+  -d '{"alerts":[{"status":"firing","labels":{"alertname":"telegram_ingress_down","service":"telegram-ingress","severity":"critical"},"annotations":{"summary":"ingress down","description":"telegram-ingress cannot accept updates"}}]}'
 ```
 
 Для production-обвязки:

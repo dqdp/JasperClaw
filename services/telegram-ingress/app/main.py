@@ -2,6 +2,7 @@ import asyncio
 import hmac
 import logging
 from contextlib import suppress
+from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException
 
@@ -22,12 +23,19 @@ def create_app(
     app = FastAPI(title="telegram-ingress", version="0.1.0")
 
     telegram_client = None
+    alert_telegram_client = None
     if bridge_service is None:
         telegram_client = TelegramClient(
             bot_token=config.telegram_bot_token,
             api_base_url=config.telegram_api_base_url,
             timeout_seconds=config.request_timeout_seconds,
         )
+        if config.telegram_alert_bot_token and config.telegram_alert_chat_ids:
+            alert_telegram_client = TelegramClient(
+                bot_token=config.telegram_alert_bot_token,
+                api_base_url=config.telegram_alert_api_base_url,
+                timeout_seconds=config.request_timeout_seconds,
+            )
         bridge_service = TelegramBridgeService(
             agent_client=AgentApiClient(
                 base_url=config.agent_api_base_url,
@@ -100,6 +108,57 @@ def create_app(
             polling_task = asyncio.create_task(_poll_updates_forever())
             app.state.telegram_polling_task = polling_task
 
+    def _extract_field(*names: str, source: dict[str, Any]) -> str:
+        for name in names:
+            value = source.get(name)
+            if isinstance(value, str):
+                return value.strip()
+        return ""
+
+    def _format_alert_message(payload: dict[str, object]) -> str:
+        direct_text = _extract_field("text", "message", source=payload)
+        if direct_text:
+            return direct_text
+
+        alerts_value = payload.get("alerts")
+        if isinstance(alerts_value, list) and alerts_value:
+            lines: list[str] = []
+            status = _extract_field("status", source=payload).upper() or "ALERT"
+
+            for alert in alerts_value:
+                if not isinstance(alert, dict):
+                    continue
+
+                labels = alert.get("labels")
+                labels_map: dict[str, str] = {}
+                if isinstance(labels, dict):
+                    for key, value in labels.items():
+                        if isinstance(value, str):
+                            labels_map[key] = value
+
+                annotations = alert.get("annotations")
+                annotations_map: dict[str, str] = {}
+                if isinstance(annotations, dict):
+                    for key, value in annotations.items():
+                        if isinstance(value, str):
+                            annotations_map[key] = value
+
+                name = labels_map.get("alertname") or annotations_map.get("summary") or "alert"
+                severity = labels_map.get("severity") or "unknown"
+                description = annotations_map.get("description") or annotations_map.get("summary") or name
+                component = labels_map.get("service") or labels_map.get("instance") or "unknown"
+                generator_url = _extract_field("generatorURL", "generator_url", source=alert)
+
+                line = f"{status} {name} [{severity}] on {component}: {description}"
+                if generator_url:
+                    line = f"{line} ({generator_url})"
+                lines.append(line)
+
+            if lines:
+                return "\n".join(lines)
+
+        return str(payload)
+
     @app.post(config.webhook_path)
     async def webhook(
         update: dict[str, object] = Body(...),
@@ -123,12 +182,39 @@ def create_app(
         result = await bridge_service.process_update(update)
         return result.as_dict()
 
+    @app.post("/telegram/alerts")
+    async def telegram_alerts(
+        payload: dict[str, object] = Body(...),
+        x_telegram_alert_token: str | None = Header(default=None, alias="X-Telegram-Alert-Token"),
+    ) -> dict[str, object]:
+        if alert_telegram_client is None or not config.telegram_alert_chat_ids:
+            raise HTTPException(
+                status_code=503,
+                detail="telegram alert relay is not configured",
+            )
+
+        if config.telegram_alert_auth_token and (
+            x_telegram_alert_token is None
+            or not hmac.compare_digest(
+                x_telegram_alert_token,
+                config.telegram_alert_auth_token,
+            )
+        ):
+            raise HTTPException(status_code=401, detail="invalid alert token")
+
+        message = _format_alert_message(payload)
+        for chat_id in config.telegram_alert_chat_ids:
+            await alert_telegram_client.send_message(chat_id=chat_id, text=message)
+        return {"status": "sent", "recipients": len(config.telegram_alert_chat_ids)}
+
     @app.on_event("shutdown")
     async def _shutdown() -> None:
         if polling_task is not None:
             polling_task.cancel()
             with suppress(asyncio.CancelledError):
                 await polling_task
+        if alert_telegram_client is not None:
+            await alert_telegram_client.close()
         await bridge_service.close()
 
     return app

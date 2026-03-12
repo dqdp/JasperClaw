@@ -52,6 +52,24 @@ def _get_bool_env(name: str, default: bool) -> bool:
     raise ValueError(f"invalid boolean env var {name}: {raw}")
 
 
+def _get_int_list_env(name: str, default: tuple[int, ...]) -> tuple[int, ...]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+
+    values: list[int] = []
+    for raw_value in raw.split(","):
+        value = raw_value.strip()
+        if not value:
+            continue
+        try:
+            values.append(int(value))
+        except ValueError as exc:
+            raise ValueError(f"invalid int list env var {name}: {value}") from exc
+
+    return tuple(values)
+
+
 def _get_command_list_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     raw = os.getenv(name)
     if raw is None or not raw.strip():
@@ -103,6 +121,10 @@ class Settings:
     # Optional operational guardrails.
     max_reply_chars: int = 4096
     telegram_allowed_commands: tuple[str, ...] = ()
+    telegram_alert_bot_token: str = ""
+    telegram_alert_auth_token: str = ""
+    telegram_alert_api_base_url: str = "https://api.telegram.org"
+    telegram_alert_chat_ids: tuple[int, ...] = ()
 
     def is_operational(self) -> bool:
         return bool(self.telegram_bot_token and self.agent_api_key)
@@ -136,4 +158,11 @@ def get_settings() -> Settings:
             "TELEGRAM_ALLOWED_COMMANDS",
             (),
         ),
+        telegram_alert_bot_token=_strip_secret(os.getenv("TELEGRAM_ALERT_BOT_TOKEN", "")),
+        telegram_alert_api_base_url=os.getenv(
+            "TELEGRAM_ALERT_API_BASE_URL",
+            "https://api.telegram.org",
+        ).strip(),
+        telegram_alert_auth_token=_strip_secret(os.getenv("TELEGRAM_ALERT_AUTH_TOKEN", "")),
+        telegram_alert_chat_ids=_get_int_list_env("TELEGRAM_ALERT_CHAT_IDS", ()),
     )

@@ -119,10 +119,12 @@ Implemented:
 - `agent-api` fan-out path with conversation reuse by chat id
 - startup webhook registration when `TELEGRAM_WEBHOOK_URL` is configured
 - optional polling fallback when webhook URL is not configured
+- operational alert relay via `/telegram/alerts` using a dedicated alert bot token
 
 Not yet implemented:
 
-- abuse controls beyond duplicate suppression and token verification
+- command intent routing before model execution (`/play`, `/status`, etc.)
+- delivery policies and priority handling for operational alert fanout
 
 ### Database and memory
 
