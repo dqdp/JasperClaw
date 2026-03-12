@@ -16,6 +16,8 @@ fi
 
 services=(
   "services/agent-api"
+  "services/ollama-fake"
+  "services/telegram-fake"
   "services/stt-service"
   "services/tts-service"
   "services/tools-gateway"

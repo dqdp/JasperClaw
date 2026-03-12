@@ -105,3 +105,8 @@ if not content:
 
 print("Smoke checks passed")
 PY
+
+if [[ -n "${TELEGRAM_SMOKE_BASE_URL:-}" ]]; then
+  PYTHON_BIN="${PYTHON_BIN:-python3}"
+  "${PYTHON_BIN}" infra/scripts/smoke-telegram-ingress.py
+fi

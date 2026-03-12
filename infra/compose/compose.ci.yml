@@ -2,3 +2,20 @@ services:
   agent-api:
     ports:
       - "18080:8080"
+  telegram-ingress:
+    ports:
+      - "18081:8080"
+  ollama-fake:
+    build:
+      context: ../../services/ollama-fake
+    ports:
+      - "18083:8080"
+    networks:
+      - runtime
+  telegram-fake:
+    build:
+      context: ../../services/telegram-fake
+    ports:
+      - "18082:8080"
+    networks:
+      - control

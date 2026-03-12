@@ -42,10 +42,12 @@ class AgentApiClient:
                 "messages": [{"role": "user", "content": text}],
                 "metadata": {
                     "source": "telegram",
+                    # Telegram chat IDs are stable client-side session hints, not canonical
+                    # backend conversation IDs, until the bridge can supply transcript continuity.
+                    "client_conversation_id": conversation_id,
                 },
             },
             extra_headers={
-                "X-Conversation-ID": conversation_id,
                 "X-Request-ID": request_id,
             },
         )
