@@ -138,6 +138,7 @@ local-assistant/
 - [`docs/runbooks/deploy.md`](docs/runbooks/deploy.md) — deployment runbook
 - [`docs/runbooks/rollback.md`](docs/runbooks/rollback.md) — rollback runbook
 - [`docs/runbooks/smoke-tests.md`](docs/runbooks/smoke-tests.md) — post-deploy smoke test checklist
+- [`docs/runbooks/telegram.md`](docs/runbooks/telegram.md) — Telegram channel operations, two-way communication, and alerting runbook
 - [`docs/handoff_to_agent.md`](docs/handoff_to_agent.md) — compact execution brief for an implementation agent
 
 ## First implementation milestones
