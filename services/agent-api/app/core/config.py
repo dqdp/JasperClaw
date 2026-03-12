@@ -24,11 +24,24 @@ class Settings:
     web_search_enabled: bool = False
     web_search_top_k: int = 3
     web_search_timeout_seconds: float = 5.0
+    spotify_base_url: str = "https://api.spotify.com"
+    spotify_access_token: str = ""
+    spotify_client_id: str = ""
+    spotify_client_secret: str = ""
+    spotify_redirect_uri: str = ""
+    spotify_timeout_seconds: float = 5.0
+    spotify_search_top_k: int = 3
     model_owner: str = "local-assistant"
 
     @property
     def public_profiles(self) -> tuple[str, str]:
         return ("assistant-v1", "assistant-fast")
+
+    def is_spotify_client_configured(self) -> bool:
+        return bool(
+            self.spotify_access_token
+            or (self.spotify_client_id and self.spotify_client_secret)
+        )
 
 
 def _normalize_required_secret(value: str | None) -> str:
@@ -83,4 +96,16 @@ def get_settings() -> Settings:
         web_search_timeout_seconds=float(
             os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")
         ),
+        spotify_base_url=(
+            os.getenv("SPOTIFY_BASE_URL", "https://api.spotify.com").strip()
+            or "https://api.spotify.com"
+        ),
+        spotify_access_token=(os.getenv("SPOTIFY_ACCESS_TOKEN", "") or "").strip(),
+        spotify_client_id=(os.getenv("SPOTIFY_CLIENT_ID", "") or "").strip(),
+        spotify_client_secret=(os.getenv("SPOTIFY_CLIENT_SECRET", "") or "").strip(),
+        spotify_redirect_uri=(os.getenv("SPOTIFY_REDIRECT_URI", "") or "").strip(),
+        spotify_timeout_seconds=float(
+            os.getenv("SPOTIFY_TIMEOUT_SECONDS", "5")
+        ),
+        spotify_search_top_k=int(os.getenv("SPOTIFY_SEARCH_TOP_K", "3")),
     )

@@ -22,6 +22,7 @@ def reset_env(monkeypatch: pytest.MonkeyPatch):
     deps.get_ollama_client.cache_clear()
     deps.get_web_search_client.cache_clear()
     deps.get_chat_repository.cache_clear()
+    deps.get_spotify_client.cache_clear()
     deps.get_migration_runner.cache_clear()
     yield
     app.dependency_overrides.clear()
@@ -29,6 +30,7 @@ def reset_env(monkeypatch: pytest.MonkeyPatch):
     deps.get_ollama_client.cache_clear()
     deps.get_web_search_client.cache_clear()
     deps.get_chat_repository.cache_clear()
+    deps.get_spotify_client.cache_clear()
     deps.get_migration_runner.cache_clear()
 
 

@@ -5,6 +5,7 @@ from app.api import deps
 from app.clients.ollama import OllamaChatStreamChunk
 from app.core.config import get_settings
 from app.core.errors import APIError
+from app.clients.spotify import SpotifyTrackItem
 from app.repositories.postgres import (
     ChatPersistenceResult,
     ConversationContext,
@@ -127,6 +128,38 @@ class _FakeSearchClient:
         return list(_FakeSearchClient.results)
 
 
+class _FakeSpotifyClient:
+    search_results = []
+    error = None
+    search_calls = []
+    play_calls = []
+    pause_calls = []
+    next_calls = []
+
+    def search_tracks(self, *, query: str, limit: int):
+        _FakeSpotifyClient.search_calls.append({"query": query, "limit": limit})
+        if _FakeSpotifyClient.error is not None:
+            raise _FakeSpotifyClient.error
+        return list(_FakeSpotifyClient.search_results)
+
+    def play_track(self, *, track_uri: str, device_id: str | None = None):
+        _FakeSpotifyClient.play_calls.append(
+            {"track_uri": track_uri, "device_id": device_id}
+        )
+        if _FakeSpotifyClient.error is not None:
+            raise _FakeSpotifyClient.error
+
+    def pause_playback(self, *, device_id: str | None = None):
+        _FakeSpotifyClient.pause_calls.append({"device_id": device_id})
+        if _FakeSpotifyClient.error is not None:
+            raise _FakeSpotifyClient.error
+
+    def next_track(self, *, device_id: str | None = None):
+        _FakeSpotifyClient.next_calls.append({"device_id": device_id})
+        if _FakeSpotifyClient.error is not None:
+            raise _FakeSpotifyClient.error
+
+
 def _patch_http_client(monkeypatch):
     monkeypatch.setattr("app.clients.ollama.httpx.Client", _FakeClient)
     _FakeClient.error = None
@@ -149,6 +182,16 @@ def _patch_search_client():
     _FakeSearchClient.error = None
     _FakeSearchClient.calls = []
     deps.get_web_search_client.cache_clear()
+
+
+def _patch_spotify_client():
+    _FakeSpotifyClient.search_results = []
+    _FakeSpotifyClient.error = None
+    _FakeSpotifyClient.search_calls = []
+    _FakeSpotifyClient.play_calls = []
+    _FakeSpotifyClient.pause_calls = []
+    _FakeSpotifyClient.next_calls = []
+    deps.get_spotify_client.cache_clear()
 
 
 class _FakeRepository:
@@ -679,6 +722,236 @@ def test_chat_completions_model_driven_tool_failure_runs_final_fallback_pass(
     tool_execution = repository.tool_execution_calls[0]["tool_execution"]
     assert tool_execution.status == "failed"
     assert tool_execution.error_code == "dependency_timeout"
+
+
+def test_chat_completions_model_driven_spotify_search_uses_spotify_adapter(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("SPOTIFY_ACCESS_TOKEN", "token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_spotify_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_spotify_client] = (
+        lambda: _FakeSpotifyClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"spotify-search","query":"lofi"}',
+                },
+                "prompt_eval_count": 3,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "This answer uses Spotify tracks.",
+                },
+                "prompt_eval_count": 11,
+                "eval_count": 7,
+            },
+        ),
+    ]
+    _FakeSpotifyClient.search_results = [
+        SpotifyTrackItem(
+            name="Calm Piano",
+            artists="Piano Studio",
+            uri="spotify:track:001",
+            album="Focus",
+            external_url="https://open.spotify.com/track/001",
+        )
+    ]
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "This answer uses Spotify tracks."
+    )
+    assert len(_FakeClient.chat_calls) == 2
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Relevant Spotify tracks" in final_messages[0]["content"]
+    assert "Calm Piano" in final_messages[0]["content"]
+    assert _FakeSpotifyClient.search_calls == [{"query": "lofi", "limit": 3}]
+    assert len(repository.tool_execution_calls) == 1
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "spotify-search"
+    assert tool_execution.status == "completed"
+    assert tool_execution.output["results"][0]["uri"] == "spotify:track:001"
+
+
+def test_chat_completions_model_driven_spotify_play_executes_action(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("SPOTIFY_ACCESS_TOKEN", "token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_spotify_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_spotify_client] = (
+        lambda: _FakeSpotifyClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"spotify-play","track_uri":"spotify:track:001"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Started playback.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Started playback."
+    assert len(_FakeSpotifyClient.play_calls) == 1
+    assert _FakeSpotifyClient.play_calls[0]["track_uri"] == "spotify:track:001"
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Spotify action completed: spotify-play." in final_messages[0]["content"]
+    assert len(repository.tool_execution_calls) == 1
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "spotify-play"
+    assert tool_execution.status == "completed"
+
+
+def test_chat_completions_model_driven_spotify_pause_executes_action(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("SPOTIFY_ACCESS_TOKEN", "token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_spotify_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_spotify_client] = (
+        lambda: _FakeSpotifyClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"spotify-pause","device_id":"device-123"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Paused playback.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Paused playback."
+    assert len(_FakeSpotifyClient.pause_calls) == 1
+    assert _FakeSpotifyClient.pause_calls[0]["device_id"] == "device-123"
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Spotify action completed: spotify-pause." in final_messages[0]["content"]
+    assert "device id=device-123" in final_messages[0]["content"]
+    assert len(repository.tool_execution_calls) == 1
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "spotify-pause"
+    assert tool_execution.status == "completed"
+
+
+def test_chat_completions_model_driven_spotify_next_executes_action(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("SPOTIFY_ACCESS_TOKEN", "token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_spotify_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_spotify_client] = (
+        lambda: _FakeSpotifyClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"spotify-next"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Skipped to next track.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Skipped to next track."
+    assert len(_FakeSpotifyClient.next_calls) == 1
+    assert _FakeSpotifyClient.next_calls[0]["device_id"] is None
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Spotify action completed: spotify-next." in final_messages[0]["content"]
+    assert len(repository.tool_execution_calls) == 1
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "spotify-next"
+    assert tool_execution.status == "completed"
 
 
 def test_chat_completions_model_driven_unimplemented_tool_is_denied_with_policy_and_fallback(

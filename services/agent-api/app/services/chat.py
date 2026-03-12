@@ -12,6 +12,7 @@ from app.clients.ollama import (
     OllamaChatStreamChunk,
 )
 from app.clients.search import WebSearchClient, WebSearchResultItem
+from app.clients.spotify import SpotifyClient, SpotifyTrackItem
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
@@ -39,7 +40,6 @@ _SUPPORTED_TOOL_NAMES = (
     "spotify-pause",
     "spotify-next",
 )
-_IMPLEMENTED_TOOL_NAMES = ("web-search",)
 
 
 @dataclass(slots=True)
@@ -118,11 +118,13 @@ class ChatService:
         ollama_client: OllamaChatClient,
         repository: ChatRepository,
         web_search_client: WebSearchClient | None = None,
+        spotify_client: SpotifyClient | None = None,
     ) -> None:
         self._settings = settings
         self._ollama_client = ollama_client
         self._repository = repository
         self._web_search_client = web_search_client
+        self._spotify_client = spotify_client
 
     def create_chat_completion(
         self,
@@ -859,7 +861,18 @@ class ChatService:
                 execution=execution,
             )
 
-        return self._execute_web_search(
+        if decision.tool_name == "web-search":
+            return self._execute_web_search(
+                request_id=request_id,
+                base_messages=base_messages,
+                decision=decision,
+                annotate_failures=annotate_failures,
+                started_at=started_at,
+                tool_started=tool_started,
+                invocation_id=invocation_id,
+                policy=policy,
+            )
+        return self._execute_spotify_tool(
             request_id=request_id,
             base_messages=base_messages,
             decision=decision,
@@ -887,35 +900,58 @@ class ChatService:
                 ),
             )
 
-        if normalized_tool not in _IMPLEMENTED_TOOL_NAMES:
+        if normalized_tool == "web-search":
+            if not self._settings.web_search_enabled:
+                return ToolPolicyDecision(
+                    allowed=False,
+                    policy_decision="deny",
+                    error_type="policy_error",
+                    error_code="tool_not_allowed",
+                    error_message=(
+                        "web-search is currently disabled by deployment policy."
+                    ),
+                    adapter_name="search-http",
+                    provider="search-provider",
+                )
+            if self._web_search_client is None:
+                return ToolPolicyDecision(
+                    allowed=False,
+                    policy_decision="deny",
+                    error_type="policy_error",
+                    error_code="tool_not_allowed",
+                    error_message=(
+                        "web-search is currently unavailable because the adapter is "
+                        "not configured."
+                    ),
+                    adapter_name="search-http",
+                    provider="search-provider",
+                )
             return ToolPolicyDecision(
-                allowed=False,
-                policy_decision="deny",
-                error_type="policy_error",
-                error_code="tool_not_allowed",
-                error_message=(
-                    f"Tool '{normalized_tool}' is intentionally not implemented in v1."
-                ),
-            )
-
-        if not self._settings.web_search_enabled:
-            return ToolPolicyDecision(
-                allowed=False,
-                policy_decision="deny",
-                error_type="policy_error",
-                error_code="tool_not_allowed",
-                error_message=(
-                    "web-search is currently disabled by deployment policy."
-                ),
+                allowed=True,
+                policy_decision="allow",
                 adapter_name="search-http",
                 provider="search-provider",
+            )
+
+        if not self._settings.is_spotify_client_configured():
+            return ToolPolicyDecision(
+                allowed=False,
+                policy_decision="deny",
+                error_type="policy_error",
+                error_code="tool_not_allowed",
+                error_message=(
+                    "Spotify tools are currently unavailable because they are not "
+                    "configured."
+                ),
+                adapter_name="spotify-http",
+                provider="spotify",
             )
 
         return ToolPolicyDecision(
             allowed=True,
             policy_decision="allow",
-            adapter_name="search-http",
-            provider="search-provider",
+            adapter_name="spotify-http",
+            provider="spotify",
         )
 
     def _normalize_tool_name(self, tool_name: str) -> str:
@@ -1036,6 +1072,211 @@ class ChatService:
                 ),
                 execution=execution,
             )
+
+    def _execute_spotify_tool(
+        self,
+        *,
+        request_id: str,
+        base_messages: list[ChatMessage],
+        decision: ToolPlanningDecision,
+        annotate_failures: bool,
+        started_at: datetime,
+        tool_started: float,
+        invocation_id: str,
+        policy: ToolPolicyDecision,
+    ) -> ToolContext:
+        if self._spotify_client is None:
+            completed_at = datetime.now(timezone.utc)
+            execution = ToolExecutionRecord(
+                invocation_id=invocation_id,
+                tool_name=decision.tool_name,
+                status="failed",
+                arguments=dict(decision.arguments),
+                latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                started_at=started_at,
+                completed_at=completed_at,
+                adapter_name=policy.adapter_name,
+                provider=policy.provider,
+                policy_decision=policy.policy_decision,
+                error_type="dependency_unavailable",
+                error_code="tool_not_configured",
+            )
+            self._log_tool_execution(request_id=request_id, execution=execution)
+            return ToolContext(
+                runtime_messages=self._apply_tool_failure_policy(
+                    base_messages=base_messages,
+                    annotate_failures=annotate_failures,
+                    tool_name=decision.tool_name,
+                ),
+                execution=execution,
+            )
+
+        if decision.tool_name == "spotify-search":
+            query_text = decision.arguments.get("query", "")
+            query = query_text.strip() if isinstance(query_text, str) else ""
+            if not query:
+                return ToolContext(runtime_messages=list(base_messages))
+
+            tool_arguments = {
+                "query": query,
+                "limit": self._settings.spotify_search_top_k,
+            }
+
+            try:
+                tracks = self._spotify_client.search_tracks(
+                    query=query,
+                    limit=self._settings.spotify_search_top_k,
+                )
+                spotify_results = self._normalize_spotify_results(tracks)
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="completed",
+                    arguments=tool_arguments,
+                    output={"results": spotify_results},
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                if not spotify_results:
+                    return ToolContext(
+                        runtime_messages=list(base_messages),
+                        execution=execution,
+                    )
+                return ToolContext(
+                    runtime_messages=self._augment_messages_with_spotify_results(
+                        base_messages,
+                        spotify_results,
+                    ),
+                    execution=execution,
+                )
+            except APIError as exc:
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="failed",
+                    arguments=tool_arguments,
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                    error_type=exc.error_type,
+                    error_code=exc.code,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                return ToolContext(
+                    runtime_messages=self._apply_tool_failure_policy(
+                        base_messages=base_messages,
+                        annotate_failures=annotate_failures,
+                        tool_name=decision.tool_name,
+                    ),
+                    execution=execution,
+                )
+
+        track_uri = self._normalize_track_uri(decision.arguments)
+        device_id = self._normalize_optional_device_id(decision.arguments)
+        tool_arguments = {"track_uri": track_uri}
+        if device_id:
+            tool_arguments["device_id"] = device_id
+
+        try:
+            if decision.tool_name == "spotify-play":
+                self._spotify_client.play_track(
+                    track_uri=track_uri,
+                    device_id=device_id,
+                )
+            elif decision.tool_name == "spotify-pause":
+                self._spotify_client.pause_playback(device_id=device_id)
+            else:
+                self._spotify_client.next_track(device_id=device_id)
+
+            completed_at = datetime.now(timezone.utc)
+            execution = ToolExecutionRecord(
+                invocation_id=invocation_id,
+                tool_name=decision.tool_name,
+                status="completed",
+                arguments=tool_arguments,
+                output={"status": "ok"},
+                latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                started_at=started_at,
+                completed_at=completed_at,
+                adapter_name=policy.adapter_name,
+                provider=policy.provider,
+                policy_decision=policy.policy_decision,
+            )
+            self._log_tool_execution(request_id=request_id, execution=execution)
+            return ToolContext(
+                runtime_messages=self._augment_messages_with_spotify_action(
+                    base_messages=base_messages,
+                    tool_name=decision.tool_name,
+                    arguments=tool_arguments,
+                ),
+                execution=execution,
+            )
+        except APIError as exc:
+            completed_at = datetime.now(timezone.utc)
+            execution = ToolExecutionRecord(
+                invocation_id=invocation_id,
+                tool_name=decision.tool_name,
+                status="failed",
+                arguments=tool_arguments,
+                latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                started_at=started_at,
+                completed_at=completed_at,
+                adapter_name=policy.adapter_name,
+                provider=policy.provider,
+                policy_decision=policy.policy_decision,
+                error_type=exc.error_type,
+                error_code=exc.code,
+            )
+            self._log_tool_execution(request_id=request_id, execution=execution)
+            return ToolContext(
+                runtime_messages=self._apply_tool_failure_policy(
+                    base_messages=base_messages,
+                    annotate_failures=annotate_failures,
+                    tool_name=decision.tool_name,
+                ),
+                execution=execution,
+            )
+
+    def _normalize_track_uri(self, arguments: dict[str, object]) -> str:
+        if "track_uri" in arguments:
+            value = arguments.get("track_uri")
+            if isinstance(value, str):
+                track_uri = value.strip()
+                if track_uri:
+                    return track_uri
+        if "uri" in arguments:
+            value = arguments.get("uri")
+            if isinstance(value, str):
+                track_uri = value.strip()
+                if track_uri:
+                    return track_uri
+        raise APIError(
+            status_code=400,
+            error_type="validation_error",
+            code="invalid_request",
+            message="spotify-play requires a track_uri",
+        )
+
+    def _normalize_optional_device_id(
+        self,
+        arguments: dict[str, object],
+    ) -> str | None:
+        value = arguments.get("device_id")
+        if isinstance(value, str):
+            value = value.strip()
+            if value:
+                return value
+        return None
 
     def _record_tool_execution(
         self,
@@ -1260,6 +1501,81 @@ class ChatService:
             *messages[insert_at:],
         ]
 
+    def _normalize_spotify_results(
+        self,
+        results: list[SpotifyTrackItem],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "name": item.name,
+                "artists": item.artists,
+                "uri": item.uri,
+                "album": item.album,
+                "url": item.external_url,
+            }
+            for item in results
+        ]
+
+    def _augment_messages_with_spotify_results(
+        self,
+        messages: list[ChatMessage],
+        results: list[dict[str, object]],
+    ) -> list[ChatMessage]:
+        lines = [
+            (
+                f"- {result['name']}\n"
+                f"  Artists: {result['artists']}\n"
+                f"  URI: {result['uri']}"
+            )
+            for result in results
+        ]
+        spotify_message = ChatMessage(
+            role="system",
+            content=(
+                "Relevant Spotify tracks:\n"
+                + "\n".join(lines)
+                + "\nUse these results only when they help answer the request."
+            ),
+        )
+        insert_at = 0
+        while insert_at < len(messages) and messages[insert_at].role == "system":
+            insert_at += 1
+        return [
+            *messages[:insert_at],
+            spotify_message,
+            *messages[insert_at:],
+        ]
+
+    def _augment_messages_with_spotify_action(
+        self,
+        *,
+        base_messages: list[ChatMessage],
+        tool_name: str,
+        arguments: dict[str, object],
+    ) -> list[ChatMessage]:
+        argument_lines = [
+            f"{key.replace('_', ' ')}={value}"
+            for key, value in arguments.items()
+            if value is not None
+        ]
+        detail = ", ".join(argument_lines)
+        action_message = ChatMessage(
+            role="system",
+            content=(
+                f"Spotify action completed: {tool_name}. "
+                f"Arguments: {detail}. "
+                "Continue with a normal response."
+            ),
+        )
+        insert_at = 0
+        while insert_at < len(base_messages) and base_messages[insert_at].role == "system":
+            insert_at += 1
+        return [
+            *base_messages[:insert_at],
+            action_message,
+            *base_messages[insert_at:],
+        ]
+
     def _augment_messages_with_search_results(
         self,
         messages: list[ChatMessage],
@@ -1326,13 +1642,25 @@ class ChatService:
         self,
         messages: list[ChatMessage],
     ) -> list[ChatMessage]:
+        tool_examples: list[str] = []
+        if self._settings.web_search_enabled and self._web_search_client is not None:
+            tool_examples.append('{"tool":"web-search","query":"..."}')
+        if self._settings.is_spotify_client_configured():
+            tool_examples.extend(
+                [
+                    '{"tool":"spotify-search","query":"..."}',
+                    '{"tool":"spotify-play","track_uri":"..."}',
+                    '{"tool":"spotify-pause"}',
+                    '{"tool":"spotify-next"}',
+                ]
+            )
+        tools_description = "; ".join(tool_examples) if tool_examples else ""
         planning_message = ChatMessage(
             role="system",
             content=(
                 "You may either answer the user directly or request exactly one tool. "
-                "The only tool currently exposed to planning is web-search. "
-                'If web search is required, reply with only JSON in the form '
-                '{"tool":"web-search","query":"..."} and no other text. '
+                "Return strict JSON for the tool request, and no other text. "
+                f"Supported examples: {tools_description}. "
                 "Otherwise answer the user directly."
             ),
         )
@@ -1427,6 +1755,41 @@ class ChatService:
             if not query:
                 return None
             arguments["query"] = query
+        elif tool_name == "spotify-search":
+            query = arguments.get("query")
+            if not isinstance(query, str):
+                return None
+            query = query.strip()
+            if not query:
+                return None
+            arguments["query"] = query
+        elif tool_name == "spotify-play":
+            track_uri = arguments.get("track_uri")
+            if track_uri is None:
+                track_uri = arguments.get("uri")
+            if not isinstance(track_uri, str):
+                return None
+            track_uri = track_uri.strip()
+            if not track_uri:
+                return None
+            arguments["track_uri"] = track_uri
+            if "uri" in arguments:
+                del arguments["uri"]
+            device_id = arguments.get("device_id")
+            if device_id is not None and (
+                not isinstance(device_id, str) or not device_id.strip()
+            ):
+                return None
+        elif tool_name in {"spotify-pause", "spotify-next"}:
+            if "track_uri" in arguments:
+                del arguments["track_uri"]
+            if "uri" in arguments:
+                del arguments["uri"]
+            device_id = arguments.get("device_id")
+            if device_id is not None and (
+                not isinstance(device_id, str) or not device_id.strip()
+            ):
+                return None
 
         if tool_name not in _SUPPORTED_TOOL_NAMES:
             return None
@@ -1526,10 +1889,14 @@ class ChatService:
     ) -> bool:
         if request.metadata and "web_search" in request.metadata:
             return False
-        if not self._settings.web_search_enabled:
+        if (
+            not self._settings.web_search_enabled
+            and not self._settings.is_spotify_client_configured()
+        ):
             return False
-        if self._web_search_client is None:
-            return False
+        if self._settings.web_search_enabled and self._web_search_client is None:
+            if not self._settings.is_spotify_client_configured():
+                return False
         return self._latest_user_message(request.messages) is not None
 
     def _require_single_embedding(

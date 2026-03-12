@@ -5,6 +5,7 @@ from fastapi import Depends
 
 from app.clients.ollama import OllamaChatClient
 from app.clients.search import WebSearchClient
+from app.clients.spotify import SpotifyClient
 from app.core.config import Settings, get_settings
 from app.migrations import MigrationRunner
 from app.repositories import ChatRepository, PostgresChatRepository
@@ -45,6 +46,21 @@ def get_web_search_client() -> WebSearchClient | None:
     )
 
 
+@lru_cache
+def get_spotify_client() -> SpotifyClient | None:
+    settings = get_settings()
+    if not settings.is_spotify_client_configured():
+        return None
+    return SpotifyClient(
+        base_url=settings.spotify_base_url,
+        access_token=settings.spotify_access_token,
+        client_id=settings.spotify_client_id,
+        client_secret=settings.spotify_client_secret,
+        redirect_uri=settings.spotify_redirect_uri,
+        timeout_seconds=settings.spotify_timeout_seconds,
+    )
+
+
 def get_app_settings() -> Settings:
     return get_settings()
 
@@ -56,12 +72,14 @@ def get_chat_service(
     web_search_client: Annotated[
         WebSearchClient | None, Depends(get_web_search_client)
     ],
+    spotify_client: Annotated[SpotifyClient | None, Depends(get_spotify_client)],
 ) -> ChatService:
     return ChatService(
         settings=settings,
         ollama_client=ollama_client,
         repository=repository,
         web_search_client=web_search_client,
+        spotify_client=spotify_client,
     )
 
 

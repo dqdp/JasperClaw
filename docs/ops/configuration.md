@@ -515,6 +515,67 @@ Used by:
 
 - in-process tools integration layer inside `agent-api`
 
+### `SPOTIFY_ACCESS_TOKEN`
+
+Required: no until Spotify adapters are enabled
+
+Used by:
+
+- in-process tools integration layer inside `agent-api`
+
+Purpose:
+
+- direct OAuth token override used for Spotify playback/search requests
+
+Notes:
+
+- Spotify tools require either a static access token or both `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`.
+- static token mode is explicit and does not auto-refresh.
+
+### `SPOTIFY_BASE_URL`
+
+Required: no until Spotify adapters are enabled
+
+Used by:
+
+- in-process tools integration layer inside `agent-api`
+
+Notes:
+
+- defaults to `https://api.spotify.com`
+
+### `SPOTIFY_TIMEOUT_SECONDS`
+
+Required: no
+
+Used by:
+
+- in-process tools integration layer inside `agent-api`
+
+Purpose:
+
+- timeout budget in seconds for Spotify API calls
+
+Notes:
+
+- defaults to `5`
+
+### `SPOTIFY_SEARCH_TOP_K`
+
+Required: no
+
+Used by:
+
+- in-process tools integration layer inside `agent-api`
+
+Purpose:
+
+- maximum number of Spotify tracks injected into the runtime context
+
+Notes:
+
+- defaults to `3`
+
 ## Speech-related variables
 
 These remain part of the config surface even though real voice delivery comes after the text path stabilizes.
@@ -633,6 +694,10 @@ Additional required only if enabled:
 - `SPOTIFY_CLIENT_ID`
 - `SPOTIFY_CLIENT_SECRET`
 - `SPOTIFY_REDIRECT_URI`
+- `SPOTIFY_ACCESS_TOKEN` (for direct token mode)
+- `SPOTIFY_BASE_URL` (to point to a non-default provider endpoint)
+- `SPOTIFY_TIMEOUT_SECONDS` (if custom timeout is required)
+- `SPOTIFY_SEARCH_TOP_K` (if non-default result limit is required)
 
 ### Voice path
 

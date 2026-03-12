@@ -158,12 +158,13 @@ If a safe tool is selected, `agent-api` may perform one bounded tool step before
 
 Current Tools Slice 2 baseline:
 
-- the only implemented tool is read-only `web-search`
-- `metadata.web_search=true` still forces the existing direct tool path
-- otherwise, when `web-search` is enabled and configured, `agent-api` performs one internal planning pass that may request exactly one `web-search` call
-- search results augment only the runtime prompt, not the canonical stored transcript
+- implemented tools are `web-search` and Spotify actions: `spotify-search`, `spotify-play`, `spotify-pause`, `spotify-next`
+- `metadata.web_search=true` still forces the existing direct web-search path
+- when tools are enabled and configured, `agent-api` performs one internal planning pass that may request exactly one tool directive
+- tool payloads are normalized, and tool results/actions are injected into the runtime prompt only
+- search/search-like results augment only the runtime prompt, not the canonical stored transcript
 - malformed or unknown tool directives are treated as ordinary assistant output, not orchestration errors
-- if model-driven `web-search` fails, `agent-api` runs one final answer pass with a `web-search unavailable` system note instead of failing the core chat request
+- if model-driven tool execution fails, `agent-api` runs one final answer pass with a `Spotify/web-search` unavailable system note instead of failing the core chat request
 - each tool execution is logged and persisted through `tool_executions`
 
 ### 8. Model-run initialization

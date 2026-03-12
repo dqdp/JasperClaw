@@ -107,12 +107,11 @@ Not yet implemented:
 Implemented:
 
 - accepted architectural decision that tools live in-process inside `agent-api` in v1
-- in-process `web-search` policy-gated execution in `agent-api`
+- in-process `web-search` and `spotify-*` policy-gated execution in `agent-api`
 - canonical `tool_executions` persistence and basic tool planning audit
 
 Not yet implemented:
 
-- Spotify adapters
 - Telegram ingress integration (planned as a separate safe bridge to `agent-api`, see roadmap/backlog)
 
 ### Database and memory

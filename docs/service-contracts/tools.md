@@ -42,8 +42,8 @@ The initial v1 tool catalog is intentionally small:
 
 Current Tools Slice 2 baseline:
 
-- only `web-search` is implemented
-- all declared tool IDs exist in policy catalog, but only `web-search` is executable in this milestone
+- `web-search` and Spotify playback/search actions are executable in this slice
+- all declared tool IDs exist in policy catalog
 - tool use remains internal to `agent-api` and is not exposed as a public HTTP API
 - `web-search` may run either through explicit `metadata.web_search=true` or through one bounded internal planning pass inside `POST /v1/chat/completions`
 - the model-driven path is capped at one tool hop per request
