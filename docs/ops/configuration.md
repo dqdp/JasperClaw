@@ -432,6 +432,59 @@ Purpose:
 
 - provider endpoint for search requests
 
+Notes:
+
+- current `web-search` adapter expects `GET {SEARCH_BASE_URL}/search?q=<query>&limit=<k>`
+
+### `WEB_SEARCH_ENABLED`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- enable or disable `web-search` prompt augmentation inside the chat path
+
+Notes:
+
+- defaults to `false`
+- when `false`, `metadata.web_search=true` is treated as a denied optional tool request
+
+### `WEB_SEARCH_TOP_K`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- maximum number of normalized search results injected into the runtime prompt
+
+Notes:
+
+- defaults to `3`
+
+### `WEB_SEARCH_TIMEOUT_SECONDS`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- timeout budget for outbound `web-search` provider calls
+
+Notes:
+
+- defaults to `5`
+
 ### `SPOTIFY_CLIENT_ID`
 
 Required: no until Spotify adapters are enabled

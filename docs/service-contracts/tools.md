@@ -40,6 +40,13 @@ The initial v1 tool catalog is intentionally small:
 - `spotify-pause`
 - `spotify-next`
 
+Current Tools Slice 1 baseline:
+
+- only `web-search` is implemented
+- tool use remains internal to `agent-api` and is not exposed as a public HTTP API
+- `web-search` is invoked only through `POST /v1/chat/completions` with explicit request metadata opt-in
+- tool failures are fail-open relative to the core text response path, but must still be logged and audited
+
 New tool IDs must be stable, explicit, and versioned by name rather than inferred from provider internals.
 
 Each tool registration must also declare policy metadata such as risk class, confirmation requirements, allowed scopes, and audit fields.
@@ -130,6 +137,12 @@ Failure example:
 - Automatic retries are allowed only for safe read-like tools such as `web-search` and `spotify-search`.
 - Automatic retries are not allowed by default for state-changing tools such as `spotify-play`, `spotify-pause`, and `spotify-next`.
 - Tool responses must be normalized before they are exposed to orchestration or persistence.
+
+Current `web-search` adapter baseline:
+
+- provider contract: `GET {SEARCH_BASE_URL}/search?q=<query>&limit=<k>`
+- bearer authentication uses `SEARCH_API_KEY`
+- normalized result items contain `title`, `url`, and `snippet`
 
 ## Error contract
 

@@ -6,6 +6,7 @@ from app.repositories.postgres import (
     MemorySearchHit,
     PostgresChatRepository,
     PersistedMessage,
+    ToolExecutionRecord,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "MemorySearchHit",
     "PostgresChatRepository",
     "PersistedMessage",
+    "ToolExecutionRecord",
 ]

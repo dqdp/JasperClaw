@@ -191,6 +191,12 @@ Current Memory Slice 1 baseline:
 - retrieved memory augments only the runtime prompt, not the canonical stored transcript
 - retrieval failures degrade to `no memory` instead of failing the core text request
 
+Current Tools Slice 1 baseline:
+
+- `metadata.web_search=true` explicitly opts the request into `web-search`
+- `web-search` augments only the runtime prompt, not the canonical stored transcript
+- tool execution failures degrade to `no tool context` instead of failing the core text request
+
 Continuity behavior:
 
 - when a valid canonical conversation hint is present, `agent-api` attempts to continue that conversation

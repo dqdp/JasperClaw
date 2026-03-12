@@ -10,6 +10,7 @@ from app.clients.ollama import (
     OllamaChatResult,
     OllamaChatStreamChunk,
 )
+from app.clients.search import WebSearchClient, WebSearchResultItem
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
@@ -20,6 +21,7 @@ from app.repositories import (
     MemoryRetrievalRecord,
     MemorySearchHit,
     PersistedMessage,
+    ToolExecutionRecord,
 )
 from app.schemas.chat import (
     ChatCompletionChoice,
@@ -69,16 +71,24 @@ class MemoryContext:
     retrieval: MemoryRetrievalRecord | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ToolContext:
+    runtime_messages: list[ChatMessage]
+    execution: ToolExecutionRecord | None = None
+
+
 class ChatService:
     def __init__(
         self,
         settings: Settings,
         ollama_client: OllamaChatClient,
         repository: ChatRepository,
+        web_search_client: WebSearchClient | None = None,
     ) -> None:
         self._settings = settings
         self._ollama_client = ollama_client
         self._repository = repository
+        self._web_search_client = web_search_client
 
     def create_chat_completion(
         self,
@@ -95,13 +105,18 @@ class ChatService:
             request_id=request_id,
             request=request,
         )
+        tool_context = self._prepare_tool_context(
+            request_id=request_id,
+            request=request,
+            base_messages=memory_context.runtime_messages,
+        )
         started_at = datetime.now(timezone.utc)
         runtime_started = perf_counter()
 
         try:
             runtime_result = self._ollama_client.chat(
                 model=profile.runtime_model,
-                messages=memory_context.runtime_messages,
+                messages=tool_context.runtime_messages,
             )
         except APIError as exc:
             completed_at = datetime.now(timezone.utc)
@@ -129,6 +144,14 @@ class ChatService:
                 memory_context=memory_context,
                 created_at=completed_at,
             )
+            self._record_tool_execution(
+                request_id=request_id,
+                conversation_id=(
+                    persistence.conversation_id if persistence is not None else None
+                ),
+                model_run_id=persistence.model_run_id if persistence is not None else None,
+                tool_context=tool_context,
+            )
             raise
 
         completed_at = datetime.now(timezone.utc)
@@ -138,6 +161,7 @@ class ChatService:
             profile=profile,
             conversation_id_hint=resolved_conversation_hint,
             memory_context=memory_context,
+            tool_context=tool_context,
             runtime_result=runtime_result,
             started_at=started_at,
             completed_at=completed_at,
@@ -166,10 +190,15 @@ class ChatService:
             request_id=request_id,
             request=request,
         )
+        tool_context = self._prepare_tool_context(
+            request_id=request_id,
+            request=request,
+            base_messages=memory_context.runtime_messages,
+        )
         runtime_started = perf_counter()
         stream = self._ollama_client.stream_chat(
             model=profile.runtime_model,
-            messages=memory_context.runtime_messages,
+            messages=tool_context.runtime_messages,
         )
 
         try:
@@ -207,6 +236,14 @@ class ChatService:
                 memory_context=memory_context,
                 created_at=completed_at,
             )
+            self._record_tool_execution(
+                request_id=request_id,
+                conversation_id=(
+                    persistence.conversation_id if persistence is not None else None
+                ),
+                model_run_id=persistence.model_run_id if persistence is not None else None,
+                tool_context=tool_context,
+            )
             raise
 
         response_id = f"chatcmpl_{uuid4().hex[:12]}"
@@ -217,6 +254,7 @@ class ChatService:
             profile=profile,
             context=context,
             memory_context=memory_context,
+            tool_context=tool_context,
             started_at=started_at,
             runtime_started=runtime_started,
             first_chunk=first_chunk,
@@ -238,6 +276,7 @@ class ChatService:
         profile: RuntimeProfile,
         context: ConversationContext,
         memory_context: MemoryContext,
+        tool_context: ToolContext,
         started_at: datetime,
         runtime_started: float,
         first_chunk: OllamaChatStreamChunk,
@@ -290,6 +329,12 @@ class ChatService:
                     memory_context=memory_context,
                     created_at=completed_at,
                 )
+                self._record_tool_execution(
+                    request_id=request_id,
+                    conversation_id=persistence.conversation_id,
+                    model_run_id=persistence.model_run_id,
+                    tool_context=tool_context,
+                )
                 self._store_memory_items(
                     request_id=request_id,
                     conversation_id=persistence.conversation_id,
@@ -335,6 +380,14 @@ class ChatService:
                 memory_context=memory_context,
                 created_at=completed_at,
             )
+            self._record_tool_execution(
+                request_id=request_id,
+                conversation_id=(
+                    persistence.conversation_id if persistence is not None else None
+                ),
+                model_run_id=persistence.model_run_id if persistence is not None else None,
+                tool_context=tool_context,
+            )
             raise
 
     def _iter_stream_chunks(
@@ -353,6 +406,7 @@ class ChatService:
         profile: RuntimeProfile,
         conversation_id_hint: str | None,
         memory_context: MemoryContext,
+        tool_context: ToolContext,
         runtime_result: OllamaChatResult,
         started_at: datetime,
         completed_at: datetime,
@@ -388,6 +442,12 @@ class ChatService:
             conversation_id=persistence.conversation_id,
             memory_context=memory_context,
             created_at=completed_at,
+        )
+        self._record_tool_execution(
+            request_id=request_id,
+            conversation_id=persistence.conversation_id,
+            model_run_id=persistence.model_run_id,
+            tool_context=tool_context,
         )
         self._store_memory_items(
             request_id=request_id,
@@ -560,6 +620,176 @@ class ChatService:
                 retrieval=retrieval,
             )
 
+    def _prepare_tool_context(
+        self,
+        *,
+        request_id: str,
+        request: ChatCompletionRequest,
+        base_messages: list[ChatMessage],
+    ) -> ToolContext:
+        if not self._is_web_search_requested(request):
+            return ToolContext(runtime_messages=list(base_messages))
+
+        query_text = self._latest_user_message(request.messages)
+        if not query_text:
+            return ToolContext(runtime_messages=list(base_messages))
+
+        started_at = datetime.now(timezone.utc)
+        tool_started = perf_counter()
+        invocation_id = f"tool_{uuid4().hex[:12]}"
+
+        if not self._settings.web_search_enabled:
+            execution = ToolExecutionRecord(
+                invocation_id=invocation_id,
+                tool_name="web-search",
+                status="failed",
+                arguments={
+                    "query": query_text,
+                    "limit": self._settings.web_search_top_k,
+                },
+                latency_ms=0.0,
+                started_at=started_at,
+                completed_at=started_at,
+                adapter_name="search-http",
+                policy_decision="deny",
+                error_type="policy_error",
+                error_code="tool_not_allowed",
+            )
+            self._log_tool_execution(request_id=request_id, execution=execution)
+            return ToolContext(runtime_messages=list(base_messages), execution=execution)
+
+        if self._web_search_client is None:
+            completed_at = datetime.now(timezone.utc)
+            execution = ToolExecutionRecord(
+                invocation_id=invocation_id,
+                tool_name="web-search",
+                status="failed",
+                arguments={
+                    "query": query_text,
+                    "limit": self._settings.web_search_top_k,
+                },
+                latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                started_at=started_at,
+                completed_at=completed_at,
+                adapter_name="search-http",
+                policy_decision="allow",
+                error_type="dependency_unavailable",
+                error_code="tool_not_configured",
+            )
+            self._log_tool_execution(request_id=request_id, execution=execution)
+            return ToolContext(runtime_messages=list(base_messages), execution=execution)
+
+        try:
+            raw_results = self._web_search_client.search(
+                query=query_text,
+                limit=self._settings.web_search_top_k,
+            )
+            results = self._normalize_search_results(raw_results)
+            completed_at = datetime.now(timezone.utc)
+            execution = ToolExecutionRecord(
+                invocation_id=invocation_id,
+                tool_name="web-search",
+                status="completed",
+                arguments={
+                    "query": query_text,
+                    "limit": self._settings.web_search_top_k,
+                },
+                output={
+                    "results": [
+                        {
+                            "title": result.title,
+                            "url": result.url,
+                            "snippet": result.snippet,
+                        }
+                        for result in results
+                    ]
+                },
+                latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                started_at=started_at,
+                completed_at=completed_at,
+                adapter_name="search-http",
+                provider="search-provider",
+                policy_decision="allow",
+            )
+            self._log_tool_execution(request_id=request_id, execution=execution)
+            if not results:
+                return ToolContext(
+                    runtime_messages=list(base_messages),
+                    execution=execution,
+                )
+            return ToolContext(
+                runtime_messages=self._augment_messages_with_search_results(
+                    base_messages,
+                    results,
+                ),
+                execution=execution,
+            )
+        except APIError as exc:
+            completed_at = datetime.now(timezone.utc)
+            execution = ToolExecutionRecord(
+                invocation_id=invocation_id,
+                tool_name="web-search",
+                status="failed",
+                arguments={
+                    "query": query_text,
+                    "limit": self._settings.web_search_top_k,
+                },
+                latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                started_at=started_at,
+                completed_at=completed_at,
+                adapter_name="search-http",
+                provider="search-provider",
+                policy_decision="allow",
+                error_type=exc.error_type,
+                error_code=exc.code,
+            )
+            self._log_tool_execution(request_id=request_id, execution=execution)
+            return ToolContext(runtime_messages=list(base_messages), execution=execution)
+
+    def _record_tool_execution(
+        self,
+        *,
+        request_id: str,
+        conversation_id: str | None,
+        model_run_id: str | None,
+        tool_context: ToolContext,
+    ) -> None:
+        if tool_context.execution is None or conversation_id is None:
+            return
+
+        storage_started = perf_counter()
+        try:
+            self._repository.record_tool_execution(
+                conversation_id=conversation_id,
+                request_id=request_id,
+                model_run_id=model_run_id,
+                tool_execution=tool_context.execution,
+            )
+            log_event(
+                "chat_tool_audit_completed",
+                request_id=request_id,
+                outcome="success",
+                duration_ms=round((perf_counter() - storage_started) * 1000, 2),
+                conversation_id=conversation_id,
+                model_run_id=model_run_id,
+                tool_name=tool_context.execution.tool_name,
+                tool_status=tool_context.execution.status,
+                invocation_id=tool_context.execution.invocation_id,
+            )
+        except APIError as exc:
+            log_event(
+                "chat_tool_audit_completed",
+                level=logging.WARNING,
+                request_id=request_id,
+                outcome="error",
+                duration_ms=round((perf_counter() - storage_started) * 1000, 2),
+                conversation_id=conversation_id,
+                model_run_id=model_run_id,
+                tool_name=tool_context.execution.tool_name,
+                error_type=exc.error_type,
+                error_code=exc.code,
+            )
+
     def _record_memory_retrieval(
         self,
         *,
@@ -601,6 +831,25 @@ class ChatService:
                 error_type=exc.error_type,
                 error_code=exc.code,
             )
+
+    def _log_tool_execution(
+        self,
+        *,
+        request_id: str,
+        execution: ToolExecutionRecord,
+    ) -> None:
+        level = logging.INFO if execution.status == "completed" else logging.WARNING
+        log_event(
+            "chat_tool_completed",
+            level=level,
+            request_id=request_id,
+            tool_name=execution.tool_name,
+            invocation_id=execution.invocation_id,
+            outcome=execution.status,
+            duration_ms=execution.latency_ms,
+            error_type=execution.error_type,
+            error_code=execution.error_code,
+        )
 
     def _store_memory_items(
         self,
@@ -720,12 +969,85 @@ class ChatService:
             *messages[insert_at:],
         ]
 
+    def _augment_messages_with_search_results(
+        self,
+        messages: list[ChatMessage],
+        results: list[WebSearchResultItem],
+    ) -> list[ChatMessage]:
+        result_lines = "\n".join(
+            (
+                f"- {result.title}\n"
+                f"  URL: {result.url}\n"
+                f"  Snippet: {result.snippet}"
+            )
+            for result in results
+        )
+        search_message = ChatMessage(
+            role="system",
+            content=(
+                "Relevant web search results:\n"
+                f"{result_lines}\n"
+                "Use these results only when they help answer the current request. "
+                "Cite the source URLs in the answer when appropriate."
+            ),
+        )
+        insert_at = 0
+        while insert_at < len(messages) and messages[insert_at].role == "system":
+            insert_at += 1
+        return [
+            *messages[:insert_at],
+            search_message,
+            *messages[insert_at:],
+        ]
+
     def _latest_user_message(self, messages: list[ChatMessage]) -> str | None:
         for message in reversed(messages):
             content = message.content.strip()
             if message.role == "user" and content:
                 return content
         return None
+
+    def _normalize_search_results(
+        self,
+        results: list[object],
+    ) -> list[WebSearchResultItem]:
+        normalized_results: list[WebSearchResultItem] = []
+        for result in results:
+            if isinstance(result, WebSearchResultItem):
+                normalized_results.append(result)
+                continue
+            if isinstance(result, dict):
+                title = result.get("title")
+                url = result.get("url")
+                snippet = result.get("snippet")
+                if (
+                    isinstance(title, str)
+                    and isinstance(url, str)
+                    and isinstance(snippet, str)
+                ):
+                    normalized_results.append(
+                        WebSearchResultItem(
+                            title=title,
+                            url=url,
+                            snippet=snippet,
+                        )
+                    )
+                    continue
+            raise APIError(
+                status_code=500,
+                error_type="internal_error",
+                code="tool_bad_result",
+                message="Search adapter returned an invalid result",
+            )
+        return normalized_results
+
+    def _is_web_search_requested(self, request: ChatCompletionRequest) -> bool:
+        if not request.metadata:
+            return False
+        value = request.metadata.get("web_search")
+        if not value:
+            return False
+        return value.strip().casefold() in {"1", "true", "yes", "on"}
 
     def _require_single_embedding(
         self,

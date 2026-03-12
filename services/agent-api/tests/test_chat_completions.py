@@ -10,6 +10,7 @@ from app.repositories.postgres import (
     ConversationContext,
     MemorySearchHit,
     PersistedMessage,
+    ToolExecutionRecord,
 )
 from app.schemas.chat import ChatCompletionRequest
 from app.services.chat import ChatService
@@ -104,6 +105,18 @@ class _FakeClient:
         raise AssertionError("Unexpected GET in chat completion test")
 
 
+class _FakeSearchClient:
+    results = []
+    error = None
+    calls = []
+
+    def search(self, *, query: str, limit: int):
+        _FakeSearchClient.calls.append({"query": query, "limit": limit})
+        if _FakeSearchClient.error is not None:
+            raise _FakeSearchClient.error
+        return list(_FakeSearchClient.results)
+
+
 def _patch_http_client(monkeypatch):
     monkeypatch.setattr("app.clients.ollama.httpx.Client", _FakeClient)
     _FakeClient.error = None
@@ -115,6 +128,13 @@ def _patch_http_client(monkeypatch):
     _FakeClient.last_stream_json = None
     _FakeClient.embed_calls = []
     deps.get_ollama_client.cache_clear()
+
+
+def _patch_search_client():
+    _FakeSearchClient.results = []
+    _FakeSearchClient.error = None
+    _FakeSearchClient.calls = []
+    deps.get_web_search_client.cache_clear()
 
 
 class _FakeRepository:
@@ -135,6 +155,7 @@ class _FakeRepository:
         self.failed_calls = []
         self.retrieval_calls = []
         self.store_memory_calls = []
+        self.tool_execution_calls = []
 
     def prepare_conversation(self, **kwargs):
         self.prepare_calls.append(kwargs)
@@ -207,6 +228,9 @@ class _FakeRepository:
 
     def store_memory_items(self, **kwargs):
         self.store_memory_calls.append(kwargs)
+
+    def record_tool_execution(self, **kwargs):
+        self.tool_execution_calls.append(kwargs)
 
 
 def _chat_payload(
@@ -292,6 +316,119 @@ def test_chat_completions_streaming_success(client, monkeypatch, auth_headers) -
     assert len(repository.success_calls) == 1
     assert repository.success_calls[0]["response_content"] == "Runtime response"
     assert repository.success_calls[0]["conversation_id_hint"] == "conv_test"
+
+
+def test_chat_completions_non_streaming_web_search_augments_runtime_prompt(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeSearchClient.results = [
+        {
+            "title": "OpenAI API changelog",
+            "url": "https://example.test/changelog",
+            "snippet": "Latest API updates and release notes.",
+        }
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(metadata={"web_search": "true"}),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert _FakeSearchClient.calls == [{"query": "Hello", "limit": 3}]
+    runtime_messages = _FakeClient.last_json["messages"]
+    assert runtime_messages[0]["role"] == "system"
+    assert "Relevant web search results" in runtime_messages[0]["content"]
+    assert "OpenAI API changelog" in runtime_messages[0]["content"]
+    assert "https://example.test/changelog" in runtime_messages[0]["content"]
+    assert runtime_messages[1:] == [{"role": "user", "content": "Hello"}]
+    assert len(repository.tool_execution_calls) == 1
+    assert repository.tool_execution_calls[0]["conversation_id"] == "conv_test"
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert isinstance(tool_execution, ToolExecutionRecord)
+    assert tool_execution.tool_name == "web-search"
+    assert tool_execution.status == "completed"
+    assert tool_execution.arguments == {"query": "Hello", "limit": 3}
+    assert tool_execution.error_code is None
+
+
+def test_chat_completions_streaming_web_search_augments_runtime_prompt(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeSearchClient.results = [
+        {
+            "title": "OpenAI API changelog",
+            "url": "https://example.test/changelog",
+            "snippet": "Latest API updates and release notes.",
+        }
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(stream=True, metadata={"web_search": "true"}),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    runtime_messages = _FakeClient.last_stream_json["messages"]
+    assert runtime_messages[0]["role"] == "system"
+    assert "Relevant web search results" in runtime_messages[0]["content"]
+    assert "OpenAI API changelog" in runtime_messages[0]["content"]
+    assert len(repository.tool_execution_calls) == 1
+    assert repository.tool_execution_calls[0]["tool_execution"].status == "completed"
+
+
+def test_chat_completions_web_search_failure_degrades_without_breaking_chat(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeSearchClient.error = APIError(
+        status_code=504,
+        error_type="dependency_unavailable",
+        code="dependency_timeout",
+        message="Search provider timed out",
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(metadata={"web_search": "true"}),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert _FakeClient.last_json["messages"] == [{"role": "user", "content": "Hello"}]
+    assert len(repository.tool_execution_calls) == 1
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.status == "failed"
+    assert tool_execution.error_code == "dependency_timeout"
+    assert tool_execution.output is None
 
 
 def test_chat_completions_non_streaming_memory_retrieval_augments_runtime_prompt(

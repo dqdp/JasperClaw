@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol, Sequence
@@ -38,6 +39,23 @@ class MemoryRetrievalRecord:
     top_k: int
     latency_ms: float
     hits: tuple[MemorySearchHit, ...] = ()
+    error_type: str | None = None
+    error_code: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ToolExecutionRecord:
+    invocation_id: str
+    tool_name: str
+    status: str
+    arguments: dict[str, object]
+    latency_ms: float
+    started_at: datetime
+    completed_at: datetime
+    output: dict[str, object] | None = None
+    adapter_name: str | None = None
+    provider: str | None = None
+    policy_decision: str | None = None
     error_type: str | None = None
     error_code: str | None = None
 
@@ -128,6 +146,15 @@ class ChatRepository(Protocol):
         embeddings: Sequence[Sequence[float]],
         embedding_model: str,
         created_at: datetime,
+    ) -> None: ...
+
+    def record_tool_execution(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        model_run_id: str | None,
+        tool_execution: ToolExecutionRecord,
     ) -> None: ...
 
 
@@ -474,6 +501,69 @@ class PostgresChatRepository:
                             timestamp,
                         ),
                     )
+
+        self._execute(write)
+
+    def record_tool_execution(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        model_run_id: str | None,
+        tool_execution: ToolExecutionRecord,
+    ) -> None:
+        def write(conn: psycopg.Connection) -> None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO tool_executions (
+                        id,
+                        conversation_id,
+                        model_run_id,
+                        request_id,
+                        tool_name,
+                        status,
+                        started_at,
+                        finished_at,
+                        latency_ms,
+                        error_type,
+                        error_code,
+                        request_payload_json,
+                        response_payload_json,
+                        policy_decision,
+                        adapter_name,
+                        provider,
+                        created_at
+                    )
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s::jsonb, %s::jsonb, %s, %s, %s, %s
+                    )
+                    """,
+                    (
+                        tool_execution.invocation_id,
+                        conversation_id,
+                        model_run_id,
+                        request_id,
+                        tool_execution.tool_name,
+                        tool_execution.status,
+                        tool_execution.started_at.astimezone(timezone.utc),
+                        tool_execution.completed_at.astimezone(timezone.utc),
+                        tool_execution.latency_ms,
+                        tool_execution.error_type,
+                        tool_execution.error_code,
+                        json.dumps(tool_execution.arguments),
+                        (
+                            json.dumps(tool_execution.output)
+                            if tool_execution.output is not None
+                            else None
+                        ),
+                        tool_execution.policy_decision,
+                        tool_execution.adapter_name,
+                        tool_execution.provider,
+                        tool_execution.completed_at.astimezone(timezone.utc),
+                    ),
+                )
 
         self._execute(write)
 

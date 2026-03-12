@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import datetime, timezone
+import json
 import math
 
 from fastapi.testclient import TestClient
@@ -277,6 +278,56 @@ class _InMemoryCursor:
             self._rows = []
             return
 
+        if normalized.startswith(
+            "INSERT INTO tool_executions ( id, conversation_id, model_run_id, request_id, tool_name, status, started_at, finished_at, latency_ms, error_type, error_code, request_payload_json, response_payload_json, policy_decision, adapter_name, provider, created_at )"
+        ):
+            (
+                tool_execution_id,
+                conversation_id,
+                model_run_id,
+                request_id,
+                tool_name,
+                status,
+                started_at,
+                finished_at,
+                latency_ms,
+                error_type,
+                error_code,
+                request_payload_json,
+                response_payload_json,
+                policy_decision,
+                adapter_name,
+                provider,
+                created_at,
+            ) = params
+            self._connection.tool_executions.append(
+                {
+                    "id": tool_execution_id,
+                    "conversation_id": conversation_id,
+                    "model_run_id": model_run_id,
+                    "request_id": request_id,
+                    "tool_name": tool_name,
+                    "status": status,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                    "latency_ms": latency_ms,
+                    "error_type": error_type,
+                    "error_code": error_code,
+                    "request_payload_json": json.loads(request_payload_json),
+                    "response_payload_json": (
+                        json.loads(response_payload_json)
+                        if response_payload_json is not None
+                        else None
+                    ),
+                    "policy_decision": policy_decision,
+                    "adapter_name": adapter_name,
+                    "provider": provider,
+                    "created_at": created_at,
+                }
+            )
+            self._rows = []
+            return
+
         if normalized.startswith("UPDATE conversations SET updated_at = %s WHERE id = %s"):
             updated_at, conversation_id = params
             self._connection.conversations[conversation_id]["updated_at"] = updated_at
@@ -300,6 +351,7 @@ class _InMemoryConnection:
         self.memory_items: list[dict] = []
         self.retrieval_runs: list[dict] = []
         self.retrieval_hits: list[dict] = []
+        self.tool_executions: list[dict] = []
 
     def __enter__(self):
         return self
@@ -395,6 +447,18 @@ class _MemoryAwareClient:
         if isinstance(input_text, str):
             return [[1.0, 0.0]]
         return [[1.0, 0.0] for _ in input_text]
+
+
+class _SearchStub:
+    def search(self, *, query: str, limit: int):
+        _ = query, limit
+        return [
+            {
+                "title": "OpenAI API changelog",
+                "url": "https://example.test/changelog",
+                "snippet": "Latest API updates and release notes.",
+            }
+        ]
 
 
 def test_streaming_chat_flow_persists_success_with_real_repository(
@@ -542,3 +606,49 @@ def test_non_streaming_memory_flow_records_retrieval_and_materialization(
     assert connection.retrieval_hits[0]["memory_item_id"] == "mem_seed"
     assert len(connection.memory_items) == 2
     assert connection.memory_items[1]["content"] == "My favorite color is blue and I live in Berlin."
+
+
+def test_non_streaming_web_search_flow_records_tool_execution_audit(
+    monkeypatch, auth_headers
+) -> None:
+    connection = _InMemoryConnection()
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    runtime_client = _MemoryAwareClient()
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_ollama_client] = lambda: runtime_client
+    client.app.dependency_overrides[deps.get_web_search_client] = lambda: _SearchStub()
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": False,
+            "metadata": {"web_search": "true"},
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert runtime_client.last_chat_messages is not None
+    assert runtime_client.last_chat_messages[0].role == "system"
+    assert "Relevant web search results" in runtime_client.last_chat_messages[0].content
+    assert "OpenAI API changelog" in runtime_client.last_chat_messages[0].content
+    assert len(connection.tool_executions) == 1
+    assert connection.tool_executions[0]["tool_name"] == "web-search"
+    assert connection.tool_executions[0]["status"] == "completed"
+    assert connection.tool_executions[0]["request_payload_json"] == {
+        "query": "Hello",
+        "limit": 3,
+    }
+    assert connection.tool_executions[0]["response_payload_json"]["results"][0]["url"] == (
+        "https://example.test/changelog"
+    )

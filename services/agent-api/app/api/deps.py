@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import Depends
 
 from app.clients.ollama import OllamaChatClient
+from app.clients.search import WebSearchClient
 from app.core.config import Settings, get_settings
 from app.migrations import MigrationRunner
 from app.repositories import ChatRepository, PostgresChatRepository
@@ -32,6 +33,18 @@ def get_chat_repository() -> ChatRepository:
     return PostgresChatRepository(database_url=settings.database_url)
 
 
+@lru_cache
+def get_web_search_client() -> WebSearchClient | None:
+    settings = get_settings()
+    if not settings.search_base_url or not settings.search_api_key:
+        return None
+    return WebSearchClient(
+        base_url=settings.search_base_url,
+        api_key=settings.search_api_key,
+        timeout_seconds=settings.web_search_timeout_seconds,
+    )
+
+
 def get_app_settings() -> Settings:
     return get_settings()
 
@@ -40,11 +53,15 @@ def get_chat_service(
     settings: Annotated[Settings, Depends(get_app_settings)],
     ollama_client: Annotated[OllamaChatClient, Depends(get_ollama_client)],
     repository: Annotated[ChatRepository, Depends(get_chat_repository)],
+    web_search_client: Annotated[
+        WebSearchClient | None, Depends(get_web_search_client)
+    ],
 ) -> ChatService:
     return ChatService(
         settings=settings,
         ollama_client=ollama_client,
         repository=repository,
+        web_search_client=web_search_client,
     )
 
 

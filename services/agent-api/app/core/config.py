@@ -19,6 +19,11 @@ class Settings:
     memory_enabled: bool = False
     memory_top_k: int = 3
     memory_min_score: float = 0.35
+    search_base_url: str = ""
+    search_api_key: str = ""
+    web_search_enabled: bool = False
+    web_search_top_k: int = 3
+    web_search_timeout_seconds: float = 5.0
     model_owner: str = "local-assistant"
 
     @property
@@ -71,4 +76,11 @@ def get_settings() -> Settings:
         memory_enabled=_get_bool_env("MEMORY_ENABLED", default=False),
         memory_top_k=int(os.getenv("MEMORY_TOP_K", "3")),
         memory_min_score=float(os.getenv("MEMORY_MIN_SCORE", "0.35")),
+        search_base_url=os.getenv("SEARCH_BASE_URL", "").strip(),
+        search_api_key=(os.getenv("SEARCH_API_KEY", "") or "").strip(),
+        web_search_enabled=_get_bool_env("WEB_SEARCH_ENABLED", default=False),
+        web_search_top_k=int(os.getenv("WEB_SEARCH_TOP_K", "3")),
+        web_search_timeout_seconds=float(
+            os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")
+        ),
     )

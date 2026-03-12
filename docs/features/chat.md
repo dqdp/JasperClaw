@@ -152,7 +152,19 @@ Current Memory Slice 1 baseline:
 - retrieval failures degrade to `no memory` and do not fail the core chat request
 - retrieval audit is persisted after canonical chat persistence succeeds or fails
 
-### 7. Model-run initialization
+### 7. Optional tool context
+
+If an explicitly enabled safe tool is requested, `agent-api` may perform tool execution before the model call and inject the normalized result into the runtime prompt.
+
+Current Tools Slice 1 baseline:
+
+- the only implemented tool is read-only `web-search`
+- tool use is explicit via `metadata.web_search=true`
+- search results are injected as an additional `system` message for runtime prompt assembly only
+- tool failures degrade to `no tool context` and do not fail the core chat request
+- each tool execution is logged and persisted through `tool_executions`
+
+### 8. Model-run initialization
 
 Before invoking `Ollama`, `agent-api` creates a `model_runs` record or otherwise reserves audit state for the attempt.
 
@@ -165,7 +177,7 @@ At minimum the model-run audit should capture:
 - start time
 - initial status
 
-### 8. Runtime invocation
+### 9. Runtime invocation
 
 `agent-api` invokes `Ollama` through the runtime client.
 
@@ -177,7 +189,7 @@ This step must:
 
 If the runtime is unavailable, the request fails explicitly. It must not silently fall back to a different model.
 
-### 9. Assistant response materialization
+### 10. Assistant response materialization
 
 On success, `agent-api` materializes the assistant output into the canonical transcript model.
 
@@ -196,7 +208,7 @@ Current Memory Slice 1 baseline:
 - memory candidates are conservative: short prompts and question-shaped turns are skipped
 - memory write failures are logged but do not roll back the canonical chat success path
 
-### 10. Response adaptation
+### 11. Response adaptation
 
 `agent-api` converts the internal result back into an OpenAI-compatible response for `Open WebUI`.
 
@@ -251,6 +263,7 @@ Minimum events:
 - `profile_resolved`
 - `conversation_resolved`
 - `retrieval_started` and `retrieval_completed` when retrieval is enabled
+- `tool_completed` and tool audit completion when a tool is explicitly requested
 - `model_run_started`
 - `dependency_call_completed`
 - `persistence_write_completed`

@@ -2,6 +2,7 @@ import json
 import logging
 
 from app.api import deps
+from app.core.config import get_settings
 from app.core.logging import log_event
 from app.services.readiness import ReadinessResult
 
@@ -9,8 +10,10 @@ from tests.test_chat_completions import (
     _FakeClient,
     _FakeRepository,
     _FakeResponse,
+    _FakeSearchClient,
     _chat_payload,
     _patch_http_client,
+    _patch_search_client,
 )
 
 
@@ -62,6 +65,61 @@ def test_chat_request_emits_structured_events(
     storage_event = next(event for event in events if event["event"] == "chat_storage_completed")
     assert storage_event["request_id"] == "req_testobs"
     assert storage_event["outcome"] == "success"
+
+
+def test_chat_request_emits_tool_events_when_web_search_runs(
+    client, monkeypatch, caplog, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.error = None
+    _FakeClient.response = _FakeResponse(
+        200,
+        {
+            "message": {"role": "assistant", "content": "Runtime response"},
+            "prompt_eval_count": 11,
+            "eval_count": 7,
+        },
+    )
+    _FakeSearchClient.results = [
+        {
+            "title": "OpenAI API changelog",
+            "url": "https://example.test/changelog",
+            "snippet": "Latest API updates and release notes.",
+        }
+    ]
+
+    with caplog.at_level(logging.INFO, logger="agent_api"):
+        response = client.post(
+            "/v1/chat/completions",
+            json=_chat_payload(metadata={"web_search": "true"}),
+            headers={**auth_headers, "X-Request-ID": "req_toolobs"},
+        )
+
+    assert response.status_code == 200
+    events = _events(caplog)
+    names = [event["event"] for event in events]
+    assert "chat_tool_completed" in names
+    assert "chat_tool_audit_completed" in names
+
+    tool_event = next(event for event in events if event["event"] == "chat_tool_completed")
+    assert tool_event["request_id"] == "req_toolobs"
+    assert tool_event["tool_name"] == "web-search"
+    assert tool_event["outcome"] == "completed"
+
+    audit_event = next(
+        event for event in events if event["event"] == "chat_tool_audit_completed"
+    )
+    assert audit_event["request_id"] == "req_toolobs"
+    assert audit_event["tool_name"] == "web-search"
+    assert audit_event["outcome"] == "success"
 
 
 def test_readyz_emits_readiness_log(client, caplog) -> None:
