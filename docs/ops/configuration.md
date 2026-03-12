@@ -797,6 +797,26 @@ Notes:
 
 - defaults to `4000`
 
+### `TELEGRAM_ALLOWED_COMMANDS`
+
+Required: no
+
+Used by:
+
+- `telegram-ingress`
+
+Purpose:
+
+- comma-separated allowlist for Telegram slash commands
+
+Notes:
+
+- when set, only matching commands are forwarded to `agent-api`
+- matching is case-insensitive and supports commands with optional `@botname` suffix
+- messages starting with `/` are considered commands; all others are treated as free-form text
+- example: `/help,/status,/retry`
+- defaults to disabled (empty), meaning no command filtering is enforced
+
 ### `AGENT_API_MODEL`
 
 Required: no

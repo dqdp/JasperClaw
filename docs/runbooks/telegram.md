@@ -23,6 +23,7 @@ This runbook separates:
   - webhook secret token verification.
 - Every accepted user message is forwarded to `agent-api` and response is sent back to the same chat.
 - `telegram-ingress` health is exposed via `GET /healthz`.
+- Optional slash-command allowlist is supported via `TELEGRAM_ALLOWED_COMMANDS`.
 
 Что не реализовано сейчас:
 
@@ -75,15 +76,20 @@ and run with long polling fallback.
 ## Command handling (what to decide in v1)
 
 По умолчанию любая текстовая команда проходит как обычный user message.
+When `TELEGRAM_ALLOWED_COMMANDS` is configured, commands outside that allowlist are dropped before the model path.
 
 Рекомендуется внедрять минимальную прослойку:
 
 - explicit routing for bot commands (например `/status`, `/help`, `/ask`, `/retry`),
-- whitelist проверку допустимых команд,
-- all other free-form texts as normal chat requests,
-- mapping command outcomes into model metadata (без добавления secrets в prompt).
+- allowlist-проверка допустимых команд до `agent-api`,
+- free-form texts are treated as normal chat requests.
 
-Это должно контролироваться до вызова `agent-api`.
+Текущее поведение:
+
+- slash-команда определяется как первое слово, начинающееся с `/`;
+- если `TELEGRAM_ALLOWED_COMMANDS` заполнен, разрешённые команды проходят в `agent-api`;
+- неизвестные команды возвращают `command_not_allowed`;
+- free-form сообщения и разрешённые команды продолжают идти в модель.
 
 ## Alerting via Telegram
 
@@ -147,4 +153,4 @@ curl -s -X POST \
 - Не используйте Telegram API credentials в Open WebUI.
 - Не добавляйте внешние secrets в prompt.
 - Не обрабатывайте side-effect actions напрямую из raw текста без policy.
-
+- Команда из Telegram (в т.ч. `/command`) должна быть валидирована локальной политикой до вызова `agent-api`; модель видит уже очищенный вход.

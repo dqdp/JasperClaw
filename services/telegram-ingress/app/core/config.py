@@ -52,6 +52,23 @@ def _get_bool_env(name: str, default: bool) -> bool:
     raise ValueError(f"invalid boolean env var {name}: {raw}")
 
 
+def _get_command_list_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+
+    commands: list[str] = []
+    for command in raw.split(","):
+        normalized = command.strip().lower()
+        if not normalized:
+            continue
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        commands.append(normalized)
+
+    return tuple(commands)
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     # Canonical chat path in agent-api.
@@ -85,6 +102,7 @@ class Settings:
 
     # Optional operational guardrails.
     max_reply_chars: int = 4096
+    telegram_allowed_commands: tuple[str, ...] = ()
 
     def is_operational(self) -> bool:
         return bool(self.telegram_bot_token and self.agent_api_key)
@@ -114,4 +132,8 @@ def get_settings() -> Settings:
         telegram_rate_limit_global=_get_int_env("TELEGRAM_RATE_LIMIT_GLOBAL", 500),
         telegram_max_input_chars=_get_int_env("TELEGRAM_MAX_INPUT_CHARS", 4000),
         max_reply_chars=_get_int_env("TELEGRAM_MAX_REPLY_CHARS", 4096),
+        telegram_allowed_commands=_get_command_list_env(
+            "TELEGRAM_ALLOWED_COMMANDS",
+            (),
+        ),
     )

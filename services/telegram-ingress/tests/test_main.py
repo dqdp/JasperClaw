@@ -187,6 +187,72 @@ def test_webhook_processes_text_update() -> None:
     assert telegram_client.sent_messages == [(42, "ok")]
 
 
+def test_webhook_rejects_unknown_command_when_command_allowlist_is_enabled() -> None:
+    settings = _operational_settings({"telegram_allowed_commands": ("/help", "/status")})
+    client, telegram_client, agent_client = _create_client(settings=settings)
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 600,
+            "message": {"message_id": 7, "chat": {"id": 77}, "text": "/delete all data"},
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ignored"
+    assert response.json()["reason"] == "command_not_allowed"
+    assert not telegram_client.sent_messages
+    assert not agent_client.calls
+
+
+def test_webhook_processes_allowed_command_when_command_allowlist_is_enabled() -> None:
+    settings = _operational_settings({"telegram_allowed_commands": ("/help", "/status")})
+    client, telegram_client, agent_client = _create_client(settings=settings)
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 601,
+            "message": {
+                "message_id": 8,
+                "chat": {"id": 77},
+                "text": "/STATUS please",
+            },
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "processed"
+    assert data["chat_id"] == 77
+    assert data["message_id"] == 8
+    assert data["update_id"] == 601
+    assert agent_client.calls == [
+        {"model": "assistant-fast", "text": "/STATUS please", "conversation_id": "telegram:77"},
+    ]
+    assert telegram_client.sent_messages == [(77, "ok")]
+
+
+def test_webhook_processes_command_with_bot_username_when_allowed() -> None:
+    settings = _operational_settings({"telegram_allowed_commands": ("/status",)})
+    client, telegram_client, agent_client = _create_client(settings=settings)
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 602,
+            "message": {
+                "message_id": 9,
+                "chat": {"id": 77},
+                "text": "/status@acme_bot now",
+            },
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "processed"
+    assert agent_client.calls == [
+        {"model": "assistant-fast", "text": "/status@acme_bot now", "conversation_id": "telegram:77"},
+    ]
+    assert telegram_client.sent_messages == [(77, "ok")]
+
+
 def test_webhook_ignores_duplicate_update() -> None:
     settings = _operational_settings({})
     client, telegram_client, agent_client = _create_client(settings=settings)

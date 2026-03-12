@@ -154,6 +154,15 @@ class TelegramBridgeService:
         if update is None:
             return WebhookResult.ignored(reason="message not text or missing chat")
 
+        if not self._is_command_allowed(update.text):
+            return WebhookResult(
+                status="ignored",
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                reason="command_not_allowed",
+            )
+
         if len(update.text) > self._settings.telegram_max_input_chars:
             return WebhookResult(
                 status="ignored",
@@ -267,6 +276,28 @@ class TelegramBridgeService:
         if isinstance(caption, str):
             return caption.strip()
         return ""
+
+    def _extract_command(self, text: str) -> str | None:
+        stripped = text.strip()
+        if not stripped.startswith("/"):
+            return None
+
+        command_token = stripped.split(maxsplit=1)[0]
+        if not command_token or command_token == "/":
+            return None
+
+        return command_token.split("@", 1)[0].lower()
+
+    def _is_command_allowed(self, text: str) -> bool:
+        allowed_commands = self._settings.telegram_allowed_commands
+        if not allowed_commands:
+            return True
+
+        command = self._extract_command(text)
+        if command is None:
+            return True
+
+        return command in allowed_commands
 
     def _coerce_int(
         self, source: object, default: int | None, key: str | None = None
