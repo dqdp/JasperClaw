@@ -92,20 +92,23 @@ Add durable assistant memory and typed tool execution without bypassing the cont
 - tool executions are auditable
 - retrieval materially influences responses
 
-### Planned Telegram channel extension (not in current milestone)
+### Telegram channel extension status
 
-The next integration axis is adding Telegram as an external ingress channel to the same canonical `agent-api` control plane.
+Telegram ingress now exists as an implemented adjunct channel to the same canonical `agent-api` control plane, even though it is still outside the formal Milestone 2 exit criteria.
 
-- the initial phase is intentionally non-intrusive: Telegram receives messages, forwards them as normalized chat requests to `/v1/chat/completions`, and returns responses back to the chat
-- no client-to-client tool bypass; the full request path continues to flow through `agent-api`
-- tool-like side effects (if/when added later) remain behind typed capabilities and policy gates
+Current baseline:
 
-Safe integration is a hard requirement and will be enforced in design, policy, and deployment docs before implementation:
+- Telegram updates are normalized into `POST /v1/chat/completions` requests and responses are sent back to the originating chat
+- per-chat conversation reuse is handled in the bridge layer
+- webhook registration and long-polling fallback are both supported
+- operational alert relay is available through a dedicated bot token and auth token
+- no client-to-client tool bypass; Telegram-originated tool actions remain behind typed capabilities and are currently denied by policy
+- request correlation and audit continuity are preserved across `telegram-ingress` and `agent-api`
 
-- no raw provider calls from Telegram handlers
-- no arbitrary command execution
-- explicit approval and audit controls for any `R3`-class action
-- scope-restricted credentials and explicit allowlists
+Remaining hardening focus:
+
+- add richer delivery policies and priority handling for operational alert fanout
+- expand command/approval behavior only when a concrete non-chat operational need justifies it
 
 ## Milestone 3: Voice and Hardening
 

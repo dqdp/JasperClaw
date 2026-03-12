@@ -54,21 +54,27 @@ New tool IDs must be stable, explicit, and versioned by name rather than inferre
 
 Each tool registration must also declare policy metadata such as risk class, confirmation requirements, allowed scopes, and audit fields.
 
-## Planned Telegram integration
+## Current Telegram integration baseline
 
-Telegram is planned as an external ingress channel, not a replacement for the canonical client contract.
+Telegram is an implemented external ingress channel, not a replacement for the canonical client contract.
 
-Current intention:
+Current baseline:
 
-- first phase: Telegram-to-chat bridge that normalizes incoming Telegram messages into `POST /v1/chat/completions` requests
-- no public Telegram tool endpoint; all tool execution remains inside `agent-api` policy gates
-- session mapping between Telegram `chat_id`/`message_id` and canonical `conversation_id` is handled by the bridge layer, not by tools
+- Telegram-to-chat bridge normalizes incoming Telegram messages into `POST /v1/chat/completions` requests
+- no public Telegram tool endpoint exists; all tool execution remains inside `agent-api` policy gates
+- Telegram currently forwards a stable client-side session hint derived from `chat_id`; canonical conversation continuation remains a separate backlog item
+- Telegram-originated requests carry source metadata so tool policy can deny external-effect actions from this ingress
+- request correlation is preserved across ingress, orchestration, and tool-audit paths
 
 Safety note:
 
 - Telegram is treated as untrusted inbound traffic until normalized and converted into canonical `POST /v1/chat/completions` requests.
 - all Telegram-driven action paths must pass the same typed tool policy as native clients before execution.
 - every side-effect-capable action from Telegram requires explicit allow rules, approval flow if applicable, and immutable audit context (`request_id`, `conversation_id`, `model_run_id`).
+
+Remaining hardening:
+
+- alert delivery policies remain intentionally conservative and need explicit priority/severity handling before expansion
 
 ## Safe Telegram integration requirements
 

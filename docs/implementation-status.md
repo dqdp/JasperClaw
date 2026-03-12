@@ -65,6 +65,8 @@ Implemented:
 - structured request logging for request lifecycle, readiness, runtime, and storage outcomes
 - request-scoped persistence for `conversations`, `messages`, `model_runs`, and baseline `tool_executions`
 - baseline conversation continuity via transcript-prefix matching and optional canonical conversation hints
+- optional retrieval-aware prompt assembly with conservative memory materialization from `user` transcript turns
+- retrieval and memory audit persistence through `memory_items`, `retrieval_runs`, and `retrieval_hits`
 - forward-only SQL migration runner for the current canonical text-path schema
 - explicit `python -m app.cli migrate` command for applying pending schema changes before service traffic
 - stubbed `POST /v1/audio/transcriptions`
@@ -73,9 +75,8 @@ Implemented:
 Not yet implemented:
 
 - stronger client-to-backend conversation binding beyond transcript-prefix matching and optional hints
-- retrieval-aware or memory-backed prompt assembly
 - structured tracing beyond request ID and JSON event logs
-- memory retrieval
+- richer memory retention, invalidation, and deletion flows
 - production-hardened runtime and storage observability
 
 ### `stt-service`
@@ -108,7 +109,9 @@ Implemented:
 
 - accepted architectural decision that tools live in-process inside `agent-api` in v1
 - in-process `web-search` and `spotify-*` policy-gated execution in `agent-api`
+- bounded one-hop model-driven tool planning with fail-open fallback into the final answer path
 - canonical `tool_executions` persistence and basic tool planning audit
+- Telegram-originated tool actions are denied by policy inside `agent-api`
 
 ### Telegram ingress integration
 
@@ -120,10 +123,13 @@ Implemented:
 - startup webhook registration when `TELEGRAM_WEBHOOK_URL` is configured
 - optional polling fallback when webhook URL is not configured
 - operational alert relay via `/telegram/alerts` using a dedicated alert bot token
+- minimal command routing for `/help`, `/status`, and `/ask`
+- slash-command allowlist and request ID continuity across ingress handling
+- Telegram-originated tool actions are tagged at ingress and denied inside `agent-api`
 
 Not yet implemented:
 
-- command intent routing before model execution (`/play`, `/status`, etc.)
+- richer command/approval routing beyond the current local command set
 - delivery policies and priority handling for operational alert fanout
 
 ### Database and memory
@@ -131,14 +137,16 @@ Not yet implemented:
 Implemented:
 
 - accepted schema design and documentation
-- forward-only SQL migrations for the current text-path tables
+- forward-only SQL migrations for the current text-path and memory-foundation tables
 - readiness checks that fail when required migrations are still pending
+- conservative memory extraction/materialization from selected `user` turns
+- retrieval query behavior with explicit audit traces
 
 Not yet implemented:
 
 - full canonical schema beyond the current text-path subset
-- retrieval behavior
-- memory extraction
+- retention, invalidation, and deletion rules as runtime behavior
+- broader memory extraction strategies beyond the current conservative baseline
 
 ## Legacy scaffold note
 

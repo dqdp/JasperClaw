@@ -27,6 +27,13 @@ That script checks:
 
 The rest of this document is still the broader manual checklist to use after the automated baseline passes.
 
+When Telegram smoke inputs are configured, the automated baseline may also run:
+
+- `infra/scripts/smoke-telegram-ingress.py`
+
+That check is intended for deterministic environments with stubbed downstream dependencies, such as CI or dedicated smoke stacks.
+The CI smoke stack uses `ollama-fake` for model runtime calls and `telegram-fake` for Telegram delivery.
+
 ## Required checks
 
 ### 1. Reverse proxy reachable
@@ -115,6 +122,20 @@ Confirm:
 - no migration errors are present
 - the explicit migration command completed successfully before smoke started
 - no connection failures appear in logs
+
+### 11. Telegram ingress path works
+
+Run this only if Telegram ingress is enabled in that environment.
+
+For deterministic automated environments, use the stub-backed smoke runner.
+
+Expected result:
+
+- `telegram-ingress` health responds
+- valid webhook update is accepted
+- response flows through `telegram-ingress -> agent-api -> outbound send`
+- invalid webhook secret is rejected
+- retry-safe downstream failure behavior is preserved
 
 ## Pass/fail rule
 

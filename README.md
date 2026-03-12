@@ -127,6 +127,7 @@ local-assistant/
 - [`docs/adr/0011-readiness-observability-and-error-semantics.md`](docs/adr/0011-readiness-observability-and-error-semantics.md) — define operational probes, request tracing, and stable error behavior
 - [`docs/adr/0012-capability-gated-agent-actions.md`](docs/adr/0012-capability-gated-agent-actions.md) — keep agent actions capability-gated, least-privilege, and audit-first
 - [`docs/adr/0013-layered-testing-and-linting-gates.md`](docs/adr/0013-layered-testing-and-linting-gates.md) — use layered testing and explicit lint gates for v1 quality control
+- [`docs/adr/0014-directory-readmes-and-agent-rules-separation.md`](docs/adr/0014-directory-readmes-and-agent-rules-separation.md) — use `README.md` for directory indexes and reserve `AGENTS.md` for local agent rules
 - [`docs/service-contracts/agent-api.md`](docs/service-contracts/agent-api.md) — public contract for the canonical backend ingress
 - [`docs/service-contracts/tools.md`](docs/service-contracts/tools.md) — internal typed contract for the v1 tools integration layer
 - [`docs/testing/short-tdd-plan-template.md`](docs/testing/short-tdd-plan-template.md) — compact TDD plan template with a Control Plane MVP example slice
@@ -140,6 +141,12 @@ local-assistant/
 - [`docs/runbooks/smoke-tests.md`](docs/runbooks/smoke-tests.md) — post-deploy smoke test checklist
 - [`docs/runbooks/telegram.md`](docs/runbooks/telegram.md) — Telegram channel operations, two-way communication, and alerting runbook
 - [`docs/handoff_to_agent.md`](docs/handoff_to_agent.md) — compact execution brief for an implementation agent
+
+## Repository navigation
+
+Open the local `README.md` inside a non-hidden directory when you need a short map of that directory.
+
+Open `AGENTS.md` only when you need local working rules or agent-specific constraints.
 
 ## First implementation milestones
 

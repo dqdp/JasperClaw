@@ -24,11 +24,15 @@ This runbook separates:
 - Every accepted user message is forwarded to `agent-api` and response is sent back to the same chat.
 - `telegram-ingress` health is exposed via `GET /healthz`.
 - Optional slash-command allowlist is supported via `TELEGRAM_ALLOWED_COMMANDS`.
+- Minimal local command routing is implemented for `/help`, `/status`, and `/ask`.
+- `X-Request-ID` continuity is preserved across ingress handling and downstream `agent-api` calls.
+- Telegram-originated tool actions remain blocked inside `agent-api` policy enforcement.
 
 Что не реализовано сейчас:
 
-- сложная командная модель (`/play`, `/status`, approval flow) до модели;
-- отдельные политики доставки по уровню важности/приоритетам для Telegram-команд.
+- richer command/approval model beyond `/help`, `/status`, and `/ask`;
+- отдельные политики доставки по уровню важности/приоритетам для operational alert fanout;
+- production-grade priority policy for operational alerts beyond the current baseline.
 
 ## Enterprise pattern (practical baseline)
 
@@ -148,6 +152,9 @@ curl -s -X POST \
 
 ## Smoke checks for Telegram channel
 
+- automated CI/local deterministic smoke:
+  - `python infra/scripts/smoke-telegram-ingress.py`
+  - expected environment: `telegram-ingress` + `agent-api` + fake model runtime + stubbed Telegram API
 - `telegram-ingress` `GET /healthz` -> 200.
 - отправить сообщение боту в пользовательском чате -> ответный message от бота.
 - проверить, что невалидный webhook-secret отбрасывается.
