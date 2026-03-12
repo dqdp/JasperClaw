@@ -4,6 +4,7 @@ from functools import lru_cache
 
 
 _PLACEHOLDER_SECRET_VALUES = frozenset({"", "change-me"})
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,6 +15,10 @@ class Settings:
     ollama_timeout_seconds: float
     database_url: str
     internal_openai_api_key: str
+    ollama_embed_model: str = ""
+    memory_enabled: bool = False
+    memory_top_k: int = 3
+    memory_min_score: float = 0.35
     model_owner: str = "local-assistant"
 
     @property
@@ -30,6 +35,13 @@ def _normalize_required_secret(value: str | None) -> str:
 
 def is_configured_required_secret(value: str | None) -> bool:
     return bool(_normalize_required_secret(value))
+
+
+def _get_bool_env(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in _TRUE_VALUES
 
 
 @lru_cache
@@ -50,9 +62,13 @@ def get_settings() -> Settings:
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),
         ollama_chat_model=ollama_chat_model,
         ollama_fast_chat_model=os.getenv("OLLAMA_FAST_CHAT_MODEL", ollama_chat_model),
+        ollama_embed_model=os.getenv("OLLAMA_EMBED_MODEL", "").strip(),
         ollama_timeout_seconds=float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "30")),
         database_url=database_url,
         internal_openai_api_key=_normalize_required_secret(
             os.getenv("INTERNAL_OPENAI_API_KEY", "change-me")
         ),
+        memory_enabled=_get_bool_env("MEMORY_ENABLED", default=False),
+        memory_top_k=int(os.getenv("MEMORY_TOP_K", "3")),
+        memory_min_score=float(os.getenv("MEMORY_MIN_SCORE", "0.35")),
     )

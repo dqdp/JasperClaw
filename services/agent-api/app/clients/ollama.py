@@ -80,6 +80,46 @@ class OllamaChatClient:
         except httpx.RequestError as exc:
             raise self._runtime_unavailable_error() from exc
 
+    def embed(self, model: str, input_text: str | list[str]) -> list[list[float]]:
+        payload = {"model": model, "input": input_text}
+
+        try:
+            with httpx.Client(timeout=self._timeout_seconds) as client:
+                response = client.post(f"{self._base_url}/api/embed", json=payload)
+        except httpx.TimeoutException as exc:
+            raise self._timeout_error() from exc
+        except httpx.RequestError as exc:
+            raise self._runtime_unavailable_error() from exc
+
+        self._validate_response_status(response.status_code)
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise self._bad_response_error("Model runtime returned invalid JSON") from exc
+
+        if not isinstance(data, dict):
+            raise self._bad_response_error("Model runtime returned an unexpected payload")
+
+        embeddings = data.get("embeddings")
+        if not isinstance(embeddings, list):
+            raise self._bad_response_error("Model runtime returned an unexpected payload")
+
+        parsed_embeddings: list[list[float]] = []
+        for embedding in embeddings:
+            if not isinstance(embedding, list):
+                raise self._bad_response_error("Model runtime returned an unexpected payload")
+            parsed_embedding: list[float] = []
+            for value in embedding:
+                if not isinstance(value, (int, float)):
+                    raise self._bad_response_error(
+                        "Model runtime returned an unexpected payload"
+                    )
+                parsed_embedding.append(float(value))
+            parsed_embeddings.append(parsed_embedding)
+
+        return parsed_embeddings
+
     def check_ready(self, models: tuple[str, ...]) -> None:
         try:
             with httpx.Client(timeout=self._timeout_seconds) as client:

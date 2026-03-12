@@ -13,12 +13,20 @@ from app.clients.ollama import (
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
-from app.repositories import ChatPersistenceResult, ChatRepository, ConversationContext
+from app.repositories import (
+    ChatPersistenceResult,
+    ChatRepository,
+    ConversationContext,
+    MemoryRetrievalRecord,
+    MemorySearchHit,
+    PersistedMessage,
+)
 from app.schemas.chat import (
     ChatCompletionChoice,
     ChatCompletionChoiceMessage,
     ChatCompletionRequest,
     ChatCompletionUsage,
+    ChatMessage,
 )
 
 
@@ -55,6 +63,12 @@ class ChatStreamSession:
     events: Iterator[ChatStreamEvent]
 
 
+@dataclass(frozen=True, slots=True)
+class MemoryContext:
+    runtime_messages: list[ChatMessage]
+    retrieval: MemoryRetrievalRecord | None = None
+
+
 class ChatService:
     def __init__(
         self,
@@ -77,13 +91,17 @@ class ChatService:
         resolved_conversation_hint = (
             conversation_id_hint or self._extract_conversation_hint(request)
         )
+        memory_context = self._prepare_memory_context(
+            request_id=request_id,
+            request=request,
+        )
         started_at = datetime.now(timezone.utc)
         runtime_started = perf_counter()
 
         try:
             runtime_result = self._ollama_client.chat(
                 model=profile.runtime_model,
-                messages=request.messages,
+                messages=memory_context.runtime_messages,
             )
         except APIError as exc:
             completed_at = datetime.now(timezone.utc)
@@ -93,7 +111,7 @@ class ChatService:
                 runtime_started=runtime_started,
                 error=exc,
             )
-            self._persist_failed_completion(
+            persistence = self._persist_failed_completion(
                 request_id=request_id,
                 profile=profile,
                 request=request,
@@ -101,6 +119,15 @@ class ChatService:
                 started_at=started_at,
                 completed_at=completed_at,
                 error=exc,
+            )
+            self._record_memory_retrieval(
+                request_id=request_id,
+                profile=profile,
+                conversation_id=(
+                    persistence.conversation_id if persistence is not None else None
+                ),
+                memory_context=memory_context,
+                created_at=completed_at,
             )
             raise
 
@@ -110,6 +137,7 @@ class ChatService:
             request=request,
             profile=profile,
             conversation_id_hint=resolved_conversation_hint,
+            memory_context=memory_context,
             runtime_result=runtime_result,
             started_at=started_at,
             completed_at=completed_at,
@@ -134,10 +162,14 @@ class ChatService:
             conversation_id_hint=resolved_conversation_hint,
             created_at=started_at,
         )
+        memory_context = self._prepare_memory_context(
+            request_id=request_id,
+            request=request,
+        )
         runtime_started = perf_counter()
         stream = self._ollama_client.stream_chat(
             model=profile.runtime_model,
-            messages=request.messages,
+            messages=memory_context.runtime_messages,
         )
 
         try:
@@ -157,7 +189,7 @@ class ChatService:
                 runtime_started=runtime_started,
                 error=exc,
             )
-            self._persist_failed_completion(
+            persistence = self._persist_failed_completion(
                 request_id=request_id,
                 profile=profile,
                 request=request,
@@ -165,6 +197,15 @@ class ChatService:
                 started_at=started_at,
                 completed_at=completed_at,
                 error=exc,
+            )
+            self._record_memory_retrieval(
+                request_id=request_id,
+                profile=profile,
+                conversation_id=(
+                    persistence.conversation_id if persistence is not None else None
+                ),
+                memory_context=memory_context,
+                created_at=completed_at,
             )
             raise
 
@@ -175,6 +216,7 @@ class ChatService:
             request=request,
             profile=profile,
             context=context,
+            memory_context=memory_context,
             started_at=started_at,
             runtime_started=runtime_started,
             first_chunk=first_chunk,
@@ -195,6 +237,7 @@ class ChatService:
         request: ChatCompletionRequest,
         profile: RuntimeProfile,
         context: ConversationContext,
+        memory_context: MemoryContext,
         started_at: datetime,
         runtime_started: float,
         first_chunk: OllamaChatStreamChunk,
@@ -230,7 +273,7 @@ class ChatService:
                     runtime_started=runtime_started,
                     usage=usage,
                 )
-                self._persist_successful_completion(
+                persistence = self._persist_successful_completion(
                     request_id=request_id,
                     profile=profile,
                     request=request,
@@ -239,6 +282,19 @@ class ChatService:
                     usage=usage,
                     started_at=started_at,
                     completed_at=completed_at,
+                )
+                self._record_memory_retrieval(
+                    request_id=request_id,
+                    profile=profile,
+                    conversation_id=persistence.conversation_id,
+                    memory_context=memory_context,
+                    created_at=completed_at,
+                )
+                self._store_memory_items(
+                    request_id=request_id,
+                    conversation_id=persistence.conversation_id,
+                    persistence=persistence,
+                    created_at=completed_at,
                 )
                 yield ChatStreamEvent(
                     content=None,
@@ -261,7 +317,7 @@ class ChatService:
                 runtime_started=runtime_started,
                 error=exc,
             )
-            self._persist_failed_completion(
+            persistence = self._persist_failed_completion(
                 request_id=request_id,
                 profile=profile,
                 request=request,
@@ -269,6 +325,15 @@ class ChatService:
                 started_at=started_at,
                 completed_at=completed_at,
                 error=exc,
+            )
+            self._record_memory_retrieval(
+                request_id=request_id,
+                profile=profile,
+                conversation_id=(
+                    persistence.conversation_id if persistence is not None else None
+                ),
+                memory_context=memory_context,
+                created_at=completed_at,
             )
             raise
 
@@ -287,6 +352,7 @@ class ChatService:
         request: ChatCompletionRequest,
         profile: RuntimeProfile,
         conversation_id_hint: str | None,
+        memory_context: MemoryContext,
         runtime_result: OllamaChatResult,
         started_at: datetime,
         completed_at: datetime,
@@ -315,6 +381,19 @@ class ChatService:
             usage=usage,
             started_at=started_at,
             completed_at=completed_at,
+        )
+        self._record_memory_retrieval(
+            request_id=request_id,
+            profile=profile,
+            conversation_id=persistence.conversation_id,
+            memory_context=memory_context,
+            created_at=completed_at,
+        )
+        self._store_memory_items(
+            request_id=request_id,
+            conversation_id=persistence.conversation_id,
+            persistence=persistence,
+            created_at=completed_at,
         )
 
         return ChatResult(
@@ -376,7 +455,7 @@ class ChatService:
         started_at: datetime,
         completed_at: datetime,
         error: APIError,
-    ) -> None:
+    ) -> ChatPersistenceResult | None:
         storage_started = perf_counter()
         try:
             persistence = self._repository.record_failed_completion(
@@ -400,6 +479,7 @@ class ChatService:
                 conversation_id=persistence.conversation_id,
                 model_run_id=persistence.model_run_id,
             )
+            return persistence
         except APIError:
             log_event(
                 "chat_storage_completed",
@@ -408,6 +488,267 @@ class ChatService:
                 outcome="error",
                 duration_ms=round((perf_counter() - storage_started) * 1000, 2),
             )
+            return None
+
+    def _prepare_memory_context(
+        self,
+        *,
+        request_id: str,
+        request: ChatCompletionRequest,
+    ) -> MemoryContext:
+        if not self._settings.memory_enabled or not self._settings.ollama_embed_model:
+            return MemoryContext(runtime_messages=list(request.messages))
+
+        query_text = self._latest_user_message(request.messages)
+        if not query_text:
+            return MemoryContext(runtime_messages=list(request.messages))
+
+        retrieval_started = perf_counter()
+        try:
+            embeddings = self._ollama_client.embed(
+                model=self._settings.ollama_embed_model,
+                input_text=query_text,
+            )
+            query_embedding = self._require_single_embedding(embeddings)
+            hits = tuple(
+                self._repository.retrieve_memory(
+                    query_embedding=query_embedding,
+                    limit=self._settings.memory_top_k,
+                    min_score=self._settings.memory_min_score,
+                )
+            )
+            retrieval = MemoryRetrievalRecord(
+                query_text=query_text,
+                status="completed",
+                top_k=self._settings.memory_top_k,
+                latency_ms=round((perf_counter() - retrieval_started) * 1000, 2),
+                hits=hits,
+            )
+            self._log_memory_retrieval(
+                request_id=request_id,
+                outcome="success",
+                retrieval=retrieval,
+            )
+            if not hits:
+                return MemoryContext(
+                    runtime_messages=list(request.messages),
+                    retrieval=retrieval,
+                )
+            return MemoryContext(
+                runtime_messages=self._augment_messages_with_memory(
+                    request.messages,
+                    hits,
+                ),
+                retrieval=retrieval,
+            )
+        except APIError as exc:
+            retrieval = MemoryRetrievalRecord(
+                query_text=query_text,
+                status="error",
+                top_k=self._settings.memory_top_k,
+                latency_ms=round((perf_counter() - retrieval_started) * 1000, 2),
+                error_type=exc.error_type,
+                error_code=exc.code,
+            )
+            self._log_memory_retrieval(
+                request_id=request_id,
+                outcome="error",
+                retrieval=retrieval,
+            )
+            return MemoryContext(
+                runtime_messages=list(request.messages),
+                retrieval=retrieval,
+            )
+
+    def _record_memory_retrieval(
+        self,
+        *,
+        request_id: str,
+        profile: RuntimeProfile,
+        conversation_id: str | None,
+        memory_context: MemoryContext,
+        created_at: datetime,
+    ) -> None:
+        if memory_context.retrieval is None or conversation_id is None:
+            return
+
+        storage_started = perf_counter()
+        try:
+            self._repository.record_retrieval(
+                conversation_id=conversation_id,
+                request_id=request_id,
+                public_model=profile.public_id,
+                retrieval=memory_context.retrieval,
+                created_at=created_at,
+            )
+            log_event(
+                "chat_memory_audit_completed",
+                request_id=request_id,
+                outcome="success",
+                duration_ms=round((perf_counter() - storage_started) * 1000, 2),
+                conversation_id=conversation_id,
+                retrieval_status=memory_context.retrieval.status,
+                retrieval_hit_count=len(memory_context.retrieval.hits),
+            )
+        except APIError as exc:
+            log_event(
+                "chat_memory_audit_completed",
+                level=logging.WARNING,
+                request_id=request_id,
+                outcome="error",
+                duration_ms=round((perf_counter() - storage_started) * 1000, 2),
+                conversation_id=conversation_id,
+                error_type=exc.error_type,
+                error_code=exc.code,
+            )
+
+    def _store_memory_items(
+        self,
+        *,
+        request_id: str,
+        conversation_id: str,
+        persistence: ChatPersistenceResult,
+        created_at: datetime,
+    ) -> None:
+        if not self._settings.memory_enabled or not self._settings.ollama_embed_model:
+            return
+
+        candidate_messages = tuple(
+            message
+            for message in persistence.persisted_messages
+            if self._is_memory_candidate(message)
+        )
+        if not candidate_messages:
+            return
+
+        try:
+            embeddings = self._ollama_client.embed(
+                model=self._settings.ollama_embed_model,
+                input_text=[message.content for message in candidate_messages],
+            )
+            if len(embeddings) != len(candidate_messages) or any(
+                not embedding for embedding in embeddings
+            ):
+                raise APIError(
+                    status_code=502,
+                    error_type="upstream_error",
+                    code="dependency_bad_response",
+                    message="Model runtime returned an unexpected embedding payload",
+                )
+        except APIError as exc:
+            log_event(
+                "chat_memory_materialization_completed",
+                level=logging.WARNING,
+                request_id=request_id,
+                outcome="error",
+                conversation_id=conversation_id,
+                error_type=exc.error_type,
+                error_code=exc.code,
+            )
+            return
+
+        storage_started = perf_counter()
+        try:
+            self._repository.store_memory_items(
+                conversation_id=conversation_id,
+                messages=candidate_messages,
+                embeddings=embeddings,
+                embedding_model=self._settings.ollama_embed_model,
+                created_at=created_at,
+            )
+            log_event(
+                "chat_memory_materialization_completed",
+                request_id=request_id,
+                outcome="success",
+                duration_ms=round((perf_counter() - storage_started) * 1000, 2),
+                conversation_id=conversation_id,
+                memory_item_count=len(candidate_messages),
+            )
+        except APIError as exc:
+            log_event(
+                "chat_memory_materialization_completed",
+                level=logging.WARNING,
+                request_id=request_id,
+                outcome="error",
+                duration_ms=round((perf_counter() - storage_started) * 1000, 2),
+                conversation_id=conversation_id,
+                error_type=exc.error_type,
+                error_code=exc.code,
+            )
+
+    def _log_memory_retrieval(
+        self,
+        *,
+        request_id: str,
+        outcome: str,
+        retrieval: MemoryRetrievalRecord,
+    ) -> None:
+        level = logging.INFO if outcome == "success" else logging.WARNING
+        log_event(
+            "chat_memory_retrieval_completed",
+            level=level,
+            request_id=request_id,
+            outcome=outcome,
+            retrieval_status=retrieval.status,
+            duration_ms=retrieval.latency_ms,
+            retrieval_hit_count=len(retrieval.hits),
+            error_type=retrieval.error_type,
+            error_code=retrieval.error_code,
+        )
+
+    def _augment_messages_with_memory(
+        self,
+        messages: list[ChatMessage],
+        hits: tuple[MemorySearchHit, ...],
+    ) -> list[ChatMessage]:
+        memory_lines = "\n".join(f"- {hit.content}" for hit in hits)
+        memory_message = ChatMessage(
+            role="system",
+            content=(
+                "Relevant memory from prior conversations:\n"
+                f"{memory_lines}\n"
+                "Use it only when helpful and do not treat it as authoritative "
+                "if the current conversation conflicts with it."
+            ),
+        )
+        insert_at = 0
+        while insert_at < len(messages) and messages[insert_at].role == "system":
+            insert_at += 1
+        return [
+            *messages[:insert_at],
+            memory_message,
+            *messages[insert_at:],
+        ]
+
+    def _latest_user_message(self, messages: list[ChatMessage]) -> str | None:
+        for message in reversed(messages):
+            content = message.content.strip()
+            if message.role == "user" and content:
+                return content
+        return None
+
+    def _require_single_embedding(
+        self,
+        embeddings: list[list[float]],
+    ) -> list[float]:
+        if len(embeddings) != 1 or not embeddings[0]:
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Model runtime returned an unexpected embedding payload",
+            )
+        return embeddings[0]
+
+    def _is_memory_candidate(self, message: PersistedMessage) -> bool:
+        content = message.content.strip()
+        if message.role != "user" or message.source != "request_transcript":
+            return False
+        if len(content) < 15:
+            return False
+        if content.endswith("?"):
+            return False
+        return True
 
     def _log_runtime_success(
         self,

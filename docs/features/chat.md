@@ -144,6 +144,14 @@ This step may:
 
 If retrieval is not enabled yet, the text path still proceeds without it.
 
+Current Memory Slice 1 baseline:
+
+- retrieval uses the latest non-empty `user` message as the query text
+- retrieved memory is injected as an additional `system` message for runtime prompt assembly only
+- canonical transcript persistence still uses the original request messages without the injected memory prompt
+- retrieval failures degrade to `no memory` and do not fail the core chat request
+- retrieval audit is persisted after canonical chat persistence succeeds or fails
+
 ### 7. Model-run initialization
 
 Before invoking `Ollama`, `agent-api` creates a `model_runs` record or otherwise reserves audit state for the attempt.
@@ -181,6 +189,12 @@ At minimum this should include:
 - conversation timestamp updates
 
 If later tool execution becomes part of the text path, tool activity must be recorded separately in `tool_executions` rather than embedded only in free-form logs.
+
+Current Memory Slice 1 baseline:
+
+- only new `user` transcript messages are considered for memory materialization
+- memory candidates are conservative: short prompts and question-shaped turns are skipped
+- memory write failures are logged but do not roll back the canonical chat success path
 
 ### 10. Response adaptation
 

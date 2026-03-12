@@ -1,9 +1,11 @@
 from collections.abc import Iterator
+from datetime import datetime, timezone
+import math
 
 from fastapi.testclient import TestClient
 
 from app.api import deps
-from app.clients.ollama import OllamaChatStreamChunk
+from app.clients.ollama import OllamaChatResult, OllamaChatStreamChunk
 from app.core.errors import APIError
 from app.main import app
 from app.repositories import PostgresChatRepository
@@ -150,6 +152,131 @@ class _InMemoryCursor:
             self._rows = []
             return
 
+        if normalized.startswith(
+            "SELECT id, source_message_id, content, 1 - (embedding <=> %s::vector) AS score FROM memory_items"
+        ):
+            vector_literal, principal_id, status, _, min_score, _, limit = params
+            query_vector = _parse_vector_literal(vector_literal)
+            hits = []
+            for memory_item in self._connection.memory_items:
+                if memory_item["principal_id"] != principal_id:
+                    continue
+                if memory_item["status"] != status:
+                    continue
+                score = _cosine_similarity(memory_item["embedding"], query_vector)
+                if score < min_score:
+                    continue
+                hits.append(
+                    (
+                        memory_item["id"],
+                        memory_item["source_message_id"],
+                        memory_item["content"],
+                        score,
+                        memory_item["created_at"],
+                    )
+                )
+            hits.sort(key=lambda hit: (-hit[3], -hit[4].timestamp()))
+            self._rows = [(hit[0], hit[1], hit[2], hit[3]) for hit in hits[:limit]]
+            return
+
+        if normalized.startswith(
+            "INSERT INTO retrieval_runs ( id, conversation_id, request_id, query_text, profile_id, strategy, top_k, status, latency_ms, error_type, error_code, created_at )"
+        ):
+            (
+                retrieval_run_id,
+                conversation_id,
+                request_id,
+                query_text,
+                profile_id,
+                strategy,
+                top_k,
+                status,
+                latency_ms,
+                error_type,
+                error_code,
+                created_at,
+            ) = params
+            self._connection.retrieval_runs.append(
+                {
+                    "id": retrieval_run_id,
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                    "query_text": query_text,
+                    "profile_id": profile_id,
+                    "strategy": strategy,
+                    "top_k": top_k,
+                    "status": status,
+                    "latency_ms": latency_ms,
+                    "error_type": error_type,
+                    "error_code": error_code,
+                    "created_at": created_at,
+                }
+            )
+            self._rows = []
+            return
+
+        if normalized.startswith(
+            "INSERT INTO retrieval_hits ( id, retrieval_run_id, memory_item_id, rank, score, included_in_prompt, created_at )"
+        ):
+            (
+                retrieval_hit_id,
+                retrieval_run_id,
+                memory_item_id,
+                rank,
+                score,
+                included_in_prompt,
+                created_at,
+            ) = params
+            self._connection.retrieval_hits.append(
+                {
+                    "id": retrieval_hit_id,
+                    "retrieval_run_id": retrieval_run_id,
+                    "memory_item_id": memory_item_id,
+                    "rank": rank,
+                    "score": score,
+                    "included_in_prompt": included_in_prompt,
+                    "created_at": created_at,
+                }
+            )
+            self._rows = []
+            return
+
+        if normalized.startswith(
+            "INSERT INTO memory_items ( id, principal_id, kind, scope, content, status, source_message_id, conversation_id, embedding, embedding_model, created_at, updated_at )"
+        ):
+            (
+                memory_item_id,
+                principal_id,
+                kind,
+                scope,
+                content,
+                status,
+                source_message_id,
+                conversation_id,
+                embedding_literal,
+                embedding_model,
+                created_at,
+                updated_at,
+            ) = params
+            self._connection.memory_items.append(
+                {
+                    "id": memory_item_id,
+                    "principal_id": principal_id,
+                    "kind": kind,
+                    "scope": scope,
+                    "content": content,
+                    "status": status,
+                    "source_message_id": source_message_id,
+                    "conversation_id": conversation_id,
+                    "embedding": _parse_vector_literal(embedding_literal),
+                    "embedding_model": embedding_model,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                }
+            )
+            self._rows = []
+            return
+
         if normalized.startswith("UPDATE conversations SET updated_at = %s WHERE id = %s"):
             updated_at, conversation_id = params
             self._connection.conversations[conversation_id]["updated_at"] = updated_at
@@ -170,6 +297,9 @@ class _InMemoryConnection:
         self.conversations: dict[str, dict] = {}
         self.messages: list[dict] = []
         self.model_runs: list[dict] = []
+        self.memory_items: list[dict] = []
+        self.retrieval_runs: list[dict] = []
+        self.retrieval_hits: list[dict] = []
 
     def __enter__(self):
         return self
@@ -189,6 +319,9 @@ class _SuccessfulStreamingClient:
     def chat(self, model, messages):
         raise AssertionError("Unexpected non-streaming runtime call")
 
+    def embed(self, model, input_text):
+        raise AssertionError("Unexpected embedding call")
+
     def stream_chat(self, model, messages) -> Iterator[OllamaChatStreamChunk]:
         _ = model, messages
         yield OllamaChatStreamChunk(content="Runtime ", done=False)
@@ -204,6 +337,9 @@ class _SuccessfulStreamingClient:
 class _FailingStreamingClient:
     def chat(self, model, messages):
         raise AssertionError("Unexpected non-streaming runtime call")
+
+    def embed(self, model, input_text):
+        raise AssertionError("Unexpected embedding call")
 
     def stream_chat(self, model, messages) -> Iterator[OllamaChatStreamChunk]:
         _ = model, messages
@@ -222,6 +358,43 @@ def _payload(stream: bool = True) -> dict:
         "messages": [{"role": "user", "content": "Hello"}],
         "stream": stream,
     }
+
+
+def _parse_vector_literal(value: str) -> list[float]:
+    return [float(component) for component in value.strip("[]").split(",") if component]
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    numerator = sum(left_value * right_value for left_value, right_value in zip(left, right))
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0 or right_norm == 0:
+        return 0.0
+    return numerator / (left_norm * right_norm)
+
+
+class _MemoryAwareClient:
+    def __init__(self) -> None:
+        self.last_chat_messages = None
+
+    def chat(self, model, messages):
+        _ = model
+        self.last_chat_messages = messages
+        return OllamaChatResult(
+            content="Runtime response",
+            prompt_tokens=11,
+            completion_tokens=7,
+            total_tokens=18,
+        )
+
+    def stream_chat(self, model, messages):
+        raise AssertionError("Unexpected streaming runtime call")
+
+    def embed(self, model, input_text):
+        _ = model
+        if isinstance(input_text, str):
+            return [[1.0, 0.0]]
+        return [[1.0, 0.0] for _ in input_text]
 
 
 def test_streaming_chat_flow_persists_success_with_real_repository(
@@ -291,3 +464,81 @@ def test_streaming_chat_flow_persists_failure_without_done_sentinel(
     assert len(connection.model_runs) == 1
     assert connection.model_runs[0]["status"] == "failed"
     assert connection.model_runs[0]["error_code"] == "runtime_unavailable"
+
+
+def test_non_streaming_memory_flow_records_retrieval_and_materialization(
+    monkeypatch, auth_headers
+) -> None:
+    connection = _InMemoryConnection()
+    connection.conversations["conv_seed"] = {
+        "id": "conv_seed",
+        "public_profile": "assistant-v1",
+        "created_at": datetime(2026, 3, 12, tzinfo=timezone.utc),
+        "updated_at": datetime(2026, 3, 12, tzinfo=timezone.utc),
+    }
+    connection.messages.append(
+        {
+            "id": "msg_seed",
+            "conversation_id": "conv_seed",
+            "message_index": 0,
+            "role": "user",
+            "content": "My favorite color is blue.",
+            "source": "request_transcript",
+            "created_at": datetime(2026, 3, 12, tzinfo=timezone.utc),
+        }
+    )
+    connection.memory_items.append(
+        {
+            "id": "mem_seed",
+            "principal_id": "prn_local_assistant",
+            "kind": "user_message",
+            "scope": "principal",
+            "content": "My favorite color is blue.",
+            "status": "active",
+            "source_message_id": "msg_seed",
+            "conversation_id": "conv_seed",
+            "embedding": [1.0, 0.0],
+            "embedding_model": "all-minilm",
+            "created_at": datetime(2026, 3, 12, tzinfo=timezone.utc),
+            "updated_at": datetime(2026, 3, 12, tzinfo=timezone.utc),
+        }
+    )
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_EMBED_MODEL", "all-minilm")
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    runtime_client = _MemoryAwareClient()
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_ollama_client] = lambda: runtime_client
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "My favorite color is blue and I live in Berlin.",
+                }
+            ],
+            "stream": False,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert runtime_client.last_chat_messages is not None
+    assert runtime_client.last_chat_messages[0].role == "system"
+    assert "My favorite color is blue." in runtime_client.last_chat_messages[0].content
+    assert len(connection.retrieval_runs) == 1
+    assert connection.retrieval_runs[0]["status"] == "completed"
+    assert len(connection.retrieval_hits) == 1
+    assert connection.retrieval_hits[0]["memory_item_id"] == "mem_seed"
+    assert len(connection.memory_items) == 2
+    assert connection.memory_items[1]["content"] == "My favorite color is blue and I live in Berlin."

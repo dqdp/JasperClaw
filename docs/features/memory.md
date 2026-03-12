@@ -196,6 +196,14 @@ Key rules:
 4. add retrieval traces before optimizing relevance
 5. only later expand categories and automation
 
+Current Memory Slice 1 baseline:
+
+- retrieval is optional and deployment-gated
+- one shared backend principal is used until request identity grows beyond the current trusted-client model
+- retrieval uses the latest `user` turn as the semantic query
+- `memory_items` are currently derived only from conservative `user` transcript turns
+- retrieval and memory writes are fail-open relative to the core chat response path
+
 ## Anti-patterns
 
 Avoid:

@@ -5,7 +5,12 @@ from app.api import deps
 from app.clients.ollama import OllamaChatStreamChunk
 from app.core.config import get_settings
 from app.core.errors import APIError
-from app.repositories.postgres import ChatPersistenceResult, ConversationContext
+from app.repositories.postgres import (
+    ChatPersistenceResult,
+    ConversationContext,
+    MemorySearchHit,
+    PersistedMessage,
+)
 from app.schemas.chat import ChatCompletionRequest
 from app.services.chat import ChatService
 
@@ -55,10 +60,16 @@ class _FakeClient:
     )
     error = None
     stream_error = None
+    embed_response = _FakeResponse(
+        200,
+        {"embeddings": [[1.0, 0.0]]},
+    )
+    embed_error = None
     last_url = None
     last_json = None
     last_stream_url = None
     last_stream_json = None
+    embed_calls = []
 
     def __init__(self, *args, **kwargs):
         _ = args, kwargs
@@ -71,6 +82,11 @@ class _FakeClient:
         return False
 
     def post(self, url, json):
+        if url.endswith("/api/embed"):
+            _FakeClient.embed_calls.append({"url": url, "json": json})
+            if _FakeClient.embed_error is not None:
+                raise _FakeClient.embed_error
+            return _FakeClient.embed_response
         _FakeClient.last_url = url
         _FakeClient.last_json = json
         if _FakeClient.error is not None:
@@ -92,10 +108,12 @@ def _patch_http_client(monkeypatch):
     monkeypatch.setattr("app.clients.ollama.httpx.Client", _FakeClient)
     _FakeClient.error = None
     _FakeClient.stream_error = None
+    _FakeClient.embed_error = None
     _FakeClient.last_url = None
     _FakeClient.last_json = None
     _FakeClient.last_stream_url = None
     _FakeClient.last_stream_json = None
+    _FakeClient.embed_calls = []
     deps.get_ollama_client.cache_clear()
 
 
@@ -104,12 +122,19 @@ class _FakeRepository:
         self,
         error: APIError | None = None,
         prepare_error: APIError | None = None,
+        memory_hits: list[MemorySearchHit] | None = None,
+        memory_error: APIError | None = None,
     ):
         self.error = error
         self.prepare_error = prepare_error
+        self.memory_hits = memory_hits or []
+        self.memory_error = memory_error
         self.prepare_calls = []
+        self.memory_lookup_calls = []
         self.success_calls = []
         self.failed_calls = []
+        self.retrieval_calls = []
+        self.store_memory_calls = []
 
     def prepare_conversation(self, **kwargs):
         self.prepare_calls.append(kwargs)
@@ -126,21 +151,62 @@ class _FakeRepository:
         self.success_calls.append(kwargs)
         if self.error is not None:
             raise self.error
+        request_messages = tuple(
+            PersistedMessage(
+                message_id=f"msg_req_{index}",
+                message_index=index,
+                role=message.role,
+                content=message.content,
+                source="request_transcript",
+            )
+            for index, message in enumerate(kwargs["request_messages"])
+        )
+        assistant_message = PersistedMessage(
+            message_id="msg_test",
+            message_index=len(kwargs["request_messages"]),
+            role="assistant",
+            content=kwargs["response_content"],
+            source="assistant_response",
+        )
         return ChatPersistenceResult(
             conversation_id=kwargs.get("conversation_id_hint") or "conv_test",
             assistant_message_id="msg_test",
             model_run_id="run_test",
+            persisted_messages=(*request_messages, assistant_message),
         )
 
     def record_failed_completion(self, **kwargs):
         self.failed_calls.append(kwargs)
         if self.error is not None:
             raise self.error
+        request_messages = tuple(
+            PersistedMessage(
+                message_id=f"msg_req_{index}",
+                message_index=index,
+                role=message.role,
+                content=message.content,
+                source="request_transcript",
+            )
+            for index, message in enumerate(kwargs["request_messages"])
+        )
         return ChatPersistenceResult(
             conversation_id=kwargs.get("conversation_id_hint") or "conv_test",
             assistant_message_id=None,
             model_run_id="run_test",
+            persisted_messages=request_messages,
         )
+
+    def retrieve_memory(self, **kwargs):
+        self.memory_lookup_calls.append(kwargs)
+        if self.memory_error is not None:
+            raise self.memory_error
+        return list(self.memory_hits)
+
+    def record_retrieval(self, **kwargs):
+        self.retrieval_calls.append(kwargs)
+
+    def store_memory_items(self, **kwargs):
+        self.store_memory_calls.append(kwargs)
 
 
 def _chat_payload(
@@ -226,6 +292,103 @@ def test_chat_completions_streaming_success(client, monkeypatch, auth_headers) -
     assert len(repository.success_calls) == 1
     assert repository.success_calls[0]["response_content"] == "Runtime response"
     assert repository.success_calls[0]["conversation_id_hint"] == "conv_test"
+
+
+def test_chat_completions_non_streaming_memory_retrieval_augments_runtime_prompt(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_EMBED_MODEL", "all-minilm")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository(
+        memory_hits=[
+            MemorySearchHit(
+                memory_item_id="mem_blue",
+                source_message_id="msg_old",
+                content="My favorite color is blue.",
+                score=0.94,
+            )
+        ]
+    )
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert len(_FakeClient.embed_calls) == 1
+    assert _FakeClient.embed_calls[0]["url"] == "http://ollama.test/api/embed"
+    assert _FakeClient.embed_calls[0]["json"] == {
+        "model": "all-minilm",
+        "input": "Hello",
+    }
+    runtime_messages = _FakeClient.last_json["messages"]
+    assert runtime_messages[0]["role"] == "system"
+    assert "Relevant memory from prior conversations" in runtime_messages[0]["content"]
+    assert "My favorite color is blue." in runtime_messages[0]["content"]
+    assert runtime_messages[1:] == [{"role": "user", "content": "Hello"}]
+    assert len(repository.memory_lookup_calls) == 1
+    assert len(repository.retrieval_calls) == 1
+    assert repository.retrieval_calls[0]["conversation_id"] == "conv_test"
+    assert repository.retrieval_calls[0]["retrieval"].status == "completed"
+    assert len(repository.retrieval_calls[0]["retrieval"].hits) == 1
+    assert len(repository.store_memory_calls) == 0
+
+
+def test_chat_completions_streaming_memory_retrieval_augments_runtime_prompt(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_EMBED_MODEL", "all-minilm")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository(
+        memory_hits=[
+            MemorySearchHit(
+                memory_item_id="mem_blue",
+                source_message_id="msg_old",
+                content="My favorite color is blue.",
+                score=0.94,
+            )
+        ]
+    )
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(stream=True),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    runtime_messages = _FakeClient.last_stream_json["messages"]
+    assert runtime_messages[0]["role"] == "system"
+    assert "My favorite color is blue." in runtime_messages[0]["content"]
+    assert runtime_messages[1:] == [{"role": "user", "content": "Hello"}]
+    assert len(repository.retrieval_calls) == 1
+    assert repository.retrieval_calls[0]["retrieval"].status == "completed"
+
+
+def test_chat_completions_memory_embedding_failure_degrades_without_breaking_chat(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_EMBED_MODEL", "all-minilm")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    request = httpx.Request("POST", "http://ollama.test/api/embed")
+    _FakeClient.embed_error = httpx.ConnectError("boom", request=request)
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert _FakeClient.last_json["messages"] == [{"role": "user", "content": "Hello"}]
+    assert len(repository.retrieval_calls) == 1
+    assert repository.retrieval_calls[0]["retrieval"].status == "error"
+    assert repository.retrieval_calls[0]["retrieval"].error_code == "runtime_unavailable"
+    assert len(repository.store_memory_calls) == 0
 
 
 def test_chat_completions_streaming_runtime_unavailable_before_first_chunk(

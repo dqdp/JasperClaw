@@ -283,6 +283,55 @@ Purpose:
 
 - embedding model for memory and future document retrieval
 
+### `MEMORY_ENABLED`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- enable or disable Memory Slice 1 retrieval and materialization behavior
+
+Notes:
+
+- defaults to `false`
+- when `false`, chat proceeds without retrieval even if `OLLAMA_EMBED_MODEL` is set
+
+### `MEMORY_TOP_K`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- maximum number of memory hits included in prompt assembly
+
+Notes:
+
+- defaults to `3`
+
+### `MEMORY_MIN_SCORE`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- minimum similarity threshold for memory retrieval inclusion
+
+Notes:
+
+- defaults to `0.35`
+
 ### `DATABASE_URL`
 
 Required: no if component Postgres variables are provided
@@ -506,6 +555,9 @@ Minimum required:
 
 Additional recommended:
 
+- `MEMORY_ENABLED`
+- `MEMORY_TOP_K`
+- `MEMORY_MIN_SCORE`
 - `OLLAMA_EMBED_MODEL`
 
 ### Search and tool adapters

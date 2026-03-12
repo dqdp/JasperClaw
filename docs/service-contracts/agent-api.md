@@ -185,6 +185,12 @@ Behavior:
 - persists request and response metadata
 - returns non-streaming JSON or SSE stream
 
+Current Memory Slice 1 baseline:
+
+- retrieval is optional and controlled by deployment config
+- retrieved memory augments only the runtime prompt, not the canonical stored transcript
+- retrieval failures degrade to `no memory` instead of failing the core text request
+
 Continuity behavior:
 
 - when a valid canonical conversation hint is present, `agent-api` attempts to continue that conversation
