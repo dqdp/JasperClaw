@@ -1,6 +1,6 @@
 import hmac
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException
 
 from app.clients.agent_api import AgentApiClient
 from app.clients.telegram import TelegramClient
@@ -37,7 +37,7 @@ def create_app(
 
     @app.post(config.webhook_path)
     async def webhook(
-        update: object,
+        update: dict[str, object] = Body(...),
         x_telegram_secret_token: str | None = Header(default=None, alias="X-Telegram-Bot-Api-Secret-Token"),
     ) -> dict[str, object]:
         if config.telegram_webhook_secret_token and (

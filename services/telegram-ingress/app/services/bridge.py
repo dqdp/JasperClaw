@@ -1,5 +1,5 @@
 import asyncio
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from time import perf_counter
 from typing import Any
 
@@ -49,8 +49,7 @@ class WebhookResult:
         return cls(status="ignored", reason=reason)
 
     def as_dict(self) -> dict[str, Any]:
-        payload = self.__dict__.copy()
-        return {key: value for key, value in payload.items() if value is not None}
+        return {key: value for key, value in asdict(self).items() if value is not None}
 
 
 class DedupCache:

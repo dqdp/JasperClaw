@@ -56,7 +56,7 @@ def _create_client(
     return TestClient(app), telegram_client, agent_client
 
 
-def _operational_settings(*, overrides: dict[str, str] | None = None) -> Settings:
+def _operational_settings(overrides: dict[str, str] | None = None) -> Settings:
     base: dict[str, str] = {
         "telegram_bot_token": "bot-token",
         "agent_api_key": "agent-token",
