@@ -242,6 +242,7 @@ Notes:
 
 - public profile IDs remain `assistant-v1` and `assistant-fast`
 - this value is an internal runtime target, not a public contract
+- deployment automation uses this value to ensure the required Ollama model exists locally before serving traffic
 
 ### `OLLAMA_FAST_CHAT_MODEL`
 
@@ -258,6 +259,7 @@ Purpose:
 Notes:
 
 - defaults to `OLLAMA_CHAT_MODEL` if unset
+- production deployment should still set this explicitly in `infra/env/app.env` so model provisioning is deterministic
 
 ### `OLLAMA_TIMEOUT_SECONDS`
 
@@ -282,6 +284,10 @@ Used by:
 Purpose:
 
 - embedding model for memory and future document retrieval
+
+Notes:
+
+- when `MEMORY_ENABLED=true`, production deployment should set this explicitly so local model provisioning can ensure it is present before traffic
 
 ### `MEMORY_ENABLED`
 

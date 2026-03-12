@@ -10,6 +10,23 @@ Smoke tests should confirm the canonical request path:
 
 `Open WebUI -> agent-api -> internal runtime/services`
 
+## Automated baseline
+
+For the host-local automated baseline used by the deploy script, run:
+
+```bash
+COMPOSE_OVERRIDE_FILE=infra/compose/compose.prod.yml bash infra/scripts/smoke.sh
+```
+
+That script checks:
+
+- host-local reverse proxy response through Caddy when `DOMAIN` is configured
+- `agent-api` readiness from inside the container
+- `GET /v1/models`
+- a simple `POST /v1/chat/completions` request through the canonical backend path
+
+The rest of this document is still the broader manual checklist to use after the automated baseline passes.
+
 ## Required checks
 
 ### 1. Reverse proxy reachable

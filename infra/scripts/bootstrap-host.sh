@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "Install on Ubuntu 24.04: NVIDIA driver, Docker Engine, docker-compose-plugin, docker-buildx-plugin, NVIDIA Container Toolkit."
-echo "Then place root env file at .env, app runtime env file at infra/env/app.env, and run docker compose pull && up -d."
+echo "Host bootstrap is documented in docs/runbooks/bootstrap-ubuntu-24.04.md."
+echo "This helper is not a one-shot installer."
+echo "Follow the runbook for exact Ubuntu 24.04 package-install, GPU, Docker, env, and first-deploy commands."
