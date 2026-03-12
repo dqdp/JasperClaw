@@ -161,6 +161,7 @@ class ChatService:
             elif planning_result is not None and planning_result.decision is not None:
                 tool_context = self._prepare_model_driven_tool_context(
                     request_id=request_id,
+                    request=request,
                     base_messages=memory_context.runtime_messages,
                     decision=planning_result.decision,
                 )
@@ -276,6 +277,7 @@ class ChatService:
             elif planning_result is not None and planning_result.decision is not None:
                 tool_context = self._prepare_model_driven_tool_context(
                     request_id=request_id,
+                    request=request,
                     base_messages=memory_context.runtime_messages,
                     decision=planning_result.decision,
                 )
@@ -807,12 +809,14 @@ class ChatService:
                 arguments={"query": query_text},
             ),
             annotate_failures=False,
+            request_source=self._extract_request_source(request),
         )
 
     def _prepare_model_driven_tool_context(
         self,
         *,
         request_id: str,
+        request: ChatCompletionRequest,
         base_messages: list[ChatMessage],
         decision: ToolPlanningDecision,
     ) -> ToolContext:
@@ -821,6 +825,7 @@ class ChatService:
             base_messages=base_messages,
             decision=decision,
             annotate_failures=True,
+            request_source=self._extract_request_source(request),
         )
 
     def _execute_tool_decision(
@@ -830,8 +835,12 @@ class ChatService:
         base_messages: list[ChatMessage],
         decision: ToolPlanningDecision,
         annotate_failures: bool,
+        request_source: str | None,
     ) -> ToolContext:
-        policy = self._evaluate_tool_policy(decision.tool_name)
+        policy = self._evaluate_tool_policy(
+            decision.tool_name,
+            request_source=request_source,
+        )
         started_at = datetime.now(timezone.utc)
         tool_started = perf_counter()
         invocation_id = f"tool_{uuid4().hex[:12]}"
@@ -886,6 +895,8 @@ class ChatService:
     def _evaluate_tool_policy(
         self,
         tool_name: str,
+        *,
+        request_source: str | None = None,
     ) -> ToolPolicyDecision:
         normalized_tool = self._normalize_tool_name(tool_name)
 
@@ -897,6 +908,26 @@ class ChatService:
                 error_code="tool_not_allowed",
                 error_message=(
                     f"Tool '{normalized_tool}' is not declared in the policy catalog."
+                ),
+            )
+
+        if request_source == "telegram":
+            return ToolPolicyDecision(
+                allowed=False,
+                policy_decision="deny",
+                error_type="policy_error",
+                error_code="tool_not_allowed",
+                error_message=(
+                    f"Tool '{normalized_tool}' is blocked for Telegram-originated "
+                    "requests."
+                ),
+                adapter_name=(
+                    "search-http" if normalized_tool == "web-search" else "spotify-http"
+                ),
+                provider=(
+                    "search-provider"
+                    if normalized_tool == "web-search"
+                    else "spotify"
                 ),
             )
 
@@ -956,6 +987,18 @@ class ChatService:
 
     def _normalize_tool_name(self, tool_name: str) -> str:
         return tool_name.strip().casefold()
+
+    def _extract_request_source(
+        self,
+        request: ChatCompletionRequest,
+    ) -> str | None:
+        if not request.metadata:
+            return None
+        value = request.metadata.get("source")
+        if not value:
+            return None
+        normalized = value.strip().casefold()
+        return normalized or None
 
     def _execute_web_search(
         self,

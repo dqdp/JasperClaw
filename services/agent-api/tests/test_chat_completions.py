@@ -1008,6 +1008,129 @@ def test_chat_completions_model_driven_unimplemented_tool_is_denied_with_policy_
     assert tool_execution.error_code == "tool_not_allowed"
 
 
+def test_chat_completions_telegram_source_denies_model_driven_web_search(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"web-search","query":"latest status"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "I cannot verify fresh results from Telegram.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(metadata={"source": "telegram"}),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "I cannot verify fresh results from Telegram."
+    )
+    assert len(_FakeClient.chat_calls) == 2
+    assert _FakeSearchClient.calls == []
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Web search was requested but is currently unavailable." in final_messages[0][
+        "content"
+    ]
+    assert len(repository.tool_execution_calls) == 1
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "web-search"
+    assert tool_execution.status == "failed"
+    assert tool_execution.error_type == "policy_error"
+    assert tool_execution.error_code == "tool_not_allowed"
+
+
+def test_chat_completions_telegram_source_denies_model_driven_spotify_play(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("SPOTIFY_ACCESS_TOKEN", "token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_spotify_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_spotify_client] = (
+        lambda: _FakeSpotifyClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"spotify-play","track_uri":"spotify:track:001"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "I cannot control playback from Telegram.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(metadata={"source": "telegram"}),
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "I cannot control playback from Telegram."
+    )
+    assert len(_FakeClient.chat_calls) == 2
+    assert _FakeSpotifyClient.play_calls == []
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "spotify-play" in final_messages[0]["content"]
+    assert "currently unavailable or blocked by policy" in final_messages[0]["content"]
+    assert len(repository.tool_execution_calls) == 1
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "spotify-play"
+    assert tool_execution.status == "failed"
+    assert tool_execution.error_type == "policy_error"
+    assert tool_execution.error_code == "tool_not_allowed"
+
+
 def test_chat_completions_model_driven_unsupported_tool_directive_is_passed_as_content(
     client, monkeypatch, auth_headers
 ) -> None:

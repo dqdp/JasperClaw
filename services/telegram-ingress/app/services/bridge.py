@@ -158,15 +158,6 @@ class TelegramBridgeService:
         if update is None:
             return WebhookResult.ignored(reason="message not text or missing chat")
 
-        if not self._is_command_allowed(update.text):
-            return WebhookResult(
-                status="ignored",
-                update_id=update.update_id,
-                chat_id=update.chat_id,
-                message_id=update.message_id,
-                reason="command_not_allowed",
-            )
-
         if len(update.text) > self._settings.telegram_max_input_chars:
             return WebhookResult(
                 status="ignored",
@@ -191,10 +182,107 @@ class TelegramBridgeService:
             return WebhookResult.ignored(reason="rate_limited_chat")
 
         conversation_id = f"telegram:{update.chat_id}"
+        command = self._extract_command(update.text)
+        if command is not None:
+            if not self._is_command_allowed(update.text):
+                return WebhookResult(
+                    status="ignored",
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    message_id=update.message_id,
+                    reason="command_not_allowed",
+                )
+            handled = await self._handle_command(
+                update=update,
+                command=command,
+                conversation_id=conversation_id,
+            )
+            if handled is not None:
+                return handled
+            return WebhookResult(
+                status="ignored",
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                reason="command_not_allowed",
+            )
+
+        return await self._complete_and_send(
+            update=update,
+            conversation_id=conversation_id,
+            prompt_text=update.text,
+        )
+
+    async def _handle_command(
+        self,
+        *,
+        update: TelegramUpdate,
+        command: str,
+        conversation_id: str,
+    ) -> WebhookResult | None:
+        if command == "/help":
+            return await self._send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text="Available commands: /help, /status, /ask <message>",
+            )
+        if command == "/status":
+            return await self._send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text="telegram-ingress ok",
+            )
+        if command == "/ask":
+            prompt_text = self._extract_command_body(update.text)
+            if not prompt_text:
+                return await self._send_local_reply(
+                    update=update,
+                    conversation_id=conversation_id,
+                    text="Usage: /ask <message>",
+                )
+            return await self._complete_and_send(
+                update=update,
+                conversation_id=conversation_id,
+                prompt_text=prompt_text,
+            )
+        return None
+
+    async def _send_local_reply(
+        self,
+        *,
+        update: TelegramUpdate,
+        conversation_id: str,
+        text: str,
+    ) -> WebhookResult:
+        try:
+            await self._telegram_client.send_message(
+                chat_id=update.chat_id,
+                text=text,
+            )
+            return WebhookResult.ok(
+                status="processed",
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=conversation_id,
+            )
+        except TelegramSendError:
+            await self._dedupe.release(self._cache_key(update))
+            raise TelegramBridgeRetryableError(
+                "telegram bridge downstream unavailable"
+            )
+
+    async def _complete_and_send(
+        self,
+        *,
+        update: TelegramUpdate,
+        conversation_id: str,
+        prompt_text: str,
+    ) -> WebhookResult:
         try:
             response = await self._agent_client.complete(
                 model=self._settings.agent_api_model,
-                text=update.text,
+                text=prompt_text,
                 conversation_id=conversation_id,
             )
             if len(response) > self._settings.max_reply_chars:
@@ -212,7 +300,7 @@ class TelegramBridgeService:
                 conversation_id=conversation_id,
             )
         except (AgentApiError, TelegramSendError):
-            await self._dedupe.release(cache_key)
+            await self._dedupe.release(self._cache_key(update))
             raise TelegramBridgeRetryableError(
                 "telegram bridge downstream unavailable"
             )
@@ -293,6 +381,15 @@ class TelegramBridgeService:
             return None
 
         return command_token.split("@", 1)[0].lower()
+
+    def _extract_command_body(self, text: str) -> str:
+        stripped = text.strip()
+        if not stripped.startswith("/"):
+            return stripped
+        parts = stripped.split(maxsplit=1)
+        if len(parts) < 2:
+            return ""
+        return parts[1].strip()
 
     def _is_command_allowed(self, text: str) -> bool:
         allowed_commands = self._settings.telegram_allowed_commands
