@@ -1,10 +1,8 @@
 import asyncio
-from dataclasses import dataclass
 import hmac
 import logging
 from contextlib import suppress
 from time import perf_counter
-from typing import Any
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -13,9 +11,10 @@ from app.clients.agent_api import AgentApiClient
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, log_event, new_request_id
+from app.modules.alerts.facade import AlertFacade, unique_chat_ids
+from app.modules.webhook.facade import WebhookFacade
 from app.services.alert_delivery import (
     AlertDeliveryHandler,
-    AlertDeliveryRequest,
     AlertDeliveryService,
     AlertDeliveryStorageError,
     PostgresAlertDeliveryRepository,
@@ -23,42 +22,10 @@ from app.services.alert_delivery import (
 from app.services.bridge import (
     TelegramBridgeRetryableError,
     TelegramBridgeService,
-    WebhookResult,
 )
 
 configure_logging()
 logger = logging.getLogger(__name__)
-
-_ALERT_SEVERITY_RANK = {
-    "info": 10,
-    "warning": 20,
-    "critical": 30,
-}
-_ALERT_SEVERITY_ALIASES = {
-    "informational": "info",
-    "warn": "warning",
-    "error": "critical",
-    "fatal": "critical",
-}
-_ALERT_ACCEPTED_STATUSES = frozenset({"firing", "resolved"})
-
-
-@dataclass(frozen=True, slots=True)
-class AlertDeliveryPlan:
-    deliveries: tuple[tuple[int, str], ...]
-    matched_alerts: int
-
-
-def _unique_chat_ids(*groups: tuple[int, ...]) -> tuple[int, ...]:
-    ordered: list[int] = []
-    seen: set[int] = set()
-    for group in groups:
-        for chat_id in group:
-            if chat_id in seen:
-                continue
-            seen.add(chat_id)
-            ordered.append(chat_id)
-    return tuple(ordered)
 
 
 def create_app(
@@ -109,9 +76,10 @@ def create_app(
             telegram_client=telegram_client,
             settings=config,
         )
+    webhook_facade = WebhookFacade(bridge_service=bridge_service)
 
     alert_telegram_client = None
-    alert_chat_ids = _unique_chat_ids(
+    alert_chat_ids = unique_chat_ids(
         config.telegram_alert_chat_ids,
         config.telegram_alert_warning_chat_ids,
         config.telegram_alert_critical_chat_ids,
@@ -128,6 +96,12 @@ def create_app(
             retry_backoff_seconds=config.telegram_alert_retry_backoff_seconds,
             max_attempts=config.telegram_alert_max_attempts,
             claim_ttl_seconds=config.telegram_alert_claim_ttl_seconds,
+        )
+    alert_facade = None
+    if alert_delivery_service is not None:
+        alert_facade = AlertFacade(
+            settings=config,
+            alert_delivery_service=alert_delivery_service,
         )
 
     polling_task: asyncio.Task[None] | None = None
@@ -160,8 +134,8 @@ def create_app(
                     if isinstance(update_id, int) and update_id > 0:
                         request_id = new_request_id()
                         try:
-                            await bridge_service.process_update(
-                                update,
+                            await webhook_facade.handle_update(
+                                update=update,
                                 request_id=request_id,
                             )
                         except TelegramBridgeRetryableError:
@@ -218,149 +192,12 @@ def create_app(
             polling_task = asyncio.create_task(_poll_updates_forever())
             app.state.telegram_polling_task = polling_task
 
-    def _extract_field(*names: str, source: dict[str, Any]) -> str:
-        for name in names:
-            value = source.get(name)
-            if isinstance(value, str):
-                return value.strip()
-        return ""
-
-    def _normalize_alert_status(raw_status: str) -> str | None:
-        normalized = raw_status.strip().lower()
-        if normalized in _ALERT_ACCEPTED_STATUSES:
-            return normalized
-        return None
-
-    def _normalize_alert_severity(raw_severity: str) -> str | None:
-        normalized = raw_severity.strip().lower()
-        normalized = _ALERT_SEVERITY_ALIASES.get(normalized, normalized)
-        if normalized in _ALERT_SEVERITY_RANK:
-            return normalized
-        return None
-
-    def _alert_line(
-        *,
-        alert: dict[str, object],
-        fallback_status: str | None,
-    ) -> tuple[str, str] | None:
-        status = _normalize_alert_status(
-            _extract_field("status", source=alert) or (fallback_status or ""),
-        )
-        if status is None:
-            return None
-        if status == "resolved" and not config.telegram_alert_send_resolved:
-            return None
-
-        labels = alert.get("labels")
-        labels_map: dict[str, str] = {}
-        if isinstance(labels, dict):
-            for key, value in labels.items():
-                if isinstance(value, str):
-                    labels_map[key] = value
-
-        annotations = alert.get("annotations")
-        annotations_map: dict[str, str] = {}
-        if isinstance(annotations, dict):
-            for key, value in annotations.items():
-                if isinstance(value, str):
-                    annotations_map[key] = value
-
-        severity = _normalize_alert_severity(labels_map.get("severity", ""))
-        if severity is None:
-            return None
-
-        name = labels_map.get("alertname") or annotations_map.get("summary") or "alert"
-        description = annotations_map.get("description") or annotations_map.get("summary") or name
-        component = labels_map.get("service") or labels_map.get("instance") or "unknown"
-        generator_url = _extract_field("generatorURL", "generator_url", source=alert)
-
-        line = f"{status.upper()} {name} [{severity}] on {component}: {description}"
-        if generator_url:
-            line = f"{line} ({generator_url})"
-        return severity, line
-
-    def _route_chat_ids_for_severity(severity: str) -> tuple[int, ...]:
-        rank = _ALERT_SEVERITY_RANK[severity]
-        groups: list[tuple[int, ...]] = [config.telegram_alert_chat_ids]
-        if rank >= _ALERT_SEVERITY_RANK["warning"]:
-            groups.append(config.telegram_alert_warning_chat_ids)
-        if rank >= _ALERT_SEVERITY_RANK["critical"]:
-            groups.append(config.telegram_alert_critical_chat_ids)
-        return _unique_chat_ids(*groups)
-
-    def _manual_alert_chat_ids() -> tuple[int, ...]:
-        if config.telegram_alert_chat_ids:
-            return _unique_chat_ids(config.telegram_alert_chat_ids)
-        return _unique_chat_ids(
-            config.telegram_alert_warning_chat_ids,
-            config.telegram_alert_critical_chat_ids,
-        )
-
-    def _plan_alert_delivery(payload: dict[str, object]) -> AlertDeliveryPlan:
-        direct_text = _extract_field("text", "message", source=payload)
-        if direct_text:
-            recipients = _manual_alert_chat_ids()
-            return AlertDeliveryPlan(
-                deliveries=tuple((chat_id, direct_text) for chat_id in recipients),
-                matched_alerts=1,
-            )
-
-        alerts_value = payload.get("alerts")
-        if isinstance(alerts_value, list) and alerts_value:
-            recipient_lines: dict[int, list[str]] = {}
-            matched_alerts = 0
-            fallback_status = _normalize_alert_status(_extract_field("status", source=payload))
-            for alert in alerts_value:
-                if not isinstance(alert, dict):
-                    continue
-                line_result = _alert_line(alert=alert, fallback_status=fallback_status)
-                if line_result is None:
-                    continue
-                severity, line = line_result
-                matched_alerts += 1
-                for chat_id in _route_chat_ids_for_severity(severity):
-                    lines = recipient_lines.setdefault(chat_id, [])
-                    if line not in lines:
-                        lines.append(line)
-
-            deliveries = tuple(
-                sorted(
-                    (
-                        (chat_id, "\n".join(lines))
-                        for chat_id, lines in recipient_lines.items()
-                        if lines
-                    ),
-                    key=lambda item: item[0],
-                )
-            )
-            return AlertDeliveryPlan(
-                deliveries=deliveries,
-                matched_alerts=matched_alerts,
-            )
-
-        return AlertDeliveryPlan(
-            deliveries=(),
-            matched_alerts=0,
-        )
-
-    def _alert_idempotency_key(
-        *,
-        payload: dict[str, object],
-        header_value: str | None,
-    ) -> str | None:
-        if header_value is not None:
-            key = header_value.strip()
-            if key:
-                return key
-        key = _extract_field("idempotency_key", source=payload)
-        return key or None
-
     async def _retry_alert_deliveries_forever() -> None:
-        assert alert_delivery_service is not None
+        assert alert_facade is not None
         poll_seconds = max(config.telegram_alert_retry_poll_seconds, 0.1)
         while True:
             try:
-                processed = await alert_delivery_service.process_due_deliveries(limit=10)
+                processed = await alert_facade.process_due_once(limit=10)
             except Exception:
                 logger.exception("telegram alert retry loop error")
                 await asyncio.sleep(poll_seconds)
@@ -389,11 +226,11 @@ def create_app(
             raise HTTPException(status_code=503, detail="telegram ingress is not configured")
 
         if not isinstance(update, dict):
-            return WebhookResult.ignored(reason="invalid_payload").as_dict()
+            return {"status": "ignored", "reason": "invalid_payload"}
 
         try:
-            result = await bridge_service.process_update(
-                update,
+            result = await webhook_facade.handle_update(
+                update=update,
                 request_id=request.state.request_id,
             )
         except TelegramBridgeRetryableError as exc:
@@ -413,7 +250,7 @@ def create_app(
             alias="X-Telegram-Alert-Idempotency-Key",
         ),
     ) -> object:
-        if alert_delivery_service is None or not alert_chat_ids:
+        if alert_facade is None or not alert_chat_ids:
             raise HTTPException(
                 status_code=503,
                 detail="telegram alert relay is not configured",
@@ -428,62 +265,19 @@ def create_app(
         ):
             raise HTTPException(status_code=401, detail="invalid alert token")
 
-        plan = _plan_alert_delivery(payload)
-        if not plan.deliveries:
-            return {
-                "status": "ignored",
-                "reason": "alert_policy_filtered",
-                "matched_alerts": plan.matched_alerts,
-            }
-        idempotency_key = _alert_idempotency_key(
-            payload=payload,
-            header_value=x_telegram_alert_idempotency_key,
-        )
-
         try:
-            result = await alert_delivery_service.submit_delivery(
-                request=AlertDeliveryRequest(
-                    deliveries=plan.deliveries,
-                    matched_alerts=plan.matched_alerts,
-                    idempotency_key=idempotency_key,
-                ),
+            result = await alert_facade.submit_alert(
+                payload=payload,
                 request_id=request.state.request_id,
+                header_idempotency_key=x_telegram_alert_idempotency_key,
             )
         except AlertDeliveryStorageError as exc:
-            log_event(
-                "telegram_alert_delivery_storage_failed",
-                request_id=request.state.request_id,
-                recipients=len(plan.deliveries),
-                matched_alerts=plan.matched_alerts,
-                error_type=type(exc).__name__,
-            )
             raise HTTPException(
                 status_code=503,
                 detail="telegram alert delivery unavailable",
             ) from exc
 
-        log_event(
-            "telegram_alert_delivery_submitted",
-            request_id=request.state.request_id,
-            delivery_id=result.delivery_id,
-            status=result.status,
-            recipients=result.recipients,
-            matched_alerts=result.matched_alerts,
-            deduplicated=result.deduplicated,
-        )
-        response_payload = {
-            "status": result.status,
-            "delivery_id": result.delivery_id,
-            "recipients": result.recipients,
-            "matched_alerts": result.matched_alerts,
-            "deduplicated": result.deduplicated,
-        }
-        response_status = 200
-        if result.status == "accepted":
-            response_status = 202
-        elif result.status == "failed":
-            response_status = 502
-        return JSONResponse(status_code=response_status, content=response_payload)
+        return JSONResponse(status_code=result.status_code, content=result.payload)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:

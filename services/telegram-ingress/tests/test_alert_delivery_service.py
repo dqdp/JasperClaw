@@ -102,9 +102,16 @@ class _InMemoryAlertDeliveryRepository:
         stored = self._records.get(delivery_id)
         if stored is None:
             return None
-        if stored.record.status not in {"pending", "delivering"}:
-            return None
-        if stored.locked_until is not None and stored.locked_until > now:
+        if stored.record.status == "pending":
+            if (
+                stored.record.next_attempt_at is None
+                or stored.record.next_attempt_at > now
+            ):
+                return None
+        elif stored.record.status == "delivering":
+            if stored.locked_until is None or stored.locked_until > now:
+                return None
+        else:
             return None
         stored.locked_until = locked_until
         stored.record = replace(
@@ -365,6 +372,58 @@ def test_submit_delivery_keeps_default_backoff_when_retry_after_is_shorter() -> 
     assert record.next_attempt_at is not None
     remaining_seconds = (record.next_attempt_at - datetime.now(timezone.utc)).total_seconds()
     assert remaining_seconds >= 4.0
+
+
+def test_claim_delivery_rechecks_next_attempt_at_before_stale_reclaim() -> None:
+    repository = _InMemoryAlertDeliveryRepository()
+    created_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    record = repository.enqueue_delivery(
+        request=AlertDeliveryRequest(
+            deliveries=((11, "critical alert"),),
+            matched_alerts=1,
+            idempotency_key="critical-alert-v1",
+        ),
+        idempotency_key="telegram_alert:critical-alert-v1",
+        created_at=created_at,
+    )
+    due_ids = repository.list_due_delivery_ids(
+        now=datetime.now(timezone.utc),
+        limit=10,
+    )
+    assert due_ids == (record.delivery_id,)
+
+    claimed = repository.claim_delivery(
+        delivery_id=record.delivery_id,
+        now=datetime.now(timezone.utc),
+        locked_until=datetime.now(timezone.utc) + timedelta(seconds=30),
+    )
+    assert claimed is not None
+
+    updated = repository.apply_attempt_results(
+        delivery_id=record.delivery_id,
+        attempts=(
+            AlertTargetAttempt(
+                chat_id=11,
+                status="pending",
+                error_code="http_429",
+                error_message="rate limited",
+                retry_after_seconds=10.0,
+            ),
+        ),
+        completed_at=datetime.now(timezone.utc),
+        retry_backoff_seconds=5.0,
+        max_attempts=3,
+    )
+    assert updated.status == "pending"
+    assert updated.next_attempt_at is not None
+    assert updated.next_attempt_at > datetime.now(timezone.utc)
+
+    stale_reclaim = repository.claim_delivery(
+        delivery_id=record.delivery_id,
+        now=datetime.now(timezone.utc),
+        locked_until=datetime.now(timezone.utc) + timedelta(seconds=30),
+    )
+    assert stale_reclaim is None
 
 
 def test_duplicate_pending_delivery_does_not_bypass_retry_backoff() -> None:

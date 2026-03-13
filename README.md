@@ -128,6 +128,7 @@ local-assistant/
 - [`docs/adr/0012-capability-gated-agent-actions.md`](docs/adr/0012-capability-gated-agent-actions.md) — keep agent actions capability-gated, least-privilege, and audit-first
 - [`docs/adr/0013-layered-testing-and-linting-gates.md`](docs/adr/0013-layered-testing-and-linting-gates.md) — use layered testing and explicit lint gates for v1 quality control
 - [`docs/adr/0014-directory-readmes-and-agent-rules-separation.md`](docs/adr/0014-directory-readmes-and-agent-rules-separation.md) — use `README.md` for directory indexes and reserve `AGENTS.md` for local agent rules
+- [`docs/adr/0015-modular-slice-boundaries-and-ownership.md`](docs/adr/0015-modular-slice-boundaries-and-ownership.md) — enforce thin facades, bounded slices, and explicit runtime/code/table ownership
 - [`docs/service-contracts/agent-api.md`](docs/service-contracts/agent-api.md) — public contract for the canonical backend ingress
 - [`docs/service-contracts/tools.md`](docs/service-contracts/tools.md) — internal typed contract for the v1 tools integration layer
 - [`docs/testing/short-tdd-plan-template.md`](docs/testing/short-tdd-plan-template.md) — compact TDD plan template with a Control Plane MVP example slice

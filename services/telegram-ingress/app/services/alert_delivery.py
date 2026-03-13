@@ -311,11 +311,21 @@ class PostgresAlertDeliveryRepository:
                         updated_at = %s
                     WHERE
                         id = %s
-                        AND status IN ('pending', 'delivering')
-                        AND (locked_until IS NULL OR locked_until <= %s)
+                        AND (
+                            (
+                                status = 'pending'
+                                AND next_attempt_at IS NOT NULL
+                                AND next_attempt_at <= %s
+                            )
+                            OR (
+                                status = 'delivering'
+                                AND locked_until IS NOT NULL
+                                AND locked_until <= %s
+                            )
+                        )
                     RETURNING id
                     """,
-                    (locked_until_utc, now_utc, delivery_id, now_utc),
+                    (locked_until_utc, now_utc, delivery_id, now_utc, now_utc),
                 )
                 row = cursor.fetchone()
                 if row is None:

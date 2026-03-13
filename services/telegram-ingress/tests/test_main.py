@@ -13,12 +13,14 @@ from app.clients.agent_api import AgentApiClient, AgentApiError
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings
 from app.main import create_app
+from app.modules.alerts.facade import AlertFacade
+from app.modules.webhook.facade import WebhookFacade
 from app.services.alert_delivery import (
     AlertDeliveryRequest,
     AlertDeliveryStorageError,
     AlertSubmissionResult,
 )
-from app.services.bridge import TelegramBridgeService
+from app.services.bridge import TelegramBridgeService, WebhookResult
 
 
 def _events(caplog) -> list[dict[str, object]]:
@@ -207,6 +209,32 @@ class _FakeAlertDeliveryService:
         self.closed = True
 
 
+class _FakeWebhookBridgeService:
+    def __init__(self, result: WebhookResult | None = None) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.result = result or WebhookResult.ok(
+            update_id=1,
+            chat_id=7,
+            message_id=9,
+            conversation_id="telegram:7",
+            status="processed",
+        )
+
+    async def process_update(
+        self,
+        payload: dict[str, object],
+        *,
+        request_id: str,
+    ) -> WebhookResult:
+        self.calls.append(
+            {
+                "payload": payload,
+                "request_id": request_id,
+            }
+        )
+        return self.result
+
+
 def _create_client(
     *,
     settings: Settings | None = None,
@@ -262,6 +290,101 @@ def _create_alert_client(
         alert_delivery_service=alert_service,
     )
     return TestClient(app), alert_service
+
+
+def test_webhook_facade_passes_request_id_to_bridge_service() -> None:
+    bridge_service = _FakeWebhookBridgeService()
+    facade = WebhookFacade(bridge_service=bridge_service)  # type: ignore[arg-type]
+
+    result = asyncio.run(
+        facade.handle_update(
+            update={"update_id": 55},
+            request_id="req_webhook_facade",
+        )
+    )
+
+    assert bridge_service.calls == [
+        {
+            "payload": {"update_id": 55},
+            "request_id": "req_webhook_facade",
+        }
+    ]
+    assert result == bridge_service.result
+
+
+def test_alert_facade_passes_explicit_idempotency_key_to_delivery_service() -> None:
+    settings = _operational_settings(
+        {
+            "telegram_alert_chat_ids": (11,),
+        }
+    )
+    alert_service = _FakeAlertDeliveryService()
+    facade = AlertFacade(
+        settings=settings,
+        alert_delivery_service=alert_service,
+    )
+
+    response = asyncio.run(
+        facade.submit_alert(
+            payload={"text": "manual downtime"},
+            request_id="req_alert_facade",
+            header_idempotency_key="alertmanager-notification-42",
+        )
+    )
+
+    assert response.status_code == 200
+    assert response.payload["status"] == "sent"
+    assert alert_service.request_ids == ["req_alert_facade"]
+    assert alert_service.requests == [
+        AlertDeliveryRequest(
+            deliveries=((11, "manual downtime"),),
+            matched_alerts=1,
+            idempotency_key="alertmanager-notification-42",
+        )
+    ]
+
+
+def test_alert_facade_maps_accepted_delivery_and_process_due_once() -> None:
+    settings = _operational_settings(
+        {
+            "telegram_alert_chat_ids": (11,),
+        }
+    )
+    alert_service = _FakeAlertDeliveryService(
+        results=[
+            AlertSubmissionResult(
+                delivery_id="alert_retry",
+                status="accepted",
+                recipients=1,
+                matched_alerts=1,
+                deduplicated=False,
+            )
+        ]
+    )
+    facade = AlertFacade(
+        settings=settings,
+        alert_delivery_service=alert_service,
+    )
+
+    response = asyncio.run(
+        facade.submit_alert(
+            payload={"text": "manual downtime"},
+            request_id="req_alert_facade",
+            header_idempotency_key=None,
+        )
+    )
+    processed = asyncio.run(facade.process_due_once(limit=7))
+
+    assert response.status_code == 202
+    assert response.payload == {
+        "status": "accepted",
+        "delivery_id": "alert_retry",
+        "recipients": 1,
+        "matched_alerts": 1,
+        "deduplicated": False,
+    }
+    assert processed == 0
+    assert alert_service.process_due_calls == [7]
 
 
 def test_webhook_rejects_when_ingress_not_configured() -> None:

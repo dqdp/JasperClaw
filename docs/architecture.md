@@ -4,7 +4,7 @@
 
 Proposed target architecture for repository bootstrap.
 
-The accepted v1 implementation details are further refined by ADR 0004 through ADR 0013.
+The accepted v1 implementation details are further refined by ADR 0004 through ADR 0015.
 
 ## Executive summary
 
@@ -60,6 +60,30 @@ This path must remain true for:
 - voice chat
 - future mobile/PWA usage
 - future alternative clients (CLI, shortcuts, lightweight apps)
+
+## Internal modularity rule
+
+The service topology above is intentionally small, but that does not justify
+large internal God modules.
+
+The default implementation rule is:
+
+> complex logic behind simple facades
+
+That means:
+
+- HTTP and app-entrypoint code stays thin
+- each public endpoint calls a small application facade
+- policy, parsing, planning, execution, and persistence logic live in separate
+  collaborators behind that facade
+- repositories are scoped by persistence concern rather than by entire service
+- ownership is explicit across runtime, code, tables, and migrations
+
+This rule is what allows the system to stay modular while adding new channels,
+new runtimes, and new model containers without turning the canonical control
+plane into a monolith of mixed concerns.
+
+See ADR 0015 for the detailed slice-boundary and ownership policy.
 
 ## Component model
 

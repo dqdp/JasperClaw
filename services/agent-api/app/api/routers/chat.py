@@ -4,8 +4,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.api.deps import get_chat_service
+from app.api.deps import get_chat_facade
 from app.core.errors import get_request_id
+from app.modules.chat.facade import ChatFacade
 from app.schemas.chat import (
     ChatCompletionChunk,
     ChatCompletionChunkChoice,
@@ -13,7 +14,7 @@ from app.schemas.chat import (
     ChatCompletionRequest,
     ChatCompletionResponse,
 )
-from app.services.chat import ChatService, ChatStreamSession
+from app.services.chat import ChatStreamSession
 
 router = APIRouter()
 
@@ -50,17 +51,17 @@ def _stream_chat_result(result: ChatStreamSession) -> StreamingResponse:
 def chat_completions(
     request: Request,
     payload: ChatCompletionRequest,
-    chat_service: Annotated[ChatService, Depends(get_chat_service)],
+    chat_facade: Annotated[ChatFacade, Depends(get_chat_facade)],
 ):
     if payload.stream:
-        result = chat_service.create_streaming_chat_completion(
+        result = chat_facade.create_streaming_chat_completion(
             request_id=get_request_id(request),
             request=payload,
             conversation_id_hint=request.headers.get("X-Conversation-ID"),
         )
         return _stream_chat_result(result)
 
-    result = chat_service.create_chat_completion(
+    result = chat_facade.create_chat_completion(
         request_id=get_request_id(request),
         request=payload,
         conversation_id_hint=request.headers.get("X-Conversation-ID"),

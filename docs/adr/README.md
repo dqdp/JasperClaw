@@ -21,3 +21,4 @@ Index:
 - `0012-capability-gated-agent-actions.md`: open when enabling actions, approvals, sandboxing, or audit requirements.
 - `0013-layered-testing-and-linting-gates.md`: open when defining test layers, lint gates, or merge readiness.
 - `0014-directory-readmes-and-agent-rules-separation.md`: open when adding or updating local index files or `AGENTS.md` usage.
+- `0015-modular-slice-boundaries-and-ownership.md`: open when refactoring internal module seams, ownership boundaries, or migration authority.

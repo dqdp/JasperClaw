@@ -9,19 +9,12 @@ from app.clients.agent_api import AgentApiClient, AgentApiError
 from app.clients.telegram import TelegramClient, TelegramSendError
 from app.core.config import Settings
 from app.core.logging import log_event
+from app.modules.webhook.commands import CommandRouter
+from app.modules.webhook.parser import TelegramUpdate, TelegramUpdateParser
 
 
 class TelegramBridgeRetryableError(RuntimeError):
     """Raised when an update should be retried instead of acknowledged."""
-
-
-@dataclass(frozen=True, slots=True)
-class TelegramUpdate:
-    update_id: int
-    chat_id: int
-    message_id: int
-    user_id: int | None
-    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +147,10 @@ class TelegramBridgeService:
             limit_per_window=self._settings.telegram_rate_limit_global,
             window_seconds=self._settings.rate_limit_window_seconds,
         )
+        self._parser = TelegramUpdateParser(
+            allowed_commands=self._settings.telegram_allowed_commands,
+        )
+        self._command_router = CommandRouter(parser=self._parser)
 
     async def process_update(
         self,
@@ -162,13 +159,13 @@ class TelegramBridgeService:
         request_id: str,
     ) -> WebhookResult:
         started = perf_counter()
-        context = self._payload_context(payload)
+        context = self._parser.payload_context(payload)
         log_event(
             "telegram_update_received",
             request_id=request_id,
             **context,
         )
-        update = self._parse_update(payload)
+        update = self._parser.parse_update(payload)
         if update is None:
             return self._log_update_result(
                 request_id=request_id,
@@ -233,9 +230,9 @@ class TelegramBridgeService:
             )
 
         conversation_id = f"telegram:{update.chat_id}"
-        command = self._extract_command(update.text)
+        command = self._parser.extract_command(update.text)
         if command is not None:
-            if not self._is_command_allowed(update.text):
+            if not self._parser.is_command_allowed(update.text):
                 return self._log_update_result(
                     request_id=request_id,
                     started=started,
@@ -254,7 +251,6 @@ class TelegramBridgeService:
             try:
                 handled = await self._handle_command(
                     update=update,
-                    command=command,
                     conversation_id=conversation_id,
                     request_id=request_id,
                 )
@@ -325,34 +321,24 @@ class TelegramBridgeService:
         self,
         *,
         update: TelegramUpdate,
-        command: str,
         conversation_id: str,
         request_id: str,
     ) -> WebhookResult | None:
-        if command == "/help":
+        route = self._command_router.route(update.text)
+        if route is None:
+            return None
+
+        if route.mode == "local_reply":
             return await self._send_local_reply(
                 update=update,
                 conversation_id=conversation_id,
-                text="Available commands: /help, /status, /ask <message>",
+                text=route.text,
             )
-        if command == "/status":
-            return await self._send_local_reply(
-                update=update,
-                conversation_id=conversation_id,
-                text="telegram-ingress ok",
-            )
-        if command == "/ask":
-            prompt_text = self._extract_command_body(update.text)
-            if not prompt_text:
-                return await self._send_local_reply(
-                    update=update,
-                    conversation_id=conversation_id,
-                    text="Usage: /ask <message>",
-                )
+        if route.mode == "completion":
             return await self._complete_and_send(
                 update=update,
                 conversation_id=conversation_id,
-                prompt_text=prompt_text,
+                prompt_text=route.text,
                 request_id=request_id,
             )
         return None
@@ -425,127 +411,6 @@ class TelegramBridgeService:
         if update.update_id > 0:
             return str(update.update_id)
         return f"{update.chat_id}:{update.message_id}"
-
-    def _parse_update(self, payload: dict[str, object]) -> TelegramUpdate | None:
-        message = self._extract_message(payload)
-        if message is None:
-            return None
-
-        if self._is_bot_message(message):
-            return None
-
-        update_id = self._coerce_int(payload.get("update_id"), None)
-        chat_id = self._coerce_int(message.get("chat"), 0, key="id")
-        message_id = self._coerce_int(message, 0, key="message_id")
-        if chat_id <= 0 or message_id <= 0:
-            return None
-
-        text = self._extract_text(message)
-        if not text:
-            return None
-
-        user_id = None
-        from_block = message.get("from")
-        if isinstance(from_block, dict):
-            user_id = self._coerce_int(from_block, None, key="id")
-            if isinstance(user_id, int) and user_id <= 0:
-                user_id = None
-
-        return TelegramUpdate(
-            update_id=0 if update_id is None else update_id,
-            chat_id=chat_id,
-            message_id=message_id,
-            user_id=user_id,
-            text=text,
-        )
-
-    def _extract_message(self, payload: dict[str, object]) -> dict[str, object] | None:
-        message = payload.get("message")
-        if isinstance(message, dict):
-            return message
-        edited_message = payload.get("edited_message")
-        if isinstance(edited_message, dict):
-            return edited_message
-        return None
-
-    def _is_bot_message(self, message: dict[str, object]) -> bool:
-        sender = message.get("from")
-        if not isinstance(sender, dict):
-            return False
-        return sender.get("is_bot") is True
-
-    def _extract_text(self, message: dict[str, object]) -> str:
-        text = message.get("text")
-        if isinstance(text, str):
-            return text.strip()
-        caption = message.get("caption")
-        if isinstance(caption, str):
-            return caption.strip()
-        return ""
-
-    def _extract_command(self, text: str) -> str | None:
-        stripped = text.strip()
-        if not stripped.startswith("/"):
-            return None
-
-        command_token = stripped.split(maxsplit=1)[0]
-        if not command_token or command_token == "/":
-            return None
-
-        return command_token.split("@", 1)[0].lower()
-
-    def _extract_command_body(self, text: str) -> str:
-        stripped = text.strip()
-        if not stripped.startswith("/"):
-            return stripped
-        parts = stripped.split(maxsplit=1)
-        if len(parts) < 2:
-            return ""
-        return parts[1].strip()
-
-    def _is_command_allowed(self, text: str) -> bool:
-        allowed_commands = self._settings.telegram_allowed_commands
-        if not allowed_commands:
-            return True
-
-        command = self._extract_command(text)
-        if command is None:
-            return True
-
-        return command in allowed_commands
-
-    def _coerce_int(
-        self, source: object, default: int | None, key: str | None = None
-    ) -> int | None:
-        value = source
-        if isinstance(key, str) and isinstance(source, dict):
-            value = source.get(key)
-        elif key is not None:
-            raise ValueError("key is only valid with dict source")
-
-        if not isinstance(value, int):
-            return default
-        if isinstance(value, bool):
-            return default
-        return value
-
-    def _payload_context(self, payload: dict[str, object]) -> dict[str, object]:
-        update_id = self._coerce_int(payload.get("update_id"), None)
-        message = self._extract_message(payload)
-        chat_id = None
-        message_id = None
-        conversation_id = None
-        if message is not None:
-            chat_id = self._coerce_int(message.get("chat"), None, key="id")
-            message_id = self._coerce_int(message, None, key="message_id")
-            if isinstance(chat_id, int) and chat_id > 0:
-                conversation_id = f"telegram:{chat_id}"
-        return {
-            "update_id": update_id,
-            "chat_id": chat_id,
-            "message_id": message_id,
-            "conversation_id": conversation_id,
-        }
 
     def _log_update_result(
         self,

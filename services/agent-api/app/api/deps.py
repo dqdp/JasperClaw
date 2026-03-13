@@ -8,6 +8,7 @@ from app.clients.search import WebSearchClient
 from app.clients.spotify import SpotifyClient
 from app.core.config import Settings, get_settings
 from app.migrations import MigrationRunner
+from app.modules.chat.facade import ChatFacade
 from app.repositories import ChatRepository, PostgresChatRepository
 from app.services.chat import ChatService
 from app.services.readiness import ReadinessService
@@ -81,6 +82,12 @@ def get_chat_service(
         web_search_client=web_search_client,
         spotify_client=spotify_client,
     )
+
+
+def get_chat_facade(
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
+) -> ChatFacade:
+    return ChatFacade(chat_service=chat_service)
 
 
 def get_readiness_service(
