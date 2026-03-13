@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.clients.telegram import TelegramSendError
+from app.core.metrics import AlertDeliveryMetrics
 from app.services.alert_delivery import (
     AlertDeliveryRecord,
     AlertDeliveryRequest,
@@ -275,6 +276,7 @@ def _service(
     *,
     repository: _InMemoryAlertDeliveryRepository,
     telegram_client: _SequencedTelegramClient,
+    metrics: AlertDeliveryMetrics | None = None,
     retry_backoff_seconds: float = 0.0,
     max_attempts: int = 3,
     claim_ttl_seconds: float = 30.0,
@@ -282,6 +284,7 @@ def _service(
     return AlertDeliveryService(
         repository=repository,
         telegram_client=telegram_client,
+        metrics=metrics or AlertDeliveryMetrics(),
         retry_backoff_seconds=retry_backoff_seconds,
         max_attempts=max_attempts,
         claim_ttl_seconds=claim_ttl_seconds,
@@ -587,6 +590,94 @@ def test_process_due_delivery_emits_stale_reclaim_claim_origin(caplog) -> None:
     )
     assert claim_event["delivery_id"] == "alert_1"
     assert claim_event["claim_origin"] == "stale_reclaim"
+
+
+def test_submit_delivery_updates_metrics_for_successful_lifecycle() -> None:
+    repository = _InMemoryAlertDeliveryRepository()
+    telegram_client = _SequencedTelegramClient()
+    metrics = AlertDeliveryMetrics()
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        metrics=metrics,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    submission = asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+    exported = metrics.render_prometheus()
+
+    assert submission.status == "sent"
+    assert 'telegram_alert_delivery_claim_total{origin="pending"} 1' in exported
+    assert (
+        'telegram_alert_delivery_target_attempt_total{error_class="none",status="sent"} 1'
+        in exported
+    )
+    assert 'telegram_alert_delivery_finalize_total{status="completed"} 1' in exported
+
+
+def test_submit_delivery_updates_metrics_for_retryable_attempt() -> None:
+    repository = _InMemoryAlertDeliveryRepository()
+    telegram_client = _SequencedTelegramClient(
+        failures={
+            11: [
+                TelegramSendError(
+                    "rate limited",
+                    status_code=429,
+                    retry_after_seconds=10.0,
+                )
+            ]
+        }
+    )
+    metrics = AlertDeliveryMetrics()
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        metrics=metrics,
+        retry_backoff_seconds=1.0,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    submission = asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+    exported = metrics.render_prometheus()
+
+    assert submission.status == "accepted"
+    assert (
+        'telegram_alert_delivery_target_attempt_total{error_class="http_429",status="pending"} 1'
+        in exported
+    )
+    assert 'telegram_alert_delivery_finalize_total{status="pending"} 1' in exported
+
+
+def test_finalize_failure_updates_metrics() -> None:
+    repository = _InMemoryAlertDeliveryRepository(
+        fail_finalize_delivery_once=True,
+    )
+    telegram_client = _SequencedTelegramClient()
+    metrics = AlertDeliveryMetrics()
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        metrics=metrics,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with pytest.raises(AlertDeliveryStorageError):
+        asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+
+    exported = metrics.render_prometheus()
+    assert "telegram_alert_delivery_finalize_failed_total 1" in exported
 
 
 def test_claim_delivery_rechecks_next_attempt_at_before_stale_reclaim() -> None:

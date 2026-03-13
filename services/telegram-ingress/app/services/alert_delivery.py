@@ -11,6 +11,7 @@ import psycopg
 
 from app.clients.telegram import TelegramClient, TelegramSendError
 from app.core.logging import log_event
+from app.core.metrics import AlertDeliveryMetrics
 
 _TERMINAL_STATUS_CODES = frozenset({400, 401, 403, 404})
 
@@ -647,12 +648,14 @@ class AlertDeliveryService:
         *,
         repository: AlertDeliveryRepository,
         telegram_client: TelegramClient,
+        metrics: AlertDeliveryMetrics | None = None,
         retry_backoff_seconds: float,
         max_attempts: int,
         claim_ttl_seconds: float,
     ) -> None:
         self._repository = repository
         self._telegram_client = telegram_client
+        self._metrics = metrics or AlertDeliveryMetrics()
         self._retry_backoff_seconds = retry_backoff_seconds
         self._max_attempts = max_attempts
         self._claim_ttl_seconds = claim_ttl_seconds
@@ -716,6 +719,7 @@ class AlertDeliveryService:
                 delivery_status=record.status,
                 pending_targets=self._count_targets(record, "pending"),
             )
+            self._metrics.record_claim_skipped()
             return record
 
         pending_targets = [
@@ -766,6 +770,7 @@ class AlertDeliveryService:
                     error_code=type(exc).__name__,
                     error_message=str(exc),
                 )
+                self._metrics.record_target_attempt_persist_failed()
                 raise AlertDeliveryStorageError(
                     "telegram alert delivery target update failed"
                 ) from exc
@@ -777,6 +782,10 @@ class AlertDeliveryService:
                 error_code=attempt.error_code,
                 error_message=attempt.error_message,
                 retry_after_seconds=attempt.retry_after_seconds,
+            )
+            self._metrics.record_target_attempt(
+                status=attempt.status,
+                error_code=attempt.error_code,
             )
 
         try:
@@ -798,6 +807,7 @@ class AlertDeliveryService:
                 next_attempt_at=finalized.next_attempt_at,
                 last_error_code=finalized.last_error_code,
             )
+            self._metrics.record_finalize(status=finalized.status)
             return finalized
         except Exception as exc:
             log_event(
@@ -806,6 +816,7 @@ class AlertDeliveryService:
                 error_code=type(exc).__name__,
                 error_message=str(exc),
             )
+            self._metrics.record_finalize_failed()
             raise AlertDeliveryStorageError(
                 "telegram alert delivery finalize failed"
             ) from exc
@@ -837,6 +848,7 @@ class AlertDeliveryService:
                     attempt_count=claimed.attempt_count,
                     next_attempt_at=claimed.next_attempt_at,
                 )
+                self._metrics.record_claim(origin=claim_origin)
             return claimed
         except Exception as exc:
             log_event(

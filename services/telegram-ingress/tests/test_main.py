@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.clients.agent_api import AgentApiClient, AgentApiError
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings
+from app.core.metrics import AlertDeliveryMetrics
 from app.main import create_app
 from app.modules.alerts.facade import AlertFacade
 from app.modules.webhook.facade import WebhookFacade
@@ -271,6 +272,7 @@ def _create_alert_client(
     *,
     settings: Settings | None = None,
     alert_service: _FakeAlertDeliveryService | None = None,
+    alert_delivery_metrics: AlertDeliveryMetrics | None = None,
 ) -> tuple[TestClient, _FakeAlertDeliveryService]:
     settings = settings or _operational_settings(
         {
@@ -288,8 +290,28 @@ def _create_alert_client(
             settings=settings,
         ),
         alert_delivery_service=alert_service,
+        alert_delivery_metrics=alert_delivery_metrics,
     )
     return TestClient(app), alert_service
+
+
+def test_metrics_endpoint_exposes_alert_delivery_metrics() -> None:
+    metrics = AlertDeliveryMetrics()
+    metrics.record_claim(origin="pending")
+    metrics.record_target_attempt(status="sent", error_code=None)
+    metrics.record_finalize(status="completed")
+    client, _ = _create_alert_client(alert_delivery_metrics=metrics)
+
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert 'telegram_alert_delivery_claim_total{origin="pending"} 1' in response.text
+    assert (
+        'telegram_alert_delivery_target_attempt_total{error_class="none",status="sent"} 1'
+        in response.text
+    )
+    assert 'telegram_alert_delivery_finalize_total{status="completed"} 1' in response.text
 
 
 def test_webhook_facade_passes_request_id_to_bridge_service() -> None:

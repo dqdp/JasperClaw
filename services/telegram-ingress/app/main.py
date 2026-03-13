@@ -6,11 +6,13 @@ from time import perf_counter
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.responses import PlainTextResponse
 
 from app.clients.agent_api import AgentApiClient
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, log_event, new_request_id
+from app.core.metrics import AlertDeliveryMetrics
 from app.modules.alerts import AlertFacade, AlertRetryWorker, unique_chat_ids
 from app.modules.webhook.facade import WebhookFacade
 from app.services.alert_delivery import (
@@ -33,9 +35,11 @@ def create_app(
     settings: Settings | None = None,
     bridge_service: TelegramBridgeService | None = None,
     alert_delivery_service: AlertDeliveryHandler | None = None,
+    alert_delivery_metrics: AlertDeliveryMetrics | None = None,
 ) -> FastAPI:
     config = settings if settings is not None else get_settings()
     app = FastAPI(title="telegram-ingress", version="0.1.0")
+    metrics = alert_delivery_metrics or AlertDeliveryMetrics()
 
     @app.middleware("http")
     async def attach_request_id(request: Request, call_next):
@@ -93,6 +97,7 @@ def create_app(
         alert_delivery_service = AlertDeliveryService(
             repository=PostgresAlertDeliveryRepository(config.database_url),
             telegram_client=alert_telegram_client,
+            metrics=metrics,
             retry_backoff_seconds=config.telegram_alert_retry_backoff_seconds,
             max_attempts=config.telegram_alert_max_attempts,
             claim_ttl_seconds=config.telegram_alert_claim_ttl_seconds,
@@ -116,6 +121,13 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/metrics")
+    def metrics_endpoint() -> PlainTextResponse:
+        return PlainTextResponse(
+            metrics.render_prometheus(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     async def _poll_updates_forever() -> None:
         assert telegram_client is not None

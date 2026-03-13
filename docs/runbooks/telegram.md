@@ -156,6 +156,26 @@ Policy baseline:
 - если `attempt_status=pending` часто сопровождается `error_code=http_429`, проблема в Telegram backpressure, а не в storage path;
 - если delivery зависает в `pending`, ключевой ориентир — `next_attempt_at` из `telegram_alert_delivery_finalized`.
 
+Prometheus-compatible export path:
+
+- `GET /metrics` на `telegram-ingress` теперь экспортирует process-level counters для alert delivery;
+- labels intentionally low-cardinality:
+  - `telegram_alert_delivery_claim_total{origin="pending|stale_reclaim"}`
+  - `telegram_alert_delivery_target_attempt_total{status="sent|pending|failed",error_class="none|http_429|http_4xx|http_5xx|other"}`
+  - `telegram_alert_delivery_finalize_total{status="completed|pending|failed"}`
+- без labels экспортируются:
+  - `telegram_alert_delivery_claim_skipped_total`
+  - `telegram_alert_delivery_target_attempt_persist_failed_total`
+  - `telegram_alert_delivery_finalize_failed_total`
+
+Практический смысл этих счётчиков:
+
+- `claim_total{origin="stale_reclaim"}` показывает recovery pressure после истечения claim TTL;
+- `target_attempt_total{status="pending",error_class="http_429"}` показывает Telegram backpressure;
+- `target_attempt_persist_failed_total` сигнализирует, что side effect уже мог случиться, а durable outcome не записался;
+- `finalize_failed_total` помогает отличать storage/finalize problems от send failures;
+- `finalize_total{status="pending"}` удобно использовать как coarse retry-pressure indicator.
+
 Текущая эксплуатация:
 
 - использовать отдельный alert-bot (отдельный токен и, по возможности, отдельный Telegram account/channel),
