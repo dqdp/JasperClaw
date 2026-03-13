@@ -7,14 +7,16 @@ RUFF = $(VENV)/bin/ruff
 
 $(VENV_PYTHON):
 	$(PYTHON) -m venv $(VENV)
-	$(VENV_PIP) install --upgrade pip
+	$(VENV_PIP) install --upgrade pip setuptools
 	$(VENV_PIP) install -r requirements-dev.txt
+	$(VENV_PIP) install --no-build-isolation -e ./shared_infra
 
 venv: $(VENV_PYTHON)
 
 sync: $(VENV_PYTHON)
-	$(VENV_PIP) install --upgrade pip
+	$(VENV_PIP) install --upgrade pip setuptools
 	$(VENV_PIP) install -r requirements-dev.txt
+	$(VENV_PIP) install --no-build-isolation -e ./shared_infra
 
 up:
 	$(COMPOSE) up -d --build postgres ollama

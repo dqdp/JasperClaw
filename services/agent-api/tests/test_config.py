@@ -1,3 +1,8 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 from psycopg.conninfo import conninfo_to_dict
 
 from app.api import deps
@@ -25,3 +30,20 @@ def test_get_settings_preserves_reserved_characters_in_postgres_credentials(
     assert conninfo["dbname"] == "assistant"
     assert conninfo["user"] == "assistant:name"
     assert conninfo["password"] == "p@ss:/#word"
+
+
+def test_service_local_import_of_app_main_succeeds() -> None:
+    service_dir = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.main"],
+        cwd=service_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
