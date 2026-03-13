@@ -4,6 +4,7 @@ import sys
 from types import SimpleNamespace
 
 import psycopg
+from psycopg.conninfo import make_conninfo
 
 from platform_db.runner import MigrationRunner, default_migrations_dir
 
@@ -28,7 +29,13 @@ def _load_settings() -> SimpleNamespace:
     if not all((host, db, user, password)):
         raise RuntimeError("Database connection environment is incomplete")
     return SimpleNamespace(
-        database_url=f"postgresql://{user}:{password}@{host}:{port}/{db}"
+        database_url=make_conninfo(
+            host=host,
+            port=port,
+            dbname=db,
+            user=user,
+            password=password,
+        )
     )
 
 

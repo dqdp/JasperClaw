@@ -113,6 +113,25 @@ class AlertDeliveryRepository(Protocol):
         locked_until: datetime,
     ) -> AlertDeliveryRecord | None: ...
 
+    def record_target_attempt(
+        self,
+        *,
+        delivery_id: str,
+        attempt: AlertTargetAttempt,
+        completed_at: datetime,
+        retry_backoff_seconds: float,
+        max_attempts: int,
+    ) -> None: ...
+
+    def finalize_delivery(
+        self,
+        *,
+        delivery_id: str,
+        completed_at: datetime,
+        retry_backoff_seconds: float,
+        max_attempts: int,
+    ) -> AlertDeliveryRecord: ...
+
     def apply_attempt_results(
         self,
         *,
@@ -280,11 +299,12 @@ class PostgresAlertDeliveryRepository:
                             status = 'delivering'
                             AND locked_until IS NOT NULL
                             AND locked_until <= %s
+                            AND (next_attempt_at IS NULL OR next_attempt_at <= %s)
                         )
                     ORDER BY next_attempt_at NULLS FIRST, created_at
                     LIMIT %s
                     """,
-                    (now_utc, now_utc, limit),
+                    (now_utc, now_utc, now_utc, limit),
                 )
                 return tuple(row[0] for row in cursor.fetchall())
 
@@ -321,16 +341,210 @@ class PostgresAlertDeliveryRepository:
                                 status = 'delivering'
                                 AND locked_until IS NOT NULL
                                 AND locked_until <= %s
+                                AND (next_attempt_at IS NULL OR next_attempt_at <= %s)
                             )
                         )
                     RETURNING id
                     """,
-                    (locked_until_utc, now_utc, delivery_id, now_utc, now_utc),
+                    (
+                        locked_until_utc,
+                        now_utc,
+                        delivery_id,
+                        now_utc,
+                        now_utc,
+                        now_utc,
+                    ),
                 )
                 row = cursor.fetchone()
                 if row is None:
                     return None
             return self._get_delivery(conn, delivery_id=delivery_id)
+
+        return self._execute(write)
+
+    def record_target_attempt(
+        self,
+        *,
+        delivery_id: str,
+        attempt: AlertTargetAttempt,
+        completed_at: datetime,
+        retry_backoff_seconds: float,
+        max_attempts: int,
+    ) -> None:
+        completed_at_utc = completed_at.astimezone(timezone.utc)
+
+        def write(conn: psycopg.Connection) -> None:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE telegram_alert_delivery_targets
+                    SET
+                        status = CASE
+                            WHEN %s = 'pending' AND attempt_count + 1 >= %s THEN 'failed'
+                            ELSE %s
+                        END,
+                        attempt_count = attempt_count + 1,
+                        last_error_code = %s,
+                        last_error_message = %s,
+                        sent_at = CASE
+                            WHEN %s = 'sent' THEN COALESCE(sent_at, %s)
+                            ELSE sent_at
+                        END,
+                        updated_at = %s
+                    WHERE delivery_id = %s AND chat_id = %s
+                    RETURNING status
+                    """,
+                    (
+                        attempt.status,
+                        max_attempts,
+                        attempt.status,
+                        attempt.error_code,
+                        attempt.error_message,
+                        attempt.status,
+                        completed_at_utc,
+                        completed_at_utc,
+                        delivery_id,
+                        attempt.chat_id,
+                    ),
+                )
+                row = cursor.fetchone()
+            if row is None:
+                raise AlertDeliveryStorageError(
+                    "telegram alert delivery target missing during attempt update"
+                )
+
+            resulting_status = row[0]
+            if resulting_status != "pending":
+                return
+
+            retry_delay_seconds = max(
+                retry_backoff_seconds,
+                attempt.retry_after_seconds or 0.0,
+            )
+            next_attempt_at = completed_at_utc + timedelta(seconds=retry_delay_seconds)
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE telegram_alert_deliveries
+                    SET
+                        next_attempt_at = GREATEST(
+                            COALESCE(next_attempt_at, '-infinity'::timestamptz),
+                            %s
+                        ),
+                        last_error_code = %s,
+                        last_error_message = %s,
+                        updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        next_attempt_at,
+                        attempt.error_code,
+                        attempt.error_message,
+                        completed_at_utc,
+                        delivery_id,
+                    ),
+                )
+
+        self._execute(write)
+
+    def finalize_delivery(
+        self,
+        *,
+        delivery_id: str,
+        completed_at: datetime,
+        retry_backoff_seconds: float,
+        max_attempts: int,
+    ) -> AlertDeliveryRecord:
+        completed_at_utc = completed_at.astimezone(timezone.utc)
+
+        def write(conn: psycopg.Connection) -> AlertDeliveryRecord:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE telegram_alert_delivery_targets
+                    SET
+                        status = 'failed',
+                        updated_at = %s
+                    WHERE
+                        delivery_id = %s
+                        AND status = 'pending'
+                        AND attempt_count >= %s
+                    """,
+                    (completed_at_utc, delivery_id, max_attempts),
+                )
+
+            record = self._get_delivery(conn, delivery_id=delivery_id)
+            if record is None:
+                raise AlertDeliveryStorageError(
+                    "telegram alert delivery missing during finalize"
+                )
+
+            pending_targets = [
+                target for target in record.targets if target.status == "pending"
+            ]
+            failed_targets = [
+                target for target in record.targets if target.status == "failed"
+            ]
+            sent_targets = [
+                target for target in record.targets if target.status == "sent"
+            ]
+
+            if len(sent_targets) == len(record.targets):
+                delivery_status = "completed"
+                delivery_next_attempt_at = None
+                last_error_code = None
+                last_error_message = None
+            elif pending_targets:
+                delivery_status = "pending"
+                delivery_next_attempt_at = record.next_attempt_at or (
+                    completed_at_utc + timedelta(seconds=retry_backoff_seconds)
+                )
+                pending_target = pending_targets[0]
+                last_error_code = pending_target.last_error_code
+                last_error_message = pending_target.last_error_message
+            else:
+                delivery_status = "failed"
+                delivery_next_attempt_at = None
+                failed_target = failed_targets[0] if failed_targets else None
+                last_error_code = (
+                    failed_target.last_error_code if failed_target is not None else None
+                )
+                last_error_message = (
+                    failed_target.last_error_message
+                    if failed_target is not None
+                    else None
+                )
+
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE telegram_alert_deliveries
+                    SET
+                        status = %s,
+                        attempt_count = attempt_count + 1,
+                        next_attempt_at = %s,
+                        locked_until = NULL,
+                        last_error_code = %s,
+                        last_error_message = %s,
+                        updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        delivery_status,
+                        delivery_next_attempt_at,
+                        last_error_code,
+                        last_error_message,
+                        completed_at_utc,
+                        delivery_id,
+                    ),
+                )
+
+            finalized = self._get_delivery(conn, delivery_id=delivery_id)
+            if finalized is None:
+                raise AlertDeliveryStorageError(
+                    "telegram alert delivery missing after finalize"
+                )
+            return finalized
 
         return self._execute(write)
 
@@ -648,7 +862,6 @@ class AlertDeliveryService:
                 raise AlertDeliveryStorageError("telegram alert delivery disappeared")
             return record
 
-        attempts: list[AlertTargetAttempt] = []
         pending_targets = [
             target for target in claimed.targets if target.status == "pending"
         ]
@@ -659,44 +872,51 @@ class AlertDeliveryService:
                     text=target.message_text,
                 )
             except TelegramSendError as exc:
-                attempts.append(
-                    AlertTargetAttempt(
-                        chat_id=target.chat_id,
-                        status=self._classified_status(exc),
-                        error_code=self._classified_error_code(exc),
-                        error_message=str(exc),
-                        retry_after_seconds=exc.retry_after_seconds,
-                    )
+                attempt = AlertTargetAttempt(
+                    chat_id=target.chat_id,
+                    status=self._classified_status(exc),
+                    error_code=self._classified_error_code(exc),
+                    error_message=str(exc),
+                    retry_after_seconds=exc.retry_after_seconds,
                 )
             except Exception as exc:
-                attempts.append(
-                    AlertTargetAttempt(
-                        chat_id=target.chat_id,
-                        status="pending",
-                        error_code=type(exc).__name__,
-                        error_message=str(exc),
-                    )
+                attempt = AlertTargetAttempt(
+                    chat_id=target.chat_id,
+                    status="pending",
+                    error_code=type(exc).__name__,
+                    error_message=str(exc),
                 )
             else:
-                attempts.append(
-                    AlertTargetAttempt(
-                        chat_id=target.chat_id,
-                        status="sent",
-                    )
+                attempt = AlertTargetAttempt(
+                    chat_id=target.chat_id,
+                    status="sent",
                 )
+
+            try:
+                await asyncio.to_thread(
+                    self._repository.record_target_attempt,
+                    delivery_id=delivery_id,
+                    attempt=attempt,
+                    completed_at=datetime.now(timezone.utc),
+                    retry_backoff_seconds=self._retry_backoff_seconds,
+                    max_attempts=self._max_attempts,
+                )
+            except Exception as exc:
+                raise AlertDeliveryStorageError(
+                    "telegram alert delivery target update failed"
+                ) from exc
 
         try:
             return await asyncio.to_thread(
-                self._repository.apply_attempt_results,
+                self._repository.finalize_delivery,
                 delivery_id=delivery_id,
-                attempts=tuple(attempts),
                 completed_at=datetime.now(timezone.utc),
                 retry_backoff_seconds=self._retry_backoff_seconds,
                 max_attempts=self._max_attempts,
             )
         except Exception as exc:
             raise AlertDeliveryStorageError(
-                "telegram alert delivery attempt update failed"
+                "telegram alert delivery finalize failed"
             ) from exc
 
     async def _claim_delivery(

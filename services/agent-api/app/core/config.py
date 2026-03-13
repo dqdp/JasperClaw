@@ -2,6 +2,8 @@ import os
 from dataclasses import dataclass
 from functools import lru_cache
 
+from psycopg.conninfo import make_conninfo
+
 
 _PLACEHOLDER_SECRET_VALUES = frozenset({"", "change-me"})
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -72,9 +74,12 @@ def get_settings() -> Settings:
         postgres_db = os.getenv("POSTGRES_DB", "assistant")
         postgres_user = os.getenv("POSTGRES_USER", "assistant")
         postgres_password = os.getenv("POSTGRES_PASSWORD", "change-me")
-        database_url = (
-            f"postgresql://{postgres_user}:{postgres_password}"
-            f"@{postgres_host}:{postgres_port}/{postgres_db}"
+        database_url = make_conninfo(
+            host=postgres_host,
+            port=postgres_port,
+            dbname=postgres_db,
+            user=postgres_user,
+            password=postgres_password,
         )
     return Settings(
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),

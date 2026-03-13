@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from functools import lru_cache
 import os
 
+from psycopg.conninfo import make_conninfo
+
 
 _PLACEHOLDER_SECRET_VALUES = frozenset({"", "change-me"})
 
@@ -148,9 +150,12 @@ def get_settings() -> Settings:
         postgres_db = os.getenv("POSTGRES_DB", "assistant").strip()
         postgres_user = os.getenv("POSTGRES_USER", "assistant").strip()
         postgres_password = os.getenv("POSTGRES_PASSWORD", "change-me")
-        database_url = (
-            f"postgresql://{postgres_user}:{postgres_password}"
-            f"@{postgres_host}:{postgres_port}/{postgres_db}"
+        database_url = make_conninfo(
+            host=postgres_host,
+            port=postgres_port,
+            dbname=postgres_db,
+            user=postgres_user,
+            password=postgres_password,
         )
 
     return Settings(

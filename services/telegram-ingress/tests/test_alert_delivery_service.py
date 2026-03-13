@@ -4,10 +4,13 @@ import asyncio
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.clients.telegram import TelegramSendError
 from app.services.alert_delivery import (
     AlertDeliveryRecord,
     AlertDeliveryRequest,
+    AlertDeliveryStorageError,
     AlertDeliveryService,
     AlertDeliveryTargetRecord,
     AlertTargetAttempt,
@@ -22,10 +25,17 @@ class _StoredDelivery:
 
 
 class _InMemoryAlertDeliveryRepository:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        fail_apply_attempt_results_once: bool = False,
+        fail_finalize_delivery_once: bool = False,
+    ) -> None:
         self._records: dict[str, _StoredDelivery] = {}
         self._idempotency_index: dict[str, str] = {}
         self._sequence = 0
+        self._fail_apply_attempt_results_once = fail_apply_attempt_results_once
+        self._fail_finalize_delivery_once = fail_finalize_delivery_once
 
     def enqueue_delivery(
         self,
@@ -88,7 +98,12 @@ class _InMemoryAlertDeliveryRepository:
             if record.status == "pending" and record.next_attempt_at is not None and record.next_attempt_at <= now:
                 due.append(delivery_id)
                 continue
-            if record.status == "delivering" and stored.locked_until is not None and stored.locked_until <= now:
+            if (
+                record.status == "delivering"
+                and stored.locked_until is not None
+                and stored.locked_until <= now
+                and (record.next_attempt_at is None or record.next_attempt_at <= now)
+            ):
                 due.append(delivery_id)
         return tuple(sorted(due)[:limit])
 
@@ -109,7 +124,14 @@ class _InMemoryAlertDeliveryRepository:
             ):
                 return None
         elif stored.record.status == "delivering":
-            if stored.locked_until is None or stored.locked_until > now:
+            if (
+                stored.locked_until is None
+                or stored.locked_until > now
+                or (
+                    stored.record.next_attempt_at is not None
+                    and stored.record.next_attempt_at > now
+                )
+            ):
                 return None
         else:
             return None
@@ -129,6 +151,9 @@ class _InMemoryAlertDeliveryRepository:
         retry_backoff_seconds: float,
         max_attempts: int,
     ) -> AlertDeliveryRecord:
+        if self._fail_apply_attempt_results_once:
+            self._fail_apply_attempt_results_once = False
+            raise RuntimeError("simulated apply failure")
         stored = self._records[delivery_id]
         attempt_map = {attempt.chat_id: attempt for attempt in attempts}
         updated_targets: list[AlertDeliveryTargetRecord] = []
@@ -192,12 +217,114 @@ class _InMemoryAlertDeliveryRepository:
         )
         return stored.record
 
+    def record_target_attempt(
+        self,
+        *,
+        delivery_id: str,
+        attempt: AlertTargetAttempt,
+        completed_at: datetime,
+        retry_backoff_seconds: float,
+        max_attempts: int,
+    ) -> None:
+        stored = self._records[delivery_id]
+        next_attempt_at = stored.record.next_attempt_at
+        updated_targets: list[AlertDeliveryTargetRecord] = []
+        for target in stored.record.targets:
+            if target.chat_id != attempt.chat_id:
+                updated_targets.append(target)
+                continue
+            updated_target = replace(
+                target,
+                status=attempt.status,
+                attempt_count=target.attempt_count + 1,
+                last_error_code=attempt.error_code,
+                last_error_message=attempt.error_message,
+            )
+            if updated_target.status == "pending" and updated_target.attempt_count >= max_attempts:
+                updated_target = replace(updated_target, status="failed")
+            elif updated_target.status == "pending":
+                retry_delay_seconds = max(
+                    retry_backoff_seconds,
+                    attempt.retry_after_seconds or 0.0,
+                )
+                candidate_next_attempt_at = completed_at + timedelta(
+                    seconds=retry_delay_seconds
+                )
+                if next_attempt_at is None or candidate_next_attempt_at > next_attempt_at:
+                    next_attempt_at = candidate_next_attempt_at
+            updated_targets.append(updated_target)
+        stored.record = replace(
+            stored.record,
+            next_attempt_at=next_attempt_at,
+            targets=tuple(updated_targets),
+        )
+
+    def finalize_delivery(
+        self,
+        *,
+        delivery_id: str,
+        completed_at: datetime,
+        retry_backoff_seconds: float,
+        max_attempts: int,
+    ) -> AlertDeliveryRecord:
+        if self._fail_finalize_delivery_once:
+            self._fail_finalize_delivery_once = False
+            raise RuntimeError("simulated finalize failure")
+        stored = self._records[delivery_id]
+        updated_targets: list[AlertDeliveryTargetRecord] = []
+        for target in stored.record.targets:
+            updated_target = target
+            if updated_target.status == "pending" and updated_target.attempt_count >= max_attempts:
+                updated_target = replace(updated_target, status="failed")
+            updated_targets.append(updated_target)
+
+        if all(target.status == "sent" for target in updated_targets):
+            status = "completed"
+            next_attempt_at = None
+            last_error_code = None
+            last_error_message = None
+        else:
+            pending_targets = [
+                target for target in updated_targets if target.status == "pending"
+            ]
+            if pending_targets:
+                status = "pending"
+                next_attempt_at = stored.record.next_attempt_at or (
+                    completed_at + timedelta(seconds=retry_backoff_seconds)
+                )
+                last_error_code = pending_targets[0].last_error_code
+                last_error_message = pending_targets[0].last_error_message
+            else:
+                status = "failed"
+                next_attempt_at = None
+                failed_target = next(
+                    target for target in updated_targets if target.status == "failed"
+                )
+                last_error_code = failed_target.last_error_code
+                last_error_message = failed_target.last_error_message
+
+        stored.locked_until = None
+        stored.record = replace(
+            stored.record,
+            status=status,
+            attempt_count=stored.record.attempt_count + 1,
+            next_attempt_at=next_attempt_at,
+            last_error_code=last_error_code,
+            last_error_message=last_error_message,
+            targets=tuple(updated_targets),
+        )
+        return stored.record
+
     def force_due(self, delivery_id: str) -> None:
         stored = self._records[delivery_id]
         stored.record = replace(
             stored.record,
             next_attempt_at=datetime.now(timezone.utc) - timedelta(seconds=1),
         )
+
+    def expire_claim(self, delivery_id: str) -> None:
+        stored = self._records[delivery_id]
+        stored.locked_until = datetime.now(timezone.utc) - timedelta(seconds=1)
 
 
 class _SequencedTelegramClient:
@@ -225,13 +352,14 @@ def _service(
     telegram_client: _SequencedTelegramClient,
     retry_backoff_seconds: float = 0.0,
     max_attempts: int = 3,
+    claim_ttl_seconds: float = 30.0,
 ) -> AlertDeliveryService:
     return AlertDeliveryService(
         repository=repository,
         telegram_client=telegram_client,
         retry_backoff_seconds=retry_backoff_seconds,
         max_attempts=max_attempts,
-        claim_ttl_seconds=30.0,
+        claim_ttl_seconds=claim_ttl_seconds,
     )
 
 
@@ -522,3 +650,83 @@ def test_pending_delivery_survives_service_restart() -> None:
     assert record is not None
     assert record.status == "completed"
     assert recovery_client.sent_messages == [(11, "critical alert")]
+
+
+def test_finalize_failure_does_not_resend_already_persisted_targets() -> None:
+    repository = _InMemoryAlertDeliveryRepository(
+        fail_apply_attempt_results_once=True,
+        fail_finalize_delivery_once=True,
+    )
+    telegram_client = _SequencedTelegramClient()
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        claim_ttl_seconds=0.0,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"), (22, "critical alert")),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with pytest.raises(AlertDeliveryStorageError):
+        asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+
+    repository.expire_claim("alert_1")
+    recovery_service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        claim_ttl_seconds=0.0,
+    )
+    processed = asyncio.run(recovery_service.process_due_deliveries())
+    record = repository.get_delivery(delivery_id="alert_1")
+
+    assert processed == 1
+    assert record is not None
+    assert record.status == "completed"
+    assert telegram_client.sent_messages == [
+        (11, "critical alert"),
+        (22, "critical alert"),
+    ]
+
+
+def test_finalize_failure_preserves_pending_backoff() -> None:
+    repository = _InMemoryAlertDeliveryRepository(
+        fail_apply_attempt_results_once=True,
+        fail_finalize_delivery_once=True,
+    )
+    telegram_client = _SequencedTelegramClient(
+        failures={
+            11: [
+                TelegramSendError(
+                    "rate limited",
+                    status_code=429,
+                    retry_after_seconds=10.0,
+                )
+            ]
+        }
+    )
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        retry_backoff_seconds=1.0,
+        claim_ttl_seconds=0.0,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with pytest.raises(AlertDeliveryStorageError):
+        asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+
+    repository.expire_claim("alert_1")
+    processed = asyncio.run(service.process_due_deliveries())
+    record = repository.get_delivery(delivery_id="alert_1")
+
+    assert processed == 0
+    assert record is not None
+    assert record.status == "delivering"
+    assert record.next_attempt_at is not None
+    assert telegram_client.sent_messages == []
