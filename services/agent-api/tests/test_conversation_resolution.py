@@ -1,8 +1,8 @@
-from app.repositories.postgres import (
-    PostgresChatRepository,
-    TranscriptMessage,
+from app.persistence.conversations_repo import (
+    PostgresConversationRepository,
     matching_prefix_length,
 )
+from app.persistence.models import TranscriptMessage
 from app.schemas.chat import ChatMessage
 
 
@@ -48,6 +48,14 @@ def test_matching_prefix_length_rejects_longer_stored_transcript() -> None:
 
 
 def test_resolve_by_transcript_prefix_ignores_empty_transcripts() -> None:
+    class _FakeTranscriptRepository:
+        def __init__(self) -> None:
+            self.transcripts = {"conv_empty": []}
+
+        def load_transcript(self, conn, conversation_id: str):
+            _ = conn
+            return self.transcripts[conversation_id]
+
     class _FakeCursor:
         def __init__(self, connection) -> None:
             self._connection = connection
@@ -65,24 +73,17 @@ def test_resolve_by_transcript_prefix_ignores_empty_transcripts() -> None:
             if normalized.startswith("SELECT id FROM conversations"):
                 self._rows = [("conv_empty",)]
                 return
-            if normalized.startswith("SELECT role, content FROM messages"):
-                conversation_id = params[0]
-                self._rows = self._connection.transcripts[conversation_id]
-                return
             raise AssertionError(f"Unexpected SQL: {normalized}")
 
         def fetchall(self):
             return list(self._rows)
 
     class _FakeConnection:
-        def __init__(self) -> None:
-            self.transcripts = {"conv_empty": []}
-
         def cursor(self):
             return _FakeCursor(self)
 
-    repository = PostgresChatRepository(
-        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    repository = PostgresConversationRepository(
+        transcript_repository=_FakeTranscriptRepository(),
     )
     request_messages = [ChatMessage(role="user", content="Hello")]
 
