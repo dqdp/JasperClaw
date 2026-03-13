@@ -1,24 +1,11 @@
-import sys
-from pathlib import Path
-
 import psycopg
 
 from app.core.errors import APIError
-
-
-def _ensure_platform_db_import_path() -> None:
-    for ancestor in Path(__file__).resolve().parents:
-        if (ancestor / "platform_db").is_dir():
-            ancestor_str = str(ancestor)
-            if ancestor_str not in sys.path:
-                sys.path.append(ancestor_str)
-            return
-
-
-_ensure_platform_db_import_path()
-
-from platform_db.runner import MigrationRunner as _PlatformMigrationRunner
-from platform_db.runner import MigrationStatus, default_migrations_dir
+from shared_infra.migrations import (
+    MigrationRunner as _PlatformMigrationRunner,
+    MigrationStatus,
+    default_migrations_dir,
+)
 
 
 class MigrationRunner(_PlatformMigrationRunner):

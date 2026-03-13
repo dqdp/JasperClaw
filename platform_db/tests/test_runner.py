@@ -62,7 +62,7 @@ class _FakeConnection:
 
 
 def test_platform_runner_applies_pending_sql(monkeypatch, tmp_path: Path) -> None:
-    from platform_db.runner import MigrationRunner
+    from shared_infra.migrations import MigrationRunner
 
     migrations_dir = tmp_path / "migrations"
     migrations_dir.mkdir()
@@ -70,7 +70,7 @@ def test_platform_runner_applies_pending_sql(monkeypatch, tmp_path: Path) -> Non
     fake_connection = _FakeConnection()
 
     monkeypatch.setattr(
-        "platform_db.runner.psycopg.connect",
+        "shared_infra.migrations.psycopg.connect",
         lambda database_url: fake_connection,
     )
 
@@ -95,9 +95,22 @@ def test_platform_runner_applies_pending_sql(monkeypatch, tmp_path: Path) -> Non
 
 
 def test_default_migrations_dir_points_to_platform_db_catalog() -> None:
-    from platform_db.runner import default_migrations_dir
+    from shared_infra.migrations import default_migrations_dir
 
     migrations_dir = default_migrations_dir()
 
     assert migrations_dir.name == "migrations"
     assert migrations_dir.parent.name == "platform-db"
+
+
+def test_platform_runner_re_exports_shared_migration_primitives() -> None:
+    from platform_db.runner import MigrationRunner, MigrationStatus, default_migrations_dir
+    from shared_infra.migrations import (
+        MigrationRunner as SharedMigrationRunner,
+        MigrationStatus as SharedMigrationStatus,
+        default_migrations_dir as shared_default_migrations_dir,
+    )
+
+    assert MigrationRunner is SharedMigrationRunner
+    assert MigrationStatus is SharedMigrationStatus
+    assert default_migrations_dir is shared_default_migrations_dir
