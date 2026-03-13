@@ -134,6 +134,28 @@ Policy baseline:
 - sender должен передавать стабильный idempotency key для одного upstream notification/retry chain;
 - если duplicate alerts operationally неприемлемы, это требует отдельного exactly-once дизайна поверх текущего outbox baseline, а не только дополнительного retry tuning.
 
+Текущие structured lifecycle events для расследования:
+
+- `telegram_alert_delivery_claimed`:
+  - `claim_origin=pending` для обычного due-claim;
+  - `claim_origin=stale_reclaim` когда retry worker поднял delivery после истечения claim TTL.
+- `telegram_alert_delivery_target_attempt_recorded`:
+  - emitted только после durable записи outcome по target;
+  - содержит `chat_id`, `attempt_status`, `error_code`, `retry_after_seconds`.
+- `telegram_alert_delivery_finalized`:
+  - содержит агрегатный итог `delivery_status` и counts по `sent_targets` / `pending_targets` / `failed_targets`.
+- `telegram_alert_delivery_finalize_failed`:
+  - показывает, что external sends могли уже произойти, но delivery-level finalize не зафиксировался.
+- `telegram_alert_delivery_claim_skipped`:
+  - полезен, когда due candidate уже был обработан другим worker или перестал быть due к моменту повторной попытки.
+
+Быстрый operational triage:
+
+- если есть `target_attempt_recorded` c `attempt_status=sent`, но затем `finalize_failed`, это crash/recovery-sensitive окно и возможный источник редкого duplicate на in-flight target;
+- если растет доля `claim_origin=stale_reclaim`, нужно смотреть worker health, shutdown path и storage latency;
+- если `attempt_status=pending` часто сопровождается `error_code=http_429`, проблема в Telegram backpressure, а не в storage path;
+- если delivery зависает в `pending`, ключевой ориентир — `next_attempt_at` из `telegram_alert_delivery_finalized`.
+
 Текущая эксплуатация:
 
 - использовать отдельный alert-bot (отдельный токен и, по возможности, отдельный Telegram account/channel),

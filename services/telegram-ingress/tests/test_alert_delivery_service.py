@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
@@ -286,6 +288,14 @@ def _service(
     )
 
 
+def _events(caplog) -> list[dict]:
+    return [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == "telegram_ingress"
+    ]
+
+
 def test_submit_delivery_deduplicates_same_request_with_explicit_idempotency_key() -> None:
     repository = _InMemoryAlertDeliveryRepository()
     telegram_client = _SequencedTelegramClient()
@@ -423,6 +433,160 @@ def test_submit_delivery_keeps_default_backoff_when_retry_after_is_shorter() -> 
     assert record.next_attempt_at is not None
     remaining_seconds = (record.next_attempt_at - datetime.now(timezone.utc)).total_seconds()
     assert remaining_seconds >= 4.0
+
+
+def test_submit_delivery_emits_claim_attempt_and_finalize_events(caplog) -> None:
+    repository = _InMemoryAlertDeliveryRepository()
+    telegram_client = _SequencedTelegramClient()
+    service = _service(repository=repository, telegram_client=telegram_client)
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        submission = asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+
+    assert submission.status == "sent"
+    events = _events(caplog)
+    names = [event["event"] for event in events]
+    assert "telegram_alert_delivery_claimed" in names
+    assert "telegram_alert_delivery_target_attempt_recorded" in names
+    assert "telegram_alert_delivery_finalized" in names
+
+    claim_event = next(
+        event for event in events if event["event"] == "telegram_alert_delivery_claimed"
+    )
+    assert claim_event["claim_origin"] == "pending"
+    assert claim_event["delivery_id"] == submission.delivery_id
+    assert claim_event["pending_targets"] == 1
+
+    target_event = next(
+        event
+        for event in events
+        if event["event"] == "telegram_alert_delivery_target_attempt_recorded"
+    )
+    assert target_event["delivery_id"] == submission.delivery_id
+    assert target_event["chat_id"] == 11
+    assert target_event["attempt_status"] == "sent"
+    assert target_event["error_code"] is None
+
+    finalize_event = next(
+        event for event in events if event["event"] == "telegram_alert_delivery_finalized"
+    )
+    assert finalize_event["delivery_id"] == submission.delivery_id
+    assert finalize_event["delivery_status"] == "completed"
+    assert finalize_event["sent_targets"] == 1
+    assert finalize_event["pending_targets"] == 0
+    assert finalize_event["failed_targets"] == 0
+
+
+def test_submit_delivery_emits_retryable_attempt_event_with_retry_after(caplog) -> None:
+    repository = _InMemoryAlertDeliveryRepository()
+    telegram_client = _SequencedTelegramClient(
+        failures={
+            11: [
+                TelegramSendError(
+                    "rate limited",
+                    status_code=429,
+                    retry_after_seconds=10.0,
+                )
+            ]
+        }
+    )
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        retry_backoff_seconds=1.0,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        submission = asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+
+    assert submission.status == "accepted"
+    events = _events(caplog)
+
+    target_event = next(
+        event
+        for event in events
+        if event["event"] == "telegram_alert_delivery_target_attempt_recorded"
+    )
+    assert target_event["attempt_status"] == "pending"
+    assert target_event["error_code"] == "http_429"
+    assert target_event["retry_after_seconds"] == 10.0
+
+    finalize_event = next(
+        event for event in events if event["event"] == "telegram_alert_delivery_finalized"
+    )
+    assert finalize_event["delivery_status"] == "pending"
+    assert finalize_event["pending_targets"] == 1
+
+
+def test_finalize_failure_emits_finalize_failed_event(caplog) -> None:
+    repository = _InMemoryAlertDeliveryRepository(
+        fail_finalize_delivery_once=True,
+    )
+    telegram_client = _SequencedTelegramClient()
+    service = _service(repository=repository, telegram_client=telegram_client)
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        with pytest.raises(AlertDeliveryStorageError):
+            asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+
+    events = _events(caplog)
+    failure_event = next(
+        event for event in events if event["event"] == "telegram_alert_delivery_finalize_failed"
+    )
+    assert failure_event["delivery_id"] == "alert_1"
+    assert failure_event["error_code"] == "RuntimeError"
+    assert failure_event["error_message"] == "simulated finalize failure"
+
+
+def test_process_due_delivery_emits_stale_reclaim_claim_origin(caplog) -> None:
+    repository = _InMemoryAlertDeliveryRepository(
+        fail_finalize_delivery_once=True,
+    )
+    telegram_client = _SequencedTelegramClient()
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        claim_ttl_seconds=0.0,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with pytest.raises(AlertDeliveryStorageError):
+        asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+
+    repository.expire_claim("alert_1")
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        processed = asyncio.run(service.process_due_deliveries())
+
+    assert processed == 1
+    events = _events(caplog)
+    claim_event = next(
+        event
+        for event in events
+        if event["event"] == "telegram_alert_delivery_claimed"
+        and event["claim_origin"] == "stale_reclaim"
+    )
+    assert claim_event["delivery_id"] == "alert_1"
+    assert claim_event["claim_origin"] == "stale_reclaim"
 
 
 def test_claim_delivery_rechecks_next_attempt_at_before_stale_reclaim() -> None:

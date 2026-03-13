@@ -10,6 +10,7 @@ from uuid import uuid4
 import psycopg
 
 from app.clients.telegram import TelegramClient, TelegramSendError
+from app.core.logging import log_event
 
 _TERMINAL_STATUS_CODES = frozenset({400, 401, 403, 404})
 
@@ -709,6 +710,12 @@ class AlertDeliveryService:
             record = await self._get_delivery(delivery_id)
             if record is None:
                 raise AlertDeliveryStorageError("telegram alert delivery disappeared")
+            log_event(
+                "telegram_alert_delivery_claim_skipped",
+                delivery_id=delivery_id,
+                delivery_status=record.status,
+                pending_targets=self._count_targets(record, "pending"),
+            )
             return record
 
         pending_targets = [
@@ -751,19 +758,54 @@ class AlertDeliveryService:
                     max_attempts=self._max_attempts,
                 )
             except Exception as exc:
+                log_event(
+                    "telegram_alert_delivery_target_attempt_persist_failed",
+                    delivery_id=delivery_id,
+                    chat_id=attempt.chat_id,
+                    attempt_status=attempt.status,
+                    error_code=type(exc).__name__,
+                    error_message=str(exc),
+                )
                 raise AlertDeliveryStorageError(
                     "telegram alert delivery target update failed"
                 ) from exc
+            log_event(
+                "telegram_alert_delivery_target_attempt_recorded",
+                delivery_id=delivery_id,
+                chat_id=attempt.chat_id,
+                attempt_status=attempt.status,
+                error_code=attempt.error_code,
+                error_message=attempt.error_message,
+                retry_after_seconds=attempt.retry_after_seconds,
+            )
 
         try:
-            return await asyncio.to_thread(
+            finalized = await asyncio.to_thread(
                 self._repository.finalize_delivery,
                 delivery_id=delivery_id,
                 completed_at=datetime.now(timezone.utc),
                 retry_backoff_seconds=self._retry_backoff_seconds,
                 max_attempts=self._max_attempts,
             )
+            log_event(
+                "telegram_alert_delivery_finalized",
+                delivery_id=delivery_id,
+                delivery_status=finalized.status,
+                attempt_count=finalized.attempt_count,
+                sent_targets=self._count_targets(finalized, "sent"),
+                pending_targets=self._count_targets(finalized, "pending"),
+                failed_targets=self._count_targets(finalized, "failed"),
+                next_attempt_at=finalized.next_attempt_at,
+                last_error_code=finalized.last_error_code,
+            )
+            return finalized
         except Exception as exc:
+            log_event(
+                "telegram_alert_delivery_finalize_failed",
+                delivery_id=delivery_id,
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
             raise AlertDeliveryStorageError(
                 "telegram alert delivery finalize failed"
             ) from exc
@@ -772,15 +814,37 @@ class AlertDeliveryService:
         self,
         delivery_id: str,
     ) -> AlertDeliveryRecord | None:
+        prior_record = await self._get_delivery(delivery_id)
         now = datetime.now(timezone.utc)
         try:
-            return await asyncio.to_thread(
+            claimed = await asyncio.to_thread(
                 self._repository.claim_delivery,
                 delivery_id=delivery_id,
                 now=now,
                 locked_until=now + timedelta(seconds=self._claim_ttl_seconds),
             )
+            if claimed is not None:
+                claim_origin = (
+                    "stale_reclaim"
+                    if prior_record is not None and prior_record.status == "delivering"
+                    else "pending"
+                )
+                log_event(
+                    "telegram_alert_delivery_claimed",
+                    delivery_id=delivery_id,
+                    claim_origin=claim_origin,
+                    pending_targets=self._count_targets(claimed, "pending"),
+                    attempt_count=claimed.attempt_count,
+                    next_attempt_at=claimed.next_attempt_at,
+                )
+            return claimed
         except Exception as exc:
+            log_event(
+                "telegram_alert_delivery_claim_failed",
+                delivery_id=delivery_id,
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
             raise AlertDeliveryStorageError("telegram alert delivery claim failed") from exc
 
     async def _get_delivery(
@@ -835,3 +899,10 @@ class AlertDeliveryService:
             matched_alerts=record.matched_alerts,
             deduplicated=record.deduplicated,
         )
+
+    def _count_targets(
+        self,
+        record: AlertDeliveryRecord,
+        status: str,
+    ) -> int:
+        return sum(1 for target in record.targets if target.status == status)
