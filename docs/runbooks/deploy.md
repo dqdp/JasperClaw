@@ -49,9 +49,10 @@ Avoid production deployment based on floating tags.
 Preferred rollout pattern:
 
 - `docker compose pull`
-- `docker compose up -d postgres ollama stt-service tts-service`
+- `docker compose up -d postgres ollama`
 - `COMPOSE_OVERRIDE_FILE=infra/compose/compose.prod.yml bash infra/scripts/ensure-ollama-models.sh`
-- `docker compose run --rm --no-deps agent-api python -m app.cli migrate`
+- `docker compose build platform-db`
+- `docker compose run --rm --no-deps platform-db python -m platform_db.cli migrate`
 - `docker compose up -d --remove-orphans agent-api open-webui caddy`
 
 ### Health validation

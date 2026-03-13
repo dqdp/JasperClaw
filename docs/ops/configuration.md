@@ -1207,7 +1207,7 @@ Local operator files:
 3. Copy `infra/env/prod.example.env` to `infra/env/prod.env` if using a production-specific split
 4. Copy `infra/env/telegram.example.env` to `infra/env/telegram.env` if Telegram ingress is enabled
 5. Fill in required secrets and runtime targets
-6. Apply pending schema changes before serving traffic, for example `make migrate` locally or `docker compose ... run --rm agent-api python -m app.cli migrate` in deployment automation
+6. Apply pending schema changes before serving traffic, for example `make migrate` locally or `docker compose ... run --rm platform-db python -m platform_db.cli migrate` in deployment automation
 7. Validate compose configuration before deploy, for example `docker compose --env-file .env -f infra/compose/compose.yml config`
 
 ## Follow-up work

@@ -1,11 +1,12 @@
 # Agent API Migrations
 
 Purpose:
-This directory owns migration execution and the ordered SQL history for `agent-api` persistence.
+This directory is a compatibility shim for migration-aware readiness and legacy
+service-local imports.
 
 Start here:
-- `runner.py`: open first for migration application logic.
+- `runner.py`: open first for the service-local compatibility wrapper.
 
 Index:
-- `runner.py`: open when changing how pending migrations are discovered and applied.
-- `sql/`: open when adding or reviewing concrete schema changes.
+- `runner.py`: open when changing how `agent-api` discovers the canonical
+  `platform-db` migration catalog.

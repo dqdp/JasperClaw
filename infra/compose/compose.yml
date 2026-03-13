@@ -48,7 +48,8 @@ services:
 
   agent-api:
     build:
-      context: ../../services/agent-api
+      context: ../..
+      dockerfile: services/agent-api/Dockerfile
     image: ghcr.io/${GHCR_OWNER}/local-assistant-agent:${APP_VERSION}
     restart: unless-stopped
     env_file:
@@ -61,10 +62,6 @@ services:
         condition: service_healthy
       ollama:
         condition: service_started
-      stt-service:
-        condition: service_started
-      tts-service:
-        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz')"]
       interval: 10s
@@ -72,6 +69,23 @@ services:
       retries: 10
     networks:
       - control
+      - runtime
+
+  platform-db:
+    build:
+      context: ../..
+      dockerfile: platform-db/Dockerfile
+    image: ghcr.io/${GHCR_OWNER}/local-assistant-db-admin:${APP_VERSION}
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: assistant
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
       - runtime
 
   ollama:
@@ -133,6 +147,7 @@ services:
       context: ../../services/stt-service
     image: ghcr.io/${GHCR_OWNER}/local-assistant-stt:${APP_VERSION}
     restart: unless-stopped
+    profiles: ["voice"]
     env_file:
       - ../env/app.env
     networks:
@@ -143,6 +158,7 @@ services:
       context: ../../services/tts-service
     image: ghcr.io/${GHCR_OWNER}/local-assistant-tts:${APP_VERSION}
     restart: unless-stopped
+    profiles: ["voice"]
     env_file:
       - ../env/app.env
     networks:

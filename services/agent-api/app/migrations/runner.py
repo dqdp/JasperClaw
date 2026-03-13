@@ -1,78 +1,32 @@
-from dataclasses import dataclass
+import sys
 from pathlib import Path
-from threading import Lock
 
 import psycopg
 
 from app.core.errors import APIError
 
 
-@dataclass(frozen=True, slots=True)
-class Migration:
-    version: str
-    sql: str
-
-
-@dataclass(frozen=True, slots=True)
-class MigrationStatus:
-    applied_versions: tuple[str, ...]
-    pending_versions: tuple[str, ...]
-
-    @property
-    def is_current(self) -> bool:
-        return not self.pending_versions
-
-
-class MigrationRunner:
-    def __init__(self, database_url: str, migrations_dir: Path | None = None) -> None:
-        self._database_url = database_url
-        self._migrations_dir = migrations_dir or Path(__file__).resolve().parent / "sql"
-        self._lock = Lock()
-        self._is_current = False
-
-    def ensure_current(self) -> None:
-        if self._is_current:
+def _ensure_platform_db_import_path() -> None:
+    for ancestor in Path(__file__).resolve().parents:
+        if (ancestor / "platform_db").is_dir():
+            ancestor_str = str(ancestor)
+            if ancestor_str not in sys.path:
+                sys.path.append(ancestor_str)
             return
 
-        with self._lock:
-            if self._is_current:
-                return
 
-            try:
-                with psycopg.connect(self._database_url) as conn:
-                    with conn.transaction():
-                        self._ensure_migration_table(conn)
-                        applied_versions = self._load_applied_versions(conn)
-                        for migration in self._discover_migrations():
-                            if migration.version in applied_versions:
-                                continue
-                            self._apply_migration(conn, migration)
-            except psycopg.Error as exc:
-                raise APIError(
-                    status_code=503,
-                    error_type="dependency_unavailable",
-                    code="storage_unavailable",
-                    message="Persistent storage unavailable",
-                ) from exc
+_ensure_platform_db_import_path()
 
-            self._is_current = True
+from platform_db.runner import MigrationRunner as _PlatformMigrationRunner
+from platform_db.runner import MigrationStatus, default_migrations_dir
 
-    def status(self) -> MigrationStatus:
-        discovered = self._discover_migrations()
-        if self._is_current:
-            versions = tuple(migration.version for migration in discovered)
-            return MigrationStatus(applied_versions=versions, pending_versions=())
 
+class MigrationRunner(_PlatformMigrationRunner):
+    """Compatibility shim for service-local readiness and CLI wiring."""
+
+    def ensure_current(self) -> None:
         try:
-            with psycopg.connect(self._database_url) as conn:
-                if not self._migration_table_exists(conn):
-                    return MigrationStatus(
-                        applied_versions=(),
-                        pending_versions=tuple(
-                            migration.version for migration in discovered
-                        ),
-                    )
-                applied_versions = self._load_applied_versions(conn)
+            super().ensure_current()
         except psycopg.Error as exc:
             raise APIError(
                 status_code=503,
@@ -81,53 +35,13 @@ class MigrationRunner:
                 message="Persistent storage unavailable",
             ) from exc
 
-        pending_versions = tuple(
-            migration.version
-            for migration in discovered
-            if migration.version not in applied_versions
-        )
-        if not pending_versions:
-            self._is_current = True
-        return MigrationStatus(
-            applied_versions=tuple(sorted(applied_versions)),
-            pending_versions=pending_versions,
-        )
-
-    def _ensure_migration_table(self, conn: psycopg.Connection) -> None:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS schema_migrations (
-                    version TEXT PRIMARY KEY,
-                    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                )
-                """
-            )
-
-    def _migration_table_exists(self, conn: psycopg.Connection) -> bool:
-        with conn.cursor() as cur:
-            cur.execute("SELECT to_regclass('schema_migrations')")
-            row = cur.fetchone()
-            return row is not None and row[0] is not None
-
-    def _load_applied_versions(self, conn: psycopg.Connection) -> set[str]:
-        with conn.cursor() as cur:
-            cur.execute("SELECT version FROM schema_migrations ORDER BY version")
-            return {row[0] for row in cur.fetchall()}
-
-    def _discover_migrations(self) -> list[Migration]:
-        migrations: list[Migration] = []
-        for path in sorted(self._migrations_dir.glob("*.sql")):
-            migrations.append(Migration(version=path.stem, sql=path.read_text()))
-        return migrations
-
-    def _apply_migration(self, conn: psycopg.Connection, migration: Migration) -> None:
-        with conn.cursor() as cur:
-            cur.execute(migration.sql)
-            cur.execute(
-                """
-                INSERT INTO schema_migrations (version)
-                VALUES (%s)
-                """,
-                (migration.version,),
-            )
+    def status(self) -> MigrationStatus:
+        try:
+            return super().status()
+        except psycopg.Error as exc:
+            raise APIError(
+                status_code=503,
+                error_type="dependency_unavailable",
+                code="storage_unavailable",
+                message="Persistent storage unavailable",
+            ) from exc

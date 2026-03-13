@@ -68,7 +68,7 @@ Implemented:
 - optional retrieval-aware prompt assembly with conservative memory materialization from `user` transcript turns
 - retrieval and memory audit persistence through `memory_items`, `retrieval_runs`, and `retrieval_hits`
 - forward-only SQL migration runner for the current canonical text-path schema
-- explicit `python -m app.cli migrate` command for applying pending schema changes before service traffic
+- explicit neutral `platform-db` migration command for applying pending schema changes before service traffic
 - stubbed `POST /v1/audio/transcriptions`
 - stubbed `POST /v1/audio/speech`
 

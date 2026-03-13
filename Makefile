@@ -17,9 +17,9 @@ sync: $(VENV_PYTHON)
 	$(VENV_PIP) install -r requirements-dev.txt
 
 up:
-	$(COMPOSE) up -d --build postgres ollama stt-service tts-service
-	$(COMPOSE) build agent-api
-	$(COMPOSE) run --rm --no-deps agent-api python -m app.cli migrate
+	$(COMPOSE) up -d --build postgres ollama
+	$(COMPOSE) build agent-api platform-db
+	$(COMPOSE) run --rm --no-deps platform-db python -m platform_db.cli migrate
 	$(COMPOSE) up -d agent-api open-webui caddy
 
 down:
@@ -36,8 +36,8 @@ smoke:
 
 migrate:
 	$(COMPOSE) up -d postgres
-	$(COMPOSE) build agent-api
-	$(COMPOSE) run --rm --no-deps agent-api python -m app.cli migrate
+	$(COMPOSE) build platform-db
+	$(COMPOSE) run --rm --no-deps platform-db python -m platform_db.cli migrate
 
 format: $(VENV_PYTHON)
 	$(RUFF) format services

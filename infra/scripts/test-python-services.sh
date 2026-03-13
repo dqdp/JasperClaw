@@ -33,3 +33,11 @@ for service in "${services[@]}"; do
     )
   fi
 done
+
+if [[ -d "platform_db/tests" ]]; then
+  echo "==> pytest platform_db"
+  (
+    cd "${REPO_ROOT}"
+    "${PYTHON_BIN}" -m pytest platform_db/tests
+  )
+fi

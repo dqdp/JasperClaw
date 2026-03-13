@@ -10,3 +10,7 @@ Index:
 - `compose.yml`: open when changing the shared service graph or default wiring.
 - `compose.ci.yml`: open when adjusting CI-only overrides or smoke-test topology.
 - `compose.prod.yml`: open when changing production-facing overrides without altering the base graph.
+
+Notes:
+- `stt-service` and `tts-service` are voice-profile placeholders and are not part
+  of the default text-path startup sequence.

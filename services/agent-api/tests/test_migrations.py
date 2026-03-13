@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from app.migrations.runner import MigrationRunner
+from app.migrations.runner import default_migrations_dir
 
 
 class _FakeCursor:
@@ -171,3 +172,10 @@ def test_migration_runner_status_reports_current_when_versions_match(
     assert status.is_current is True
     assert status.applied_versions == ("0001_initial",)
     assert status.pending_versions == ()
+
+
+def test_default_migrations_dir_prefers_platform_db_catalog() -> None:
+    migrations_dir = default_migrations_dir()
+
+    assert migrations_dir.name == "migrations"
+    assert migrations_dir.parent.name == "platform-db"
