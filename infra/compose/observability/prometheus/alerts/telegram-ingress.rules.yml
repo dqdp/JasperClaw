@@ -1,0 +1,44 @@
+groups:
+  - name: telegram-ingress-critical
+    rules:
+      - alert: TelegramAlertDeliveryFinalizeFailures
+        expr: sum(increase(telegram_alert_delivery_finalize_failed_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: telegram-ingress
+        annotations:
+          summary: telegram alert delivery finalize is failing
+          description: alert delivery finalize failures have occurred in the last 10 minutes.
+
+      - alert: TelegramAlertDeliveryPersistFailures
+        expr: sum(increase(telegram_alert_delivery_target_attempt_persist_failed_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: telegram-ingress
+        annotations:
+          summary: telegram alert delivery target persistence is failing
+          description: alert delivery target attempt persistence failures have occurred in the last 10 minutes.
+
+  - name: telegram-ingress-warning
+    rules:
+      - alert: TelegramAlertDeliveryStaleReclaimRatioHigh
+        expr: sum(increase(telegram_alert_delivery_claim_total{origin="stale_reclaim"}[15m])) / clamp_min(sum(increase(telegram_alert_delivery_claim_total[15m])), 1) > 0.2
+        for: 15m
+        labels:
+          severity: warning
+          service: telegram-ingress
+        annotations:
+          summary: telegram alert delivery stale reclaim ratio is elevated
+          description: stale reclaim claims are above the initial warning ratio threshold.
+
+      - alert: TelegramAlertDeliveryBackpressure
+        expr: sum(increase(telegram_alert_delivery_target_attempt_total{status="pending",error_class="http_429"}[15m])) > 5
+        for: 15m
+        labels:
+          severity: warning
+          service: telegram-ingress
+        annotations:
+          summary: telegram alert delivery is seeing elevated 429 backpressure
+          description: Telegram rate-limit related retryable attempts are above the initial warning threshold.

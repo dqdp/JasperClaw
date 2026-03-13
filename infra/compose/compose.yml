@@ -143,6 +143,48 @@ services:
       - frontend
       - runtime
 
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/alerts:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      agent-api:
+        condition: service_started
+      telegram-ingress:
+        condition: service_started
+    networks:
+      - control
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_started
+    networks:
+      - control
+
   stt-service:
     build:
       context: ../../services/stt-service
@@ -171,6 +213,8 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
+  prometheus_data:
+  grafana_data:
 
 networks:
   frontend:

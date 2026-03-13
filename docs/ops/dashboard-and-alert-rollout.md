@@ -31,6 +31,19 @@ It does not yet define:
 - Open WebUI dashboards
 - deep database internals dashboards
 
+## Runnable stack
+
+The runnable Prometheus and Grafana stack for this rollout lives under
+`infra/compose/observability/` and is started through the Compose
+`observability` profile.
+
+The provisioned artifacts are:
+
+- Prometheus scrape config in `infra/compose/observability/prometheus/prometheus.yml`
+- alert rules in `infra/compose/observability/prometheus/alerts/`
+- Grafana datasource provisioning in `infra/compose/observability/grafana/provisioning/`
+- Grafana dashboards in `infra/compose/observability/grafana/dashboards/`
+
 ## Dashboard set
 
 Create three dashboards.

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: local-assistant-dashboards
+    orgId: 1
+    folder: Local Assistant
+    type: file
+    disableDeletion: false
+    editable: false
+    options:
+      path: /var/lib/grafana/dashboards

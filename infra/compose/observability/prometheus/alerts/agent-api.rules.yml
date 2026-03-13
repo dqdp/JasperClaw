@@ -1,0 +1,94 @@
+groups:
+  - name: agent-api-critical
+    rules:
+      - alert: AgentApiNotReady
+        expr: sum(increase(agent_api_readiness_total{status="not_ready"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: agent-api
+        annotations:
+          summary: agent-api readiness is degraded
+          description: agent-api has reported not_ready readiness outcomes for at least 5 minutes.
+
+      - alert: AgentApiChatCompletions5xx
+        expr: sum(increase(agent_api_http_request_total{path_group="chat_completions",status_class="5xx"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: critical
+          service: agent-api
+        annotations:
+          summary: agent-api is returning elevated 5xx on chat completions
+          description: chat completion requests are failing with 5xx responses above the initial threshold.
+
+      - alert: AgentApiChatStorageErrors
+        expr: sum(increase(agent_api_chat_storage_total{outcome="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: critical
+          service: agent-api
+        annotations:
+          summary: agent-api chat storage is failing
+          description: chat storage has reported error outcomes in the last 5 minutes.
+
+  - name: agent-api-warning
+    rules:
+      - alert: AgentApiRuntimeErrorsElevated
+        expr: sum(increase(agent_api_chat_runtime_total{outcome="error"}[10m])) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: agent-api
+        annotations:
+          summary: agent-api runtime errors are elevated
+          description: chat runtime error outcomes are above the initial warning threshold.
+
+      - alert: AgentApiToolAuditErrors
+        expr: sum(increase(agent_api_tool_audit_total{outcome="error"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: agent-api
+        annotations:
+          summary: agent-api tool audit persistence is failing
+          description: tool audit persistence has reported error outcomes in the last 10 minutes.
+
+      - alert: AgentApiMemoryRetrievalErrors
+        expr: sum(increase(agent_api_memory_retrieval_total{outcome="error"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: agent-api
+        annotations:
+          summary: agent-api memory retrieval is degrading
+          description: memory retrieval has reported error outcomes in the last 10 minutes.
+
+      - alert: AgentApiMemoryMaterializationErrors
+        expr: sum(increase(agent_api_memory_materialization_total{outcome="error"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: agent-api
+        annotations:
+          summary: agent-api memory materialization is degrading
+          description: memory materialization has reported error outcomes in the last 10 minutes.
+
+      - alert: AgentApiMemoryRetrieveEmbeddingErrors
+        expr: sum(increase(agent_api_memory_embedding_total{outcome="error",phase="retrieve"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: agent-api
+        annotations:
+          summary: agent-api retrieval embedding generation is degrading
+          description: retrieval-phase embedding generation has reported error outcomes in the last 10 minutes.
+
+      - alert: AgentApiMemoryStoreEmbeddingErrors
+        expr: sum(increase(agent_api_memory_embedding_total{outcome="error",phase="store"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+          service: agent-api
+        annotations:
+          summary: agent-api memory store embedding generation is degrading
+          description: store-phase embedding generation has reported error outcomes in the last 10 minutes.
