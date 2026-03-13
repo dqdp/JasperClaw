@@ -9,5 +9,6 @@ Start here:
 Index:
 - `agent-action-policy.md`: open when a feature touches tool risk classes, approvals, or sandbox requirements.
 - `configuration.md`: open when changing config shape, defaults, or service-level ownership.
+- `dashboard-and-alert-rollout.md`: open when defining the first Grafana panels or alert rules for implemented service metrics.
 - `error-semantics.md`: open when mapping internal failures to explicit client-facing errors.
 - `observability.md`: open when changing logs, health checks, readiness, or tracing expectations.
