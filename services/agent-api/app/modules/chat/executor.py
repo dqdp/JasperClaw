@@ -11,6 +11,7 @@ from app.clients.spotify import SpotifyClient, SpotifyTrackItem
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
+from app.core.metrics import get_agent_metrics
 from app.modules.chat.formatters import ChatPromptFormatter
 from app.modules.chat.planner import ToolPlanningDecision
 from app.modules.chat.policy import ToolPolicyDecision, ToolPolicyEngine
@@ -512,4 +513,9 @@ class ToolExecutor:
             duration_ms=execution.latency_ms,
             error_type=execution.error_type,
             error_code=execution.error_code,
+        )
+        get_agent_metrics().record_tool_execution(
+            tool_name=execution.tool_name,
+            outcome=execution.status,
+            error_type=execution.error_type,
         )

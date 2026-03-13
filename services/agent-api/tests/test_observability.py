@@ -4,6 +4,7 @@ import logging
 from app.api import deps
 from app.core.config import get_settings
 from app.core.logging import log_event
+from app.core.metrics import get_agent_metrics
 from app.services.readiness import ReadinessResult
 
 from tests.test_chat_completions import (
@@ -65,6 +66,121 @@ def test_chat_request_emits_structured_events(
     storage_event = next(event for event in events if event["event"] == "chat_storage_completed")
     assert storage_event["request_id"] == "req_testobs"
     assert storage_event["outcome"] == "success"
+
+
+def test_metrics_endpoint_exports_chat_request_runtime_and_storage_metrics(
+    client, monkeypatch, auth_headers
+) -> None:
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    _FakeClient.error = None
+    _FakeClient.response = _FakeResponse(
+        200,
+        {
+            "message": {"role": "assistant", "content": "Runtime response"},
+            "prompt_eval_count": 11,
+            "eval_count": 7,
+        },
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(),
+        headers={**auth_headers, "X-Request-ID": "req_metrics_chat"},
+    )
+    metrics_response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert metrics_response.status_code == 200
+    assert metrics_response.headers["content-type"].startswith("text/plain")
+    assert (
+        'agent_api_http_request_total{method="POST",path_group="chat_completions",status_class="2xx"} 1'
+        in metrics_response.text
+    )
+    assert (
+        'agent_api_chat_runtime_total{outcome="success",phase="final",public_model="assistant-v1"} 1'
+        in metrics_response.text
+    )
+    assert 'agent_api_chat_storage_total{outcome="success"} 1' in metrics_response.text
+
+
+def test_metrics_endpoint_exports_tool_metrics_for_telegram_policy_denial(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("WEB_SEARCH_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_search_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_web_search_client] = (
+        lambda: _FakeSearchClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"web-search","query":"latest status"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "I cannot verify fresh results from Telegram.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(metadata={"source": "telegram"}),
+        headers={**auth_headers, "X-Request-ID": "req_metrics_tooldeny"},
+    )
+    metrics_response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert (
+        'agent_api_tool_execution_total{error_type="policy_error",outcome="failed",tool_name="web-search"} 1'
+        in metrics_response.text
+    )
+    assert 'agent_api_tool_audit_total{outcome="success"} 1' in metrics_response.text
+
+
+def test_metrics_endpoint_exports_readiness_and_request_failure_metrics(client) -> None:
+    client.app.dependency_overrides[deps.get_readiness_service] = lambda: type(
+        "ReadinessStub",
+        (),
+        {
+            "check": lambda self: (
+                get_agent_metrics().record_readiness(status="not_ready"),
+                ReadinessResult(
+                    status="not_ready",
+                    checks={"config": "ok", "postgres": "fail", "ollama": "ok"},
+                ),
+            )[1]
+        },
+    )()
+
+    response = client.get("/readyz", headers={"X-Request-ID": "req_metrics_readyz"})
+    metrics_response = client.get("/metrics")
+
+    assert response.status_code == 503
+    assert 'agent_api_readiness_total{status="not_ready"} 1' in metrics_response.text
+    assert (
+        'agent_api_http_request_total{method="GET",path_group="readyz",status_class="5xx"} 1'
+        in metrics_response.text
+    )
 
 
 def test_chat_request_emits_tool_events_when_web_search_runs(

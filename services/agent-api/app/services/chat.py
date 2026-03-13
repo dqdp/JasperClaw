@@ -15,6 +15,7 @@ from app.clients.spotify import SpotifyClient
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
+from app.core.metrics import get_agent_metrics
 from app.modules.chat.executor import ToolContext, ToolExecutor
 from app.modules.chat.formatters import ChatPromptFormatter
 from app.modules.chat.memory import MemoryContext, MemoryService
@@ -686,6 +687,7 @@ class ChatService:
             model_run_id=persistence.model_run_id,
             assistant_message_id=persistence.assistant_message_id,
         )
+        get_agent_metrics().record_chat_storage(outcome="success")
         return persistence
 
     def _persist_failed_completion(
@@ -727,6 +729,7 @@ class ChatService:
                 conversation_id=persistence.conversation_id,
                 model_run_id=persistence.model_run_id,
             )
+            get_agent_metrics().record_chat_storage(outcome="persisted_failure")
             return persistence
         except APIError:
             log_event(
@@ -736,6 +739,7 @@ class ChatService:
                 outcome="error",
                 duration_ms=round((perf_counter() - storage_started) * 1000, 2),
             )
+            get_agent_metrics().record_chat_storage(outcome="error")
             return None
 
     def _prepare_tool_context(
@@ -838,6 +842,7 @@ class ChatService:
                 tool_status=tool_context.execution.status,
                 invocation_id=tool_context.execution.invocation_id,
             )
+            get_agent_metrics().record_tool_audit(outcome="success")
         except APIError as exc:
             log_event(
                 "chat_tool_audit_completed",
@@ -851,6 +856,7 @@ class ChatService:
                 error_type=exc.error_type,
                 error_code=exc.code,
             )
+            get_agent_metrics().record_tool_audit(outcome="error")
 
     def _log_tool_execution(
         self,
@@ -981,6 +987,12 @@ class ChatService:
             completion_tokens=usage.completion_tokens if usage else None,
             total_tokens=usage.total_tokens if usage else None,
         )
+        get_agent_metrics().record_chat_runtime(
+            outcome="success",
+            phase=phase,
+            public_model=profile.public_id,
+            duration_seconds=round((perf_counter() - runtime_started) * 1000, 2) / 1000,
+        )
 
     def _log_runtime_error(
         self,
@@ -1003,6 +1015,12 @@ class ChatService:
             duration_ms=round((perf_counter() - runtime_started) * 1000, 2),
             error_type=error.error_type,
             error_code=error.code,
+        )
+        get_agent_metrics().record_chat_runtime(
+            outcome="error",
+            phase=phase,
+            public_model=profile.public_id,
+            duration_seconds=round((perf_counter() - runtime_started) * 1000, 2) / 1000,
         )
 
     def _build_usage(

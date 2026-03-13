@@ -9,3 +9,6 @@ Start here:
 Index:
 - `chat.py`: open when changing runtime prompt assembly, tool policy, persistence flow, or streaming orchestration.
 - `readiness.py`: open when changing downstream dependency checks behind `/readyz`.
+
+Notes:
+- process-level observability now includes Prometheus-compatible `/metrics` export for request, chat runtime, storage, tool, and readiness counters/histograms.

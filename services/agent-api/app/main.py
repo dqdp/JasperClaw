@@ -13,6 +13,7 @@ from app.core.errors import (
     request_validation_error_handler,
 )
 from app.core.logging import configure_logging, log_event
+from app.core.metrics import get_agent_metrics
 
 configure_logging()
 app = FastAPI(title="agent-api", version="0.1.0")
@@ -38,6 +39,12 @@ async def attach_request_id(request: Request, call_next):
         response = await api_error_handler(request, exc)
     response.headers["X-Request-ID"] = request.state.request_id
     duration_ms = round((perf_counter() - started) * 1000, 2)
+    get_agent_metrics().record_request(
+        method=request.method,
+        path=request.url.path,
+        status_code=response.status_code,
+        duration_seconds=duration_ms / 1000,
+    )
     event = "request_completed" if response.status_code < 400 else "request_failed"
     log_event(
         event,

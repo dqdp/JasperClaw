@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 
 from app.api import deps
 from app.core.config import get_settings
+from app.core.metrics import get_agent_metrics
 from app.main import app
 
 
@@ -24,6 +25,7 @@ def reset_env(monkeypatch: pytest.MonkeyPatch):
     deps.get_chat_repository.cache_clear()
     deps.get_spotify_client.cache_clear()
     deps.get_migration_runner.cache_clear()
+    get_agent_metrics().reset()
     yield
     app.dependency_overrides.clear()
     get_settings.cache_clear()
@@ -32,6 +34,7 @@ def reset_env(monkeypatch: pytest.MonkeyPatch):
     deps.get_chat_repository.cache_clear()
     deps.get_spotify_client.cache_clear()
     deps.get_migration_runner.cache_clear()
+    get_agent_metrics().reset()
 
 
 @pytest.fixture

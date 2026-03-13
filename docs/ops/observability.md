@@ -119,6 +119,28 @@ If metrics are added in v1, start with:
 - stream interruption count
 - tool execution count by adapter and outcome
 
+Current implemented baseline:
+
+- `agent-api` exposes `GET /metrics` with Prometheus-compatible text output
+- implemented first-wave series currently cover:
+  - `agent_api_http_request_total`
+  - `agent_api_http_request_duration_seconds`
+  - `agent_api_chat_runtime_total`
+  - `agent_api_chat_runtime_duration_seconds`
+  - `agent_api_chat_storage_total`
+  - `agent_api_tool_execution_total`
+  - `agent_api_tool_audit_total`
+  - `agent_api_readiness_total`
+
+Metric labels are intentionally low-cardinality.
+
+Examples:
+
+- request metrics group paths into stable route families such as
+  `chat_completions`, `readyz`, and `models`
+- tool metrics label fixed `tool_name` values and coarse `error_type`
+- chat runtime metrics label `public_model`, `phase`, and `outcome`
+
 ## Failure investigation order
 
 1. check `readyz` for the serving component

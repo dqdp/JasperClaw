@@ -128,6 +128,21 @@ Failure response example:
 }
 ```
 
+### `GET /metrics`
+
+Operational metrics export.
+
+Authentication:
+
+- unauthenticated in the current internal deployment model
+
+Meaning:
+
+- exports Prometheus-compatible process metrics for `agent-api`
+- intended for internal scraping, not end-user clients
+- current metric families cover request traffic, chat runtime, persistence,
+  tool execution/audit, and readiness outcomes
+
 ### `GET /v1/models`
 
 List available logical assistant profiles.

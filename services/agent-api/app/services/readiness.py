@@ -4,6 +4,7 @@ from app.clients.ollama import OllamaChatClient
 from app.core.config import Settings, is_configured_required_secret
 from app.core.errors import APIError
 from app.core.logging import log_event
+from app.core.metrics import get_agent_metrics
 from app.migrations import MigrationRunner
 
 
@@ -35,6 +36,7 @@ class ReadinessService:
             "ollama": self._check_ollama(),
         }
         status = "ready" if all(value == "ok" for value in checks.values()) else "not_ready"
+        get_agent_metrics().record_readiness(status=status)
         log_event("readiness_check_completed", status=status, checks=checks)
         return ReadinessResult(status=status, checks=checks)
 
