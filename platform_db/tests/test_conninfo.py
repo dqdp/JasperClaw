@@ -3,7 +3,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 
 def test_load_database_conninfo_from_env_prefers_database_url() -> None:
-    from platform_db.conninfo import load_database_conninfo_from_env
+    from shared_infra.postgres_conninfo import load_database_conninfo_from_env
 
     conninfo = load_database_conninfo_from_env(
         env={
@@ -19,7 +19,7 @@ def test_load_database_conninfo_from_env_prefers_database_url() -> None:
 
 
 def test_load_database_conninfo_from_env_builds_conninfo_with_reserved_chars() -> None:
-    from platform_db.conninfo import load_database_conninfo_from_env
+    from shared_infra.postgres_conninfo import load_database_conninfo_from_env
 
     conninfo = load_database_conninfo_from_env(
         env={
@@ -40,7 +40,7 @@ def test_load_database_conninfo_from_env_builds_conninfo_with_reserved_chars() -
 
 
 def test_load_database_conninfo_from_env_applies_defaults() -> None:
-    from platform_db.conninfo import load_database_conninfo_from_env
+    from shared_infra.postgres_conninfo import load_database_conninfo_from_env
 
     conninfo = load_database_conninfo_from_env(
         env={},
@@ -60,7 +60,7 @@ def test_load_database_conninfo_from_env_applies_defaults() -> None:
 
 
 def test_load_database_conninfo_from_env_rejects_incomplete_env() -> None:
-    from platform_db.conninfo import load_database_conninfo_from_env
+    from shared_infra.postgres_conninfo import load_database_conninfo_from_env
 
     with pytest.raises(RuntimeError, match="Database connection environment is incomplete"):
         load_database_conninfo_from_env(

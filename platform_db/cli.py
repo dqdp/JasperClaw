@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import psycopg
 
-from platform_db.conninfo import load_database_conninfo_from_env
 from platform_db.runner import MigrationRunner, default_migrations_dir
+from shared_infra.postgres_conninfo import load_database_conninfo_from_env
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -1,22 +1,7 @@
 import os
-import sys
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
-
-
-def _ensure_platform_db_import_path() -> None:
-    for ancestor in Path(__file__).resolve().parents:
-        if (ancestor / "platform_db").is_dir():
-            ancestor_str = str(ancestor)
-            if ancestor_str not in sys.path:
-                sys.path.append(ancestor_str)
-            return
-
-
-_ensure_platform_db_import_path()
-
-from platform_db.conninfo import load_database_conninfo_from_env
+from shared_infra.postgres_conninfo import load_database_conninfo_from_env
 
 
 _PLACEHOLDER_SECRET_VALUES = frozenset({"", "change-me"})

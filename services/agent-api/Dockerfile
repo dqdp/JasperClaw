@@ -3,6 +3,7 @@ WORKDIR /app
 COPY services/agent-api/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY services/agent-api/app /app/app
+COPY shared_infra /app/shared_infra
 COPY platform_db /app/platform_db
 COPY platform-db /app/platform-db
 EXPOSE 8080
