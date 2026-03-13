@@ -116,6 +116,24 @@ Policy baseline:
 - `resolved` alerts по умолчанию фильтруются, если не включен `TELEGRAM_ALERT_SEND_RESOLVED=true`;
 - overlap chat ids дедуплицируется на один message per request.
 
+### Delivery semantics and failure boundaries
+
+Текущая гарантия доставки для `POST /telegram/alerts`:
+
+- delivery semantics для каждого target chat — `at-least-once`, не `exactly-once`;
+- caller-supplied `X-Telegram-Alert-Idempotency-Key` дедуплицирует повторные submissions одного и того же upstream notification, но не дает глобальной exactly-once гарантии;
+- outcome каждого target теперь пишется durably сразу после каждой send attempt, поэтому crash или transient storage failure после частично успешного fanout не должны переотправлять уже зафиксированный успешный префикс recipients;
+- узкое окно дубля все еще остается между успешным `sendMessage` и durable записью outcome именно для текущего target;
+- retryable Telegram/API/storage failures могут привести к повторной доставке одного и того же alert message в тот же chat;
+- terminal Telegram errors (`400`, `401`, `403`, `404`) не ретраятся бесконечно и переводят target в failed path;
+- `429 retry_after` и configured backoff учитываются при планировании следующей попытки.
+
+Практический вывод для эксплуатации:
+
+- downstream operations должны считать alert notifications idempotent-friendly и tolerate occasional duplicates;
+- sender должен передавать стабильный idempotency key для одного upstream notification/retry chain;
+- если duplicate alerts operationally неприемлемы, это требует отдельного exactly-once дизайна поверх текущего outbox baseline, а не только дополнительного retry tuning.
+
 Текущая эксплуатация:
 
 - использовать отдельный alert-bot (отдельный токен и, по возможности, отдельный Telegram account/channel),

@@ -1,23 +1,72 @@
+import pytest
 from psycopg.conninfo import conninfo_to_dict
 
 
-def test_load_settings_preserves_reserved_characters_in_credentials(
-    monkeypatch,
-) -> None:
-    from platform_db.cli import _load_settings
+def test_load_database_conninfo_from_env_prefers_database_url() -> None:
+    from platform_db.conninfo import load_database_conninfo_from_env
 
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.setenv("POSTGRES_HOST", "postgres.test")
-    monkeypatch.setenv("POSTGRES_PORT", "5432")
-    monkeypatch.setenv("POSTGRES_DB", "assistant")
-    monkeypatch.setenv("POSTGRES_USER", "assistant:name")
-    monkeypatch.setenv("POSTGRES_PASSWORD", "p@ss:/#word")
+    conninfo = load_database_conninfo_from_env(
+        env={
+            "DATABASE_URL": " postgres://example.test/dbname ",
+            "POSTGRES_HOST": "ignored-host",
+            "POSTGRES_DB": "ignored-db",
+            "POSTGRES_USER": "ignored-user",
+            "POSTGRES_PASSWORD": "ignored-password",
+        }
+    )
 
-    settings = _load_settings()
-    conninfo = conninfo_to_dict(settings.database_url)
+    assert conninfo == "postgres://example.test/dbname"
 
-    assert conninfo["host"] == "postgres.test"
-    assert conninfo["port"] == "5432"
-    assert conninfo["dbname"] == "assistant"
-    assert conninfo["user"] == "assistant:name"
-    assert conninfo["password"] == "p@ss:/#word"
+
+def test_load_database_conninfo_from_env_builds_conninfo_with_reserved_chars() -> None:
+    from platform_db.conninfo import load_database_conninfo_from_env
+
+    conninfo = load_database_conninfo_from_env(
+        env={
+            "POSTGRES_HOST": "postgres.test",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": "assistant",
+            "POSTGRES_USER": "assistant:name",
+            "POSTGRES_PASSWORD": "p@ss:/#word",
+        }
+    )
+
+    parsed = conninfo_to_dict(conninfo)
+    assert parsed["host"] == "postgres.test"
+    assert parsed["port"] == "5432"
+    assert parsed["dbname"] == "assistant"
+    assert parsed["user"] == "assistant:name"
+    assert parsed["password"] == "p@ss:/#word"
+
+
+def test_load_database_conninfo_from_env_applies_defaults() -> None:
+    from platform_db.conninfo import load_database_conninfo_from_env
+
+    conninfo = load_database_conninfo_from_env(
+        env={},
+        default_host="postgres",
+        default_port="5432",
+        default_db="assistant",
+        default_user="assistant",
+        default_password="change-me",
+    )
+
+    parsed = conninfo_to_dict(conninfo)
+    assert parsed["host"] == "postgres"
+    assert parsed["port"] == "5432"
+    assert parsed["dbname"] == "assistant"
+    assert parsed["user"] == "assistant"
+    assert parsed["password"] == "change-me"
+
+
+def test_load_database_conninfo_from_env_rejects_incomplete_env() -> None:
+    from platform_db.conninfo import load_database_conninfo_from_env
+
+    with pytest.raises(RuntimeError, match="Database connection environment is incomplete"):
+        load_database_conninfo_from_env(
+            env={
+                "POSTGRES_HOST": "postgres.test",
+                "POSTGRES_DB": "assistant",
+                "POSTGRES_USER": "assistant",
+            }
+        )

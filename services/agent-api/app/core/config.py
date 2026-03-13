@@ -1,8 +1,22 @@
 import os
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 
-from psycopg.conninfo import make_conninfo
+
+def _ensure_platform_db_import_path() -> None:
+    for ancestor in Path(__file__).resolve().parents:
+        if (ancestor / "platform_db").is_dir():
+            ancestor_str = str(ancestor)
+            if ancestor_str not in sys.path:
+                sys.path.append(ancestor_str)
+            return
+
+
+_ensure_platform_db_import_path()
+
+from platform_db.conninfo import load_database_conninfo_from_env
 
 
 _PLACEHOLDER_SECRET_VALUES = frozenset({"", "change-me"})
@@ -67,20 +81,13 @@ def _get_bool_env(name: str, default: bool = False) -> bool:
 @lru_cache
 def get_settings() -> Settings:
     ollama_chat_model = os.getenv("OLLAMA_CHAT_MODEL", "qwen3:8b")
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        postgres_host = os.getenv("POSTGRES_HOST", "postgres")
-        postgres_port = os.getenv("POSTGRES_PORT", "5432")
-        postgres_db = os.getenv("POSTGRES_DB", "assistant")
-        postgres_user = os.getenv("POSTGRES_USER", "assistant")
-        postgres_password = os.getenv("POSTGRES_PASSWORD", "change-me")
-        database_url = make_conninfo(
-            host=postgres_host,
-            port=postgres_port,
-            dbname=postgres_db,
-            user=postgres_user,
-            password=postgres_password,
-        )
+    database_url = load_database_conninfo_from_env(
+        default_host="postgres",
+        default_port="5432",
+        default_db="assistant",
+        default_user="assistant",
+        default_password="change-me",
+    )
     return Settings(
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://ollama:11434"),
         ollama_chat_model=ollama_chat_model,

@@ -28,13 +28,11 @@ class _InMemoryAlertDeliveryRepository:
     def __init__(
         self,
         *,
-        fail_apply_attempt_results_once: bool = False,
         fail_finalize_delivery_once: bool = False,
     ) -> None:
         self._records: dict[str, _StoredDelivery] = {}
         self._idempotency_index: dict[str, str] = {}
         self._sequence = 0
-        self._fail_apply_attempt_results_once = fail_apply_attempt_results_once
         self._fail_finalize_delivery_once = fail_finalize_delivery_once
 
     def enqueue_delivery(
@@ -139,81 +137,6 @@ class _InMemoryAlertDeliveryRepository:
         stored.record = replace(
             stored.record,
             status="delivering",
-        )
-        return stored.record
-
-    def apply_attempt_results(
-        self,
-        *,
-        delivery_id: str,
-        attempts: tuple[AlertTargetAttempt, ...],
-        completed_at: datetime,
-        retry_backoff_seconds: float,
-        max_attempts: int,
-    ) -> AlertDeliveryRecord:
-        if self._fail_apply_attempt_results_once:
-            self._fail_apply_attempt_results_once = False
-            raise RuntimeError("simulated apply failure")
-        stored = self._records[delivery_id]
-        attempt_map = {attempt.chat_id: attempt for attempt in attempts}
-        updated_targets: list[AlertDeliveryTargetRecord] = []
-        for target in stored.record.targets:
-            attempt = attempt_map.get(target.chat_id)
-            if attempt is None:
-                updated_targets.append(target)
-                continue
-            updated_target = replace(
-                target,
-                status=attempt.status,
-                attempt_count=target.attempt_count + 1,
-                last_error_code=attempt.error_code,
-                last_error_message=attempt.error_message,
-            )
-            if updated_target.status == "pending" and updated_target.attempt_count >= max_attempts:
-                updated_target = replace(updated_target, status="failed")
-            updated_targets.append(updated_target)
-
-        if all(target.status == "sent" for target in updated_targets):
-            status = "completed"
-            next_attempt_at = None
-            last_error_code = None
-            last_error_message = None
-        else:
-            pending_targets = [target for target in updated_targets if target.status == "pending"]
-            if pending_targets:
-                next_retry_delay_seconds = retry_backoff_seconds
-                for target in pending_targets:
-                    attempt = attempt_map.get(target.chat_id)
-                    if (
-                        attempt is not None
-                        and attempt.retry_after_seconds is not None
-                    ):
-                        next_retry_delay_seconds = max(
-                            next_retry_delay_seconds,
-                            attempt.retry_after_seconds,
-                        )
-                status = "pending"
-                next_attempt_at = completed_at + timedelta(seconds=next_retry_delay_seconds)
-                last_error_code = pending_targets[0].last_error_code
-                last_error_message = pending_targets[0].last_error_message
-            else:
-                status = "failed"
-                next_attempt_at = None
-                failed_target = next(
-                    target for target in updated_targets if target.status == "failed"
-                )
-                last_error_code = failed_target.last_error_code
-                last_error_message = failed_target.last_error_message
-
-        stored.locked_until = None
-        stored.record = replace(
-            stored.record,
-            status=status,
-            attempt_count=stored.record.attempt_count + 1,
-            next_attempt_at=next_attempt_at,
-            last_error_code=last_error_code,
-            last_error_message=last_error_message,
-            targets=tuple(updated_targets),
         )
         return stored.record
 
@@ -527,17 +450,21 @@ def test_claim_delivery_rechecks_next_attempt_at_before_stale_reclaim() -> None:
     )
     assert claimed is not None
 
-    updated = repository.apply_attempt_results(
+    repository.record_target_attempt(
         delivery_id=record.delivery_id,
-        attempts=(
-            AlertTargetAttempt(
-                chat_id=11,
-                status="pending",
-                error_code="http_429",
-                error_message="rate limited",
-                retry_after_seconds=10.0,
-            ),
+        attempt=AlertTargetAttempt(
+            chat_id=11,
+            status="pending",
+            error_code="http_429",
+            error_message="rate limited",
+            retry_after_seconds=10.0,
         ),
+        completed_at=datetime.now(timezone.utc),
+        retry_backoff_seconds=5.0,
+        max_attempts=3,
+    )
+    updated = repository.finalize_delivery(
+        delivery_id=record.delivery_id,
         completed_at=datetime.now(timezone.utc),
         retry_backoff_seconds=5.0,
         max_attempts=3,
@@ -654,7 +581,6 @@ def test_pending_delivery_survives_service_restart() -> None:
 
 def test_finalize_failure_does_not_resend_already_persisted_targets() -> None:
     repository = _InMemoryAlertDeliveryRepository(
-        fail_apply_attempt_results_once=True,
         fail_finalize_delivery_once=True,
     )
     telegram_client = _SequencedTelegramClient()
@@ -692,7 +618,6 @@ def test_finalize_failure_does_not_resend_already_persisted_targets() -> None:
 
 def test_finalize_failure_preserves_pending_backoff() -> None:
     repository = _InMemoryAlertDeliveryRepository(
-        fail_apply_attempt_results_once=True,
         fail_finalize_delivery_once=True,
     )
     telegram_client = _SequencedTelegramClient(

@@ -115,7 +115,8 @@ services:
 
   telegram-ingress:
     build:
-      context: ../../services/telegram-ingress
+      context: ../..
+      dockerfile: services/telegram-ingress/Dockerfile
     image: ghcr.io/${GHCR_OWNER}/local-assistant-telegram-ingress:${APP_VERSION}
     restart: unless-stopped
     env_file:
