@@ -11,7 +11,7 @@ from app.clients.agent_api import AgentApiClient
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, log_event, new_request_id
-from app.modules.alerts.facade import AlertFacade, unique_chat_ids
+from app.modules.alerts import AlertFacade, AlertRetryWorker, unique_chat_ids
 from app.modules.webhook.facade import WebhookFacade
 from app.services.alert_delivery import (
     AlertDeliveryHandler,
@@ -103,6 +103,12 @@ def create_app(
             settings=config,
             alert_delivery_service=alert_delivery_service,
         )
+    alert_retry_worker = None
+    if alert_facade is not None:
+        alert_retry_worker = AlertRetryWorker(
+            alert_facade=alert_facade,
+            poll_seconds=config.telegram_alert_retry_poll_seconds,
+        )
 
     polling_task: asyncio.Task[None] | None = None
     alert_retry_task: asyncio.Task[None] | None = None
@@ -173,8 +179,9 @@ def create_app(
         if (
             alert_delivery_service is not None
             and config.telegram_alert_retry_worker_enabled
+            and alert_retry_worker is not None
         ):
-            alert_retry_task = asyncio.create_task(_retry_alert_deliveries_forever())
+            alert_retry_task = asyncio.create_task(alert_retry_worker.run_forever())
             app.state.alert_retry_task = alert_retry_task
         if not config.is_operational() or telegram_client is None:
             return
@@ -191,21 +198,6 @@ def create_app(
             logger.info("telegram polling enabled, no webhook URL configured")
             polling_task = asyncio.create_task(_poll_updates_forever())
             app.state.telegram_polling_task = polling_task
-
-    async def _retry_alert_deliveries_forever() -> None:
-        assert alert_facade is not None
-        poll_seconds = max(config.telegram_alert_retry_poll_seconds, 0.1)
-        while True:
-            try:
-                processed = await alert_facade.process_due_once(limit=10)
-            except Exception:
-                logger.exception("telegram alert retry loop error")
-                await asyncio.sleep(poll_seconds)
-                continue
-            if processed == 0:
-                await asyncio.sleep(poll_seconds)
-            else:
-                await asyncio.sleep(0)
 
     @app.post(config.webhook_path)
     async def webhook(

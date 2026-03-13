@@ -15,12 +15,14 @@ from app.clients.spotify import SpotifyClient, SpotifyTrackItem
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
+from app.modules.chat.formatters import ChatPromptFormatter
 from app.modules.chat.planner import (
     SUPPORTED_TOOL_NAMES,
     ToolPlanner,
     ToolPlanningDecision,
     ToolPlanningResult,
 )
+from app.modules.chat.policy import ToolPolicyDecision, ToolPolicyEngine
 from app.repositories import (
     ChatPersistenceResult,
     ChatRepository,
@@ -85,17 +87,6 @@ class ToolContext:
 
 
 @dataclass(frozen=True, slots=True)
-class ToolPolicyDecision:
-    allowed: bool
-    policy_decision: str
-    error_type: str | None = None
-    error_code: str | None = None
-    error_message: str | None = None
-    adapter_name: str | None = None
-    provider: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
 class ClientConversationBinding:
     source: str
     conversation_id: str
@@ -120,6 +111,11 @@ class ChatService:
                 self._settings.web_search_enabled and self._web_search_client is not None
             ),
             spotify_available=self._settings.is_spotify_client_configured(),
+        )
+        self._prompt_formatter = ChatPromptFormatter()
+        self._tool_policy = ToolPolicyEngine(
+            settings=self._settings,
+            web_search_adapter_available=self._web_search_client is not None,
         )
 
     def create_chat_completion(
@@ -787,9 +783,9 @@ class ChatService:
                     retrieval=retrieval,
                 )
             return MemoryContext(
-                runtime_messages=self._augment_messages_with_memory(
+                runtime_messages=self._prompt_formatter.augment_with_memory(
                     request.messages,
-                    hits,
+                    tuple(hit.content for hit in hits),
                 ),
                 retrieval=retrieval,
             )
@@ -862,7 +858,7 @@ class ChatService:
         annotate_failures: bool,
         request_source: str | None,
     ) -> ToolContext:
-        policy = self._evaluate_tool_policy(
+        policy = self._tool_policy.evaluate(
             decision.tool_name,
             request_source=request_source,
         )
@@ -916,102 +912,6 @@ class ChatService:
             invocation_id=invocation_id,
             policy=policy,
         )
-
-    def _evaluate_tool_policy(
-        self,
-        tool_name: str,
-        *,
-        request_source: str | None = None,
-    ) -> ToolPolicyDecision:
-        normalized_tool = self._normalize_tool_name(tool_name)
-
-        if normalized_tool not in SUPPORTED_TOOL_NAMES:
-            return ToolPolicyDecision(
-                allowed=False,
-                policy_decision="deny",
-                error_type="policy_error",
-                error_code="tool_not_allowed",
-                error_message=(
-                    f"Tool '{normalized_tool}' is not declared in the policy catalog."
-                ),
-            )
-
-        if request_source == "telegram":
-            return ToolPolicyDecision(
-                allowed=False,
-                policy_decision="deny",
-                error_type="policy_error",
-                error_code="tool_not_allowed",
-                error_message=(
-                    f"Tool '{normalized_tool}' is blocked for Telegram-originated "
-                    "requests."
-                ),
-                adapter_name=(
-                    "search-http" if normalized_tool == "web-search" else "spotify-http"
-                ),
-                provider=(
-                    "search-provider"
-                    if normalized_tool == "web-search"
-                    else "spotify"
-                ),
-            )
-
-        if normalized_tool == "web-search":
-            if not self._settings.web_search_enabled:
-                return ToolPolicyDecision(
-                    allowed=False,
-                    policy_decision="deny",
-                    error_type="policy_error",
-                    error_code="tool_not_allowed",
-                    error_message=(
-                        "web-search is currently disabled by deployment policy."
-                    ),
-                    adapter_name="search-http",
-                    provider="search-provider",
-                )
-            if self._web_search_client is None:
-                return ToolPolicyDecision(
-                    allowed=False,
-                    policy_decision="deny",
-                    error_type="policy_error",
-                    error_code="tool_not_allowed",
-                    error_message=(
-                        "web-search is currently unavailable because the adapter is "
-                        "not configured."
-                    ),
-                    adapter_name="search-http",
-                    provider="search-provider",
-                )
-            return ToolPolicyDecision(
-                allowed=True,
-                policy_decision="allow",
-                adapter_name="search-http",
-                provider="search-provider",
-            )
-
-        if not self._settings.is_spotify_client_configured():
-            return ToolPolicyDecision(
-                allowed=False,
-                policy_decision="deny",
-                error_type="policy_error",
-                error_code="tool_not_allowed",
-                error_message=(
-                    "Spotify tools are currently unavailable because they are not "
-                    "configured."
-                ),
-                adapter_name="spotify-http",
-                provider="spotify",
-            )
-
-        return ToolPolicyDecision(
-            allowed=True,
-            policy_decision="allow",
-            adapter_name="spotify-http",
-            provider="spotify",
-        )
-
-    def _normalize_tool_name(self, tool_name: str) -> str:
-        return tool_name.strip().casefold()
 
     def _extract_request_source(
         self,
@@ -1109,10 +1009,10 @@ class ChatService:
                     execution=execution,
                 )
             return ToolContext(
-                runtime_messages=self._augment_messages_with_search_results(
-                    base_messages,
-                    results,
-                ),
+                    runtime_messages=self._prompt_formatter.augment_with_search_results(
+                        base_messages,
+                        results,
+                    ),
                 execution=execution,
             )
         except APIError as exc:
@@ -1217,7 +1117,7 @@ class ChatService:
                         execution=execution,
                     )
                 return ToolContext(
-                    runtime_messages=self._augment_messages_with_spotify_results(
+                    runtime_messages=self._prompt_formatter.augment_with_spotify_results(
                         base_messages,
                         spotify_results,
                     ),
@@ -1287,8 +1187,8 @@ class ChatService:
             )
             self._log_tool_execution(request_id=request_id, execution=execution)
             return ToolContext(
-                runtime_messages=self._augment_messages_with_spotify_action(
-                    base_messages=base_messages,
+                runtime_messages=self._prompt_formatter.augment_with_spotify_action(
+                    messages=base_messages,
                     tool_name=decision.tool_name,
                     arguments=tool_arguments,
                 ),
@@ -1550,30 +1450,6 @@ class ChatService:
             error_code=retrieval.error_code,
         )
 
-    def _augment_messages_with_memory(
-        self,
-        messages: list[ChatMessage],
-        hits: tuple[MemorySearchHit, ...],
-    ) -> list[ChatMessage]:
-        memory_lines = "\n".join(f"- {hit.content}" for hit in hits)
-        memory_message = ChatMessage(
-            role="system",
-            content=(
-                "Relevant memory from prior conversations:\n"
-                f"{memory_lines}\n"
-                "Use it only when helpful and do not treat it as authoritative "
-                "if the current conversation conflicts with it."
-            ),
-        )
-        insert_at = 0
-        while insert_at < len(messages) and messages[insert_at].role == "system":
-            insert_at += 1
-        return [
-            *messages[:insert_at],
-            memory_message,
-            *messages[insert_at:],
-        ]
-
     def _normalize_spotify_results(
         self,
         results: list[SpotifyTrackItem],
@@ -1587,128 +1463,6 @@ class ChatService:
                 "url": item.external_url,
             }
             for item in results
-        ]
-
-    def _augment_messages_with_spotify_results(
-        self,
-        messages: list[ChatMessage],
-        results: list[dict[str, object]],
-    ) -> list[ChatMessage]:
-        lines = [
-            (
-                f"- {result['name']}\n"
-                f"  Artists: {result['artists']}\n"
-                f"  URI: {result['uri']}"
-            )
-            for result in results
-        ]
-        spotify_message = ChatMessage(
-            role="system",
-            content=(
-                "Relevant Spotify tracks:\n"
-                + "\n".join(lines)
-                + "\nUse these results only when they help answer the request."
-            ),
-        )
-        insert_at = 0
-        while insert_at < len(messages) and messages[insert_at].role == "system":
-            insert_at += 1
-        return [
-            *messages[:insert_at],
-            spotify_message,
-            *messages[insert_at:],
-        ]
-
-    def _augment_messages_with_spotify_action(
-        self,
-        *,
-        base_messages: list[ChatMessage],
-        tool_name: str,
-        arguments: dict[str, object],
-    ) -> list[ChatMessage]:
-        argument_lines = [
-            f"{key.replace('_', ' ')}={value}"
-            for key, value in arguments.items()
-            if value is not None
-        ]
-        detail = ", ".join(argument_lines)
-        action_message = ChatMessage(
-            role="system",
-            content=(
-                f"Spotify action completed: {tool_name}. "
-                f"Arguments: {detail}. "
-                "Continue with a normal response."
-            ),
-        )
-        insert_at = 0
-        while insert_at < len(base_messages) and base_messages[insert_at].role == "system":
-            insert_at += 1
-        return [
-            *base_messages[:insert_at],
-            action_message,
-            *base_messages[insert_at:],
-        ]
-
-    def _augment_messages_with_search_results(
-        self,
-        messages: list[ChatMessage],
-        results: list[WebSearchResultItem],
-    ) -> list[ChatMessage]:
-        result_lines = "\n".join(
-            (
-                f"- {result.title}\n"
-                f"  URL: {result.url}\n"
-                f"  Snippet: {result.snippet}"
-            )
-            for result in results
-        )
-        search_message = ChatMessage(
-            role="system",
-            content=(
-                "Relevant web search results:\n"
-                f"{result_lines}\n"
-                "Use these results only when they help answer the current request. "
-                "Cite the source URLs in the answer when appropriate."
-            ),
-        )
-        insert_at = 0
-        while insert_at < len(messages) and messages[insert_at].role == "system":
-            insert_at += 1
-        return [
-            *messages[:insert_at],
-            search_message,
-            *messages[insert_at:],
-        ]
-
-    def _augment_messages_with_tool_unavailable(
-        self,
-        messages: list[ChatMessage],
-        tool_name: str,
-    ) -> list[ChatMessage]:
-        normalized_tool = tool_name.strip().casefold()
-        if normalized_tool == "web-search":
-            unavailable_text = (
-                "Web search was requested but is currently unavailable. "
-                "Answer using existing knowledge only, and be explicit when fresh "
-                "facts may be uncertain."
-            )
-        else:
-            unavailable_text = (
-                f"The tool '{tool_name}' is currently unavailable or blocked by policy. "
-                "Answer the request using existing context without external calls."
-            )
-
-        unavailable_message = ChatMessage(
-            role="system",
-            content=unavailable_text,
-        )
-        insert_at = 0
-        while insert_at < len(messages) and messages[insert_at].role == "system":
-            insert_at += 1
-        return [
-            *messages[:insert_at],
-            unavailable_message,
-            *messages[insert_at:],
         ]
 
     def _build_tool_planning_messages(
@@ -1801,7 +1555,10 @@ class ChatService:
     ) -> list[ChatMessage]:
         if not annotate_failures:
             return list(base_messages)
-        return self._augment_messages_with_tool_unavailable(base_messages, tool_name)
+        return self._prompt_formatter.augment_with_tool_unavailable(
+            base_messages,
+            tool_name,
+        )
 
     def _latest_user_message(self, messages: list[ChatMessage]) -> str | None:
         for message in reversed(messages):

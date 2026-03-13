@@ -1,55 +1,20 @@
 import asyncio
 import logging
-from dataclasses import asdict, dataclass
 from collections import deque
 from time import perf_counter
-from typing import Any
 
-from app.clients.agent_api import AgentApiClient, AgentApiError
-from app.clients.telegram import TelegramClient, TelegramSendError
+from app.clients.agent_api import AgentApiClient
+from app.clients.telegram import TelegramClient
 from app.core.config import Settings
 from app.core.logging import log_event
 from app.modules.webhook.commands import CommandRouter
 from app.modules.webhook.parser import TelegramUpdate, TelegramUpdateParser
+from app.modules.webhook.reply_pipeline import ReplyPipeline
+from app.modules.webhook.result import WebhookResult
 
 
 class TelegramBridgeRetryableError(RuntimeError):
     """Raised when an update should be retried instead of acknowledged."""
-
-
-@dataclass(frozen=True, slots=True)
-class WebhookResult:
-    status: str
-    update_id: int | None = None
-    chat_id: int | None = None
-    message_id: int | None = None
-    conversation_id: str | None = None
-    reason: str | None = None
-
-    @classmethod
-    def ok(
-        cls,
-        *,
-        update_id: int,
-        chat_id: int,
-        message_id: int,
-        conversation_id: str,
-        status: str,
-    ) -> "WebhookResult":
-        return cls(
-            status=status,
-            update_id=update_id,
-            chat_id=chat_id,
-            message_id=message_id,
-            conversation_id=conversation_id,
-        )
-
-    @classmethod
-    def ignored(cls, *, reason: str) -> "WebhookResult":
-        return cls(status="ignored", reason=reason)
-
-    def as_dict(self) -> dict[str, Any]:
-        return {key: value for key, value in asdict(self).items() if value is not None}
 
 
 class DedupCache:
@@ -151,6 +116,14 @@ class TelegramBridgeService:
             allowed_commands=self._settings.telegram_allowed_commands,
         )
         self._command_router = CommandRouter(parser=self._parser)
+        self._reply_pipeline = ReplyPipeline(
+            agent_client=self._agent_client,
+            telegram_client=self._telegram_client,
+            agent_model=self._settings.agent_api_model,
+            max_reply_chars=self._settings.max_reply_chars,
+            release_retry_state=self._release_update_dedupe,
+            retryable_error_factory=TelegramBridgeRetryableError,
+        )
 
     async def process_update(
         self,
@@ -291,7 +264,7 @@ class TelegramBridgeService:
             )
 
         try:
-            result = await self._complete_and_send(
+            result = await self._reply_pipeline.complete_and_send(
                 update=update,
                 conversation_id=conversation_id,
                 prompt_text=update.text,
@@ -329,13 +302,13 @@ class TelegramBridgeService:
             return None
 
         if route.mode == "local_reply":
-            return await self._send_local_reply(
+            return await self._reply_pipeline.send_local_reply(
                 update=update,
                 conversation_id=conversation_id,
                 text=route.text,
             )
         if route.mode == "completion":
-            return await self._complete_and_send(
+            return await self._reply_pipeline.complete_and_send(
                 update=update,
                 conversation_id=conversation_id,
                 prompt_text=route.text,
@@ -343,69 +316,12 @@ class TelegramBridgeService:
             )
         return None
 
-    async def _send_local_reply(
-        self,
-        *,
-        update: TelegramUpdate,
-        conversation_id: str,
-        text: str,
-    ) -> WebhookResult:
-        try:
-            await self._telegram_client.send_message(
-                chat_id=update.chat_id,
-                text=text,
-            )
-            return WebhookResult.ok(
-                status="processed",
-                update_id=update.update_id,
-                chat_id=update.chat_id,
-                message_id=update.message_id,
-                conversation_id=conversation_id,
-            )
-        except TelegramSendError:
-            await self._dedupe.release(self._cache_key(update))
-            raise TelegramBridgeRetryableError(
-                "telegram bridge downstream unavailable"
-            )
-
-    async def _complete_and_send(
-        self,
-        *,
-        update: TelegramUpdate,
-        conversation_id: str,
-        prompt_text: str,
-        request_id: str,
-    ) -> WebhookResult:
-        try:
-            response = await self._agent_client.complete(
-                model=self._settings.agent_api_model,
-                text=prompt_text,
-                conversation_id=conversation_id,
-                request_id=request_id,
-            )
-            if len(response) > self._settings.max_reply_chars:
-                response = response[: self._settings.max_reply_chars]
-
-            await self._telegram_client.send_message(
-                chat_id=update.chat_id,
-                text=response,
-            )
-            return WebhookResult.ok(
-                status="processed",
-                update_id=update.update_id,
-                chat_id=update.chat_id,
-                message_id=update.message_id,
-                conversation_id=conversation_id,
-            )
-        except (AgentApiError, TelegramSendError):
-            await self._dedupe.release(self._cache_key(update))
-            raise TelegramBridgeRetryableError(
-                "telegram bridge downstream unavailable"
-            )
-
     async def close(self) -> None:
         await self._agent_client.close()
         await self._telegram_client.close()
+
+    async def _release_update_dedupe(self, update: TelegramUpdate) -> None:
+        await self._dedupe.release(self._cache_key(update))
 
     def _cache_key(self, update: TelegramUpdate) -> str:
         if update.update_id > 0:
