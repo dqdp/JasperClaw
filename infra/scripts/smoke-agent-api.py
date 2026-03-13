@@ -14,7 +14,9 @@ def _require_env(name: str) -> str:
     return value
 
 
-def _request_json(url: str, *, headers: dict[str, str] | None = None, body: dict | None = None) -> tuple[int, dict]:
+def _request_json(
+    url: str, *, headers: dict[str, str] | None = None, body: dict | None = None
+) -> tuple[int, dict]:
     data = None
     request_headers = dict(headers or {})
     if body is not None:
@@ -33,6 +35,30 @@ def _request_json(url: str, *, headers: dict[str, str] | None = None, body: dict
         except json.JSONDecodeError:
             body_json = {"raw": payload}
         return exc.code, body_json
+
+
+def _request_bytes(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    body: dict | None = None,
+) -> tuple[int, bytes, str]:
+    data = None
+    request_headers = dict(headers or {})
+    if body is not None:
+        data = json.dumps(body).encode()
+        request_headers["Content-Type"] = "application/json"
+
+    request = urllib.request.Request(url, headers=request_headers, data=data)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return (
+                response.status,
+                response.read(),
+                response.headers.get("Content-Type", ""),
+            )
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read(), exc.headers.get("Content-Type", "")
 
 
 def _wait_for_success(
@@ -73,7 +99,9 @@ def main() -> int:
         if status == 200 and payload.get("status") == "ready":
             break
         if time.monotonic() >= deadline:
-            raise SystemExit(f"/readyz did not become ready before timeout: {status} {payload}")
+            raise SystemExit(
+                f"/readyz did not become ready before timeout: {status} {payload}"
+            )
         time.sleep(2)
 
     auth_headers = {"Authorization": f"Bearer {api_key}"}
@@ -84,7 +112,9 @@ def main() -> int:
         error_context="/v1/models did not stabilize before timeout",
     )
 
-    model_ids = {entry.get("id") for entry in payload.get("data", []) if isinstance(entry, dict)}
+    model_ids = {
+        entry.get("id") for entry in payload.get("data", []) if isinstance(entry, dict)
+    }
     if "assistant-fast" not in model_ids:
         raise SystemExit(f"assistant-fast missing from model list: {sorted(model_ids)}")
 
@@ -110,6 +140,34 @@ def main() -> int:
     content = message.get("content", "").strip() if isinstance(message, dict) else ""
     if not content:
         raise SystemExit(f"Chat response content was empty: {payload}")
+
+    if os.getenv("SMOKE_CHECK_VOICE", "").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        status, body, content_type = _request_bytes(
+            f"{base_url}/v1/audio/speech",
+            headers=auth_headers,
+            body={
+                "model": "tts-1",
+                "input": "Скажи привет.",
+                "voice": os.getenv("SMOKE_TTS_VOICE", "assistant-default"),
+            },
+        )
+        if status != 200:
+            try:
+                payload = json.loads(body.decode())
+            except Exception:
+                payload = {"raw": body.decode(errors="ignore")}
+            raise SystemExit(f"/v1/audio/speech failed: {status} {payload}")
+        if not content_type.startswith("audio/wav"):
+            raise SystemExit(
+                f"/v1/audio/speech returned unexpected content type: {content_type}"
+            )
+        if len(body) < 16 or not body.startswith(b"RIFF"):
+            raise SystemExit("/v1/audio/speech did not return RIFF/WAV audio")
 
     print("Smoke checks passed")
     return 0

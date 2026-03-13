@@ -1,2 +1,4 @@
 fastapi>=0.116.0,<1.0.0
 uvicorn[standard]>=0.35.0,<1.0.0
+piper-tts==1.4.1
+pathvalidate>=3.0.0,<4.0.0

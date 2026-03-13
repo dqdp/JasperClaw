@@ -1,0 +1,7 @@
+[voices.assistant-default]
+engine = "piper"
+model = "ru_RU-irina-medium"
+
+[voices.assistant-fast]
+engine = "piper"
+model = "ru_RU-irina-medium"

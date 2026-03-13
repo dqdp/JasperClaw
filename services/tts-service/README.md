@@ -1,17 +1,24 @@
 # TTS Service
 
 Purpose:
-This is the current placeholder text-to-speech service kept for the later voice slice.
+This service now contains the first real buffered text-to-speech slice for the
+voice path.
 
 Start here:
-- `app/main.py`: open first for the current stub behavior.
+- `app/main.py`: open first for route wiring and app construction.
 
 Index:
 - `Dockerfile`: open when changing container build/runtime behavior.
 - `pyproject.toml`: open when changing pytest or local project metadata.
 - `requirements.txt`: open when changing runtime Python dependencies.
-- `app/`: open when changing the placeholder HTTP service.
-- `tests/`: open when changing placeholder health coverage.
+- `app/`: open when changing HTTP contract, config, engine wiring, or voice registry behavior.
+- `tests/`: open when changing `/speak`, engine, or health coverage.
 
 Notes:
-- This service is not yet a real production voice path.
+- Current baseline:
+  - one active local engine per deployment
+  - buffered `audio/wav` responses
+  - Piper-compatible default profile
+  - XTTS remains a later premium GPU profile
+- Docker builds preload the Piper models referenced by `app/voices.toml` so the
+  default profile does not require runtime downloads.

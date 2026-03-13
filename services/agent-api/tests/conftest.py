@@ -24,6 +24,7 @@ def reset_env(monkeypatch: pytest.MonkeyPatch):
     deps.get_web_search_client.cache_clear()
     deps.get_chat_repository.cache_clear()
     deps.get_spotify_client.cache_clear()
+    deps.get_tts_client.cache_clear()
     deps.get_migration_runner.cache_clear()
     get_agent_metrics().reset()
     yield
@@ -33,6 +34,7 @@ def reset_env(monkeypatch: pytest.MonkeyPatch):
     deps.get_web_search_client.cache_clear()
     deps.get_chat_repository.cache_clear()
     deps.get_spotify_client.cache_clear()
+    deps.get_tts_client.cache_clear()
     deps.get_migration_runner.cache_clear()
     get_agent_metrics().reset()
 

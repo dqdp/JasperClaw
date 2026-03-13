@@ -1069,17 +1069,31 @@ Purpose:
 
 - location of `tts-service`
 
+### `VOICE_ENABLED`
+
+Required: no
+
+Used by:
+
+- `agent-api`
+- `tts-service`
+
+Purpose:
+
+- explicit gate for the voice path in both the public ingress and internal TTS runtime
+
 ### `TTS_DEFAULT_VOICE`
 
 Required: no until voice is enabled
 
 Used by:
 
+- `agent-api`
 - `tts-service`
 
 Purpose:
 
-- default text-to-speech voice selection
+- public default text-to-speech voice ID selection
 
 ## Legacy or provisional variables
 
@@ -1170,6 +1184,7 @@ Additional required if enabled:
 
 Additional required only if enabled:
 
+- `VOICE_ENABLED`
 - `STT_BASE_URL`
 - `STT_MODEL`
 - `TTS_BASE_URL`

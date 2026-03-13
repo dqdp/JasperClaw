@@ -33,6 +33,10 @@ class Settings:
     spotify_timeout_seconds: float = 5.0
     spotify_search_top_k: int = 3
     model_owner: str = "local-assistant"
+    voice_enabled: bool = False
+    tts_base_url: str = "http://tts-service:8080"
+    tts_default_voice: str = "assistant-default"
+    tts_timeout_seconds: float = 30.0
 
     @property
     def public_profiles(self) -> tuple[str, str]:
@@ -90,9 +94,7 @@ def get_settings() -> Settings:
         search_api_key=(os.getenv("SEARCH_API_KEY", "") or "").strip(),
         web_search_enabled=_get_bool_env("WEB_SEARCH_ENABLED", default=False),
         web_search_top_k=int(os.getenv("WEB_SEARCH_TOP_K", "3")),
-        web_search_timeout_seconds=float(
-            os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")
-        ),
+        web_search_timeout_seconds=float(os.getenv("WEB_SEARCH_TIMEOUT_SECONDS", "5")),
         spotify_base_url=(
             os.getenv("SPOTIFY_BASE_URL", "https://api.spotify.com").strip()
             or "https://api.spotify.com"
@@ -101,8 +103,16 @@ def get_settings() -> Settings:
         spotify_client_id=(os.getenv("SPOTIFY_CLIENT_ID", "") or "").strip(),
         spotify_client_secret=(os.getenv("SPOTIFY_CLIENT_SECRET", "") or "").strip(),
         spotify_redirect_uri=(os.getenv("SPOTIFY_REDIRECT_URI", "") or "").strip(),
-        spotify_timeout_seconds=float(
-            os.getenv("SPOTIFY_TIMEOUT_SECONDS", "5")
-        ),
+        spotify_timeout_seconds=float(os.getenv("SPOTIFY_TIMEOUT_SECONDS", "5")),
         spotify_search_top_k=int(os.getenv("SPOTIFY_SEARCH_TOP_K", "3")),
+        voice_enabled=_get_bool_env("VOICE_ENABLED", default=False),
+        tts_base_url=(
+            os.getenv("TTS_BASE_URL", "http://tts-service:8080").strip()
+            or "http://tts-service:8080"
+        ),
+        tts_default_voice=(
+            os.getenv("TTS_DEFAULT_VOICE", "assistant-default").strip()
+            or "assistant-default"
+        ),
+        tts_timeout_seconds=float(os.getenv("TTS_TIMEOUT_SECONDS", "30")),
     )

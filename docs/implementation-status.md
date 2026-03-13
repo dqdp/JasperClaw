@@ -70,7 +70,7 @@ Implemented:
 - forward-only SQL migration runner for the current canonical text-path schema
 - explicit neutral `platform-db` migration command for applying pending schema changes before service traffic
 - stubbed `POST /v1/audio/transcriptions`
-- stubbed `POST /v1/audio/speech`
+- buffered `POST /v1/audio/speech` proxy path through `tts-service`
 
 Not yet implemented:
 
@@ -94,13 +94,18 @@ Not yet implemented:
 
 Implemented:
 
-- service placeholder
+- buffered `POST /speak` synthesis endpoint
 - health endpoint
+- static voice registry and bounded-concurrency synthesis facade
+- Piper-compatible first local backend path
+- Docker packaging that installs the Piper runtime and preloads the bundled default voice models
+- manual Docker smoke coverage for `agent-api -> tts-service -> Piper-compatible backend`
 
 Not yet implemented:
 
-- real speech synthesis behavior
-- production contract wiring
+- premium XTTS GPU profile
+- streaming synthesis
+- automated deploy-gated smoke coverage for the voice path
 
 ### Tools integration
 
