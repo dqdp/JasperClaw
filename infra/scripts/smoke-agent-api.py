@@ -14,6 +14,22 @@ def _require_env(name: str) -> str:
     return value
 
 
+def _is_truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def _resolve_api_key() -> str:
+    value = (
+        os.getenv("SMOKE_INTERNAL_OPENAI_API_KEY", "").strip()
+        or os.getenv("INTERNAL_OPENAI_API_KEY", "").strip()
+    )
+    if not value:
+        raise SystemExit(
+            "Missing required environment variable: SMOKE_INTERNAL_OPENAI_API_KEY"
+        )
+    return value
+
+
 def _request_json(
     url: str, *, headers: dict[str, str] | None = None, body: dict | None = None
 ) -> tuple[int, dict]:
@@ -87,7 +103,7 @@ def _wait_for_success(
 
 def main() -> int:
     base_url = os.getenv("SMOKE_BASE_URL", "http://127.0.0.1:18080").rstrip("/")
-    api_key = _require_env("SMOKE_INTERNAL_OPENAI_API_KEY")
+    api_key = _resolve_api_key()
     timeout_seconds = float(os.getenv("SMOKE_TIMEOUT_SECONDS", "120"))
     deadline = time.monotonic() + timeout_seconds
 
@@ -115,8 +131,11 @@ def main() -> int:
     model_ids = {
         entry.get("id") for entry in payload.get("data", []) if isinstance(entry, dict)
     }
-    if "assistant-fast" not in model_ids:
-        raise SystemExit(f"assistant-fast missing from model list: {sorted(model_ids)}")
+    required_models = {"assistant-v1", "assistant-fast"}
+    if not required_models.issubset(model_ids):
+        raise SystemExit(
+            f"Required public model IDs missing from model list: {sorted(model_ids)}"
+        )
 
     status, payload = _wait_for_success(
         request_fn=lambda: _request_json(
@@ -141,12 +160,7 @@ def main() -> int:
     if not content:
         raise SystemExit(f"Chat response content was empty: {payload}")
 
-    if os.getenv("SMOKE_CHECK_VOICE", "").strip().casefold() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
+    if _is_truthy_env("SMOKE_CHECK_VOICE"):
         status, body, content_type = _request_bytes(
             f"{base_url}/v1/audio/speech",
             headers=auth_headers,

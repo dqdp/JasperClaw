@@ -24,6 +24,7 @@ That script checks:
 - `agent-api` readiness from inside the container
 - `GET /v1/models`
 - a simple `POST /v1/chat/completions` request through the canonical backend path
+- `POST /v1/audio/speech` when `VOICE_ENABLED=true` in the deployment env
 
 The rest of this document is still the broader manual checklist to use after the automated baseline passes.
 

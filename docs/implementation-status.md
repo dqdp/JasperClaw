@@ -100,12 +100,12 @@ Implemented:
 - Piper-compatible first local backend path
 - Docker packaging that installs the Piper runtime and preloads the bundled default voice models
 - manual Docker smoke coverage for `agent-api -> tts-service -> Piper-compatible backend`
+- deploy-gated automated voice smoke coverage when `VOICE_ENABLED=true`
 
 Not yet implemented:
 
 - premium XTTS GPU profile
 - streaming synthesis
-- automated deploy-gated smoke coverage for the voice path
 
 ### Tools integration
 

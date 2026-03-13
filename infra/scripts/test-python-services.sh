@@ -41,3 +41,11 @@ if [[ -d "platform_db/tests" ]]; then
     "${PYTHON_BIN}" -m pytest platform_db/tests
   )
 fi
+
+if [[ -d "infra/scripts/tests" ]]; then
+  echo "==> pytest infra/scripts"
+  (
+    cd "${REPO_ROOT}"
+    "${PYTHON_BIN}" -m pytest infra/scripts/tests
+  )
+fi
