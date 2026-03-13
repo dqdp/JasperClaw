@@ -1,5 +1,4 @@
 import json
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Protocol, Sequence
 from uuid import uuid4
@@ -7,80 +6,17 @@ from uuid import uuid4
 import psycopg
 
 from app.core.errors import APIError
+from app.persistence.memory_repo import PostgresMemoryRepository
+from app.persistence.models import (
+    ChatPersistenceResult,
+    ConversationContext,
+    MemoryRetrievalRecord,
+    MemorySearchHit,
+    PersistedMessage,
+    ToolExecutionRecord,
+    TranscriptMessage,
+)
 from app.schemas.chat import ChatCompletionUsage, ChatMessage
-
-_DEFAULT_PRINCIPAL_ID = "prn_local_assistant"
-_MEMORY_KIND_USER_MESSAGE = "user_message"
-_MEMORY_SCOPE_PRINCIPAL = "principal"
-_MEMORY_STATUS_ACTIVE = "active"
-
-
-@dataclass(frozen=True, slots=True)
-class PersistedMessage:
-    message_id: str
-    message_index: int
-    role: str
-    content: str
-    source: str
-
-
-@dataclass(frozen=True, slots=True)
-class MemorySearchHit:
-    memory_item_id: str
-    source_message_id: str
-    content: str
-    score: float
-
-
-@dataclass(frozen=True, slots=True)
-class MemoryRetrievalRecord:
-    query_text: str
-    status: str
-    top_k: int
-    latency_ms: float
-    hits: tuple[MemorySearchHit, ...] = ()
-    error_type: str | None = None
-    error_code: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ToolExecutionRecord:
-    invocation_id: str
-    tool_name: str
-    status: str
-    arguments: dict[str, object]
-    latency_ms: float
-    started_at: datetime
-    completed_at: datetime
-    output: dict[str, object] | None = None
-    adapter_name: str | None = None
-    provider: str | None = None
-    policy_decision: str | None = None
-    error_type: str | None = None
-    error_code: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ChatPersistenceResult:
-    conversation_id: str
-    assistant_message_id: str | None
-    model_run_id: str
-    persisted_messages: tuple[PersistedMessage, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class TranscriptMessage:
-    role: str
-    content: str
-
-
-@dataclass(frozen=True, slots=True)
-class ConversationContext:
-    conversation_id: str
-    existing_message_count: int
-    matched_request_message_count: int
-    conversation_created: bool
-
 
 class ChatRepository(Protocol):
     def prepare_conversation(
@@ -168,6 +104,9 @@ class ChatRepository(Protocol):
 class PostgresChatRepository:
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
+        # Memory persistence is already a distinct storage concern and can be
+        # split first without changing the public chat repository contract.
+        self._memory_repository = PostgresMemoryRepository(database_url)
 
     def prepare_conversation(
         self,
@@ -346,46 +285,11 @@ class PostgresChatRepository:
         limit: int,
         min_score: float,
     ) -> list[MemorySearchHit]:
-        vector_literal = self._vector_literal(query_embedding)
-
-        def read(conn: psycopg.Connection) -> list[MemorySearchHit]:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                        id,
-                        source_message_id,
-                        content,
-                        1 - (embedding <=> %s::vector) AS score
-                    FROM memory_items
-                    WHERE principal_id = %s
-                      AND status = %s
-                      AND embedding IS NOT NULL
-                      AND 1 - (embedding <=> %s::vector) >= %s
-                    ORDER BY embedding <=> %s::vector ASC, created_at DESC
-                    LIMIT %s
-                    """,
-                    (
-                        vector_literal,
-                        _DEFAULT_PRINCIPAL_ID,
-                        _MEMORY_STATUS_ACTIVE,
-                        vector_literal,
-                        min_score,
-                        vector_literal,
-                        limit,
-                    ),
-                )
-                return [
-                    MemorySearchHit(
-                        memory_item_id=row[0],
-                        source_message_id=row[1],
-                        content=row[2],
-                        score=float(row[3]),
-                    )
-                    for row in cur.fetchall()
-                ]
-
-        return self._execute(read)
+        return self._memory_repository.retrieve_memory(
+            query_embedding=query_embedding,
+            limit=limit,
+            min_score=min_score,
+        )
 
     def record_retrieval(
         self,
@@ -396,72 +300,13 @@ class PostgresChatRepository:
         retrieval: MemoryRetrievalRecord,
         created_at: datetime,
     ) -> None:
-        timestamp = created_at.astimezone(timezone.utc)
-
-        def write(conn: psycopg.Connection) -> None:
-            retrieval_run_id = self._new_id("retr")
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO retrieval_runs (
-                        id,
-                        conversation_id,
-                        request_id,
-                        query_text,
-                        profile_id,
-                        strategy,
-                        top_k,
-                        status,
-                        latency_ms,
-                        error_type,
-                        error_code,
-                        created_at
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        retrieval_run_id,
-                        conversation_id,
-                        request_id,
-                        retrieval.query_text,
-                        public_model,
-                        "semantic_memory_v1",
-                        retrieval.top_k,
-                        retrieval.status,
-                        retrieval.latency_ms,
-                        retrieval.error_type,
-                        retrieval.error_code,
-                        timestamp,
-                    ),
-                )
-
-            for rank, hit in enumerate(retrieval.hits, start=1):
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO retrieval_hits (
-                            id,
-                            retrieval_run_id,
-                            memory_item_id,
-                            rank,
-                            score,
-                            included_in_prompt,
-                            created_at
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            self._new_id("hit"),
-                            retrieval_run_id,
-                            hit.memory_item_id,
-                            rank,
-                            hit.score,
-                            True,
-                            timestamp,
-                        ),
-                    )
-
-        self._execute(write)
+        self._memory_repository.record_retrieval(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            public_model=public_model,
+            retrieval=retrieval,
+            created_at=created_at,
+        )
 
     def store_memory_items(
         self,
@@ -472,58 +317,13 @@ class PostgresChatRepository:
         embedding_model: str,
         created_at: datetime,
     ) -> None:
-        if not messages:
-            return
-        if len(messages) != len(embeddings):
-            raise APIError(
-                status_code=500,
-                error_type="internal_error",
-                code="memory_embedding_mismatch",
-                message="Memory embedding count mismatch",
-            )
-
-        timestamp = created_at.astimezone(timezone.utc)
-
-        def write(conn: psycopg.Connection) -> None:
-            for message, embedding in zip(messages, embeddings, strict=True):
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO memory_items (
-                            id,
-                            principal_id,
-                            kind,
-                            scope,
-                            content,
-                            status,
-                            source_message_id,
-                            conversation_id,
-                            embedding,
-                            embedding_model,
-                            created_at,
-                            updated_at
-                        )
-                        VALUES (
-                            %s, %s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s, %s
-                        )
-                        """,
-                        (
-                            self._new_id("mem"),
-                            _DEFAULT_PRINCIPAL_ID,
-                            _MEMORY_KIND_USER_MESSAGE,
-                            _MEMORY_SCOPE_PRINCIPAL,
-                            message.content,
-                            _MEMORY_STATUS_ACTIVE,
-                            message.message_id,
-                            conversation_id,
-                            self._vector_literal(embedding),
-                            embedding_model,
-                            timestamp,
-                            timestamp,
-                        ),
-                    )
-
-        self._execute(write)
+        self._memory_repository.store_memory_items(
+            conversation_id=conversation_id,
+            messages=messages,
+            embeddings=embeddings,
+            embedding_model=embedding_model,
+            created_at=created_at,
+        )
 
     def record_tool_execution(
         self,
@@ -1070,10 +870,6 @@ class PostgresChatRepository:
                 """,
                 (updated_at.astimezone(timezone.utc), conversation_id),
             )
-
-    def _vector_literal(self, embedding: Sequence[float]) -> str:
-        serialized = ",".join(str(float(value)) for value in embedding)
-        return f"[{serialized}]"
 
     def _new_id(self, prefix: str) -> str:
         return f"{prefix}_{uuid4().hex[:12]}"
