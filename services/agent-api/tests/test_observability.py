@@ -5,6 +5,7 @@ from app.api import deps
 from app.core.config import get_settings
 from app.core.logging import log_event
 from app.core.metrics import get_agent_metrics
+from app.repositories.postgres import MemorySearchHit
 from app.services.readiness import ReadinessResult
 
 from tests.test_chat_completions import (
@@ -181,6 +182,39 @@ def test_metrics_endpoint_exports_readiness_and_request_failure_metrics(client) 
         'agent_api_http_request_total{method="GET",path_group="readyz",status_class="5xx"} 1'
         in metrics_response.text
     )
+
+
+def test_metrics_endpoint_exports_memory_retrieval_and_materialization_metrics(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_EMBED_MODEL", "all-minilm")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository(
+        memory_hits=[
+            MemorySearchHit(
+                memory_item_id="mem_blue",
+                source_message_id="msg_old",
+                content="My favorite color is blue.",
+                score=0.94,
+            )
+        ]
+    )
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+
+    response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(),
+        headers={**auth_headers, "X-Request-ID": "req_metrics_memory"},
+    )
+    metrics_response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert 'agent_api_memory_retrieval_total{outcome="success"} 1' in metrics_response.text
+    assert "agent_api_memory_retrieval_hits_total 1" in metrics_response.text
+    assert 'agent_api_memory_audit_total{outcome="success"} 1' in metrics_response.text
+    assert 'agent_api_memory_materialization_total{outcome="skipped"} 1' in metrics_response.text
 
 
 def test_chat_request_emits_tool_events_when_web_search_runs(

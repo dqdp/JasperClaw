@@ -13,10 +13,10 @@ class _CounterMetric:
         self._values: dict[tuple[str, ...], int] = defaultdict(int)
         self._lock = Lock()
 
-    def inc(self, **labels: str) -> None:
+    def inc(self, amount: int = 1, **labels: str) -> None:
         key = tuple(labels[name] for name in self._label_names)
         with self._lock:
-            self._values[key] += 1
+            self._values[key] += amount
 
     def reset(self) -> None:
         with self._lock:
@@ -163,6 +163,43 @@ class AgentApiMetrics:
             "Readiness check outcomes.",
             ("status",),
         )
+        self._memory_retrieval_total = _CounterMetric(
+            "agent_api_memory_retrieval_total",
+            "Memory retrieval outcomes.",
+            ("outcome",),
+        )
+        self._memory_retrieval_duration = _HistogramMetric(
+            "agent_api_memory_retrieval_duration_seconds",
+            "Memory retrieval duration in seconds.",
+            ("outcome",),
+            (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+        )
+        self._memory_retrieval_hits_total = _CounterMetric(
+            "agent_api_memory_retrieval_hits_total",
+            "Memory retrieval hits materialized into runtime context.",
+            (),
+        )
+        self._memory_embedding_total = _CounterMetric(
+            "agent_api_memory_embedding_total",
+            "Memory embedding outcomes by phase.",
+            ("outcome", "phase"),
+        )
+        self._memory_audit_total = _CounterMetric(
+            "agent_api_memory_audit_total",
+            "Memory retrieval audit persistence outcomes.",
+            ("outcome",),
+        )
+        self._memory_materialization_total = _CounterMetric(
+            "agent_api_memory_materialization_total",
+            "Memory materialization outcomes.",
+            ("outcome",),
+        )
+        self._memory_materialization_duration = _HistogramMetric(
+            "agent_api_memory_materialization_duration_seconds",
+            "Memory materialization duration in seconds.",
+            ("outcome",),
+            (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+        )
 
     def record_request(
         self,
@@ -227,6 +264,42 @@ class AgentApiMetrics:
     def record_readiness(self, *, status: str) -> None:
         self._readiness_total.inc(status=status)
 
+    def record_memory_retrieval(
+        self,
+        *,
+        outcome: str,
+        duration_seconds: float,
+        hit_count: int = 0,
+    ) -> None:
+        self._memory_retrieval_total.inc(outcome=outcome)
+        self._memory_retrieval_duration.observe(duration_seconds, outcome=outcome)
+        if hit_count > 0:
+            self._memory_retrieval_hits_total.inc(hit_count)
+
+    def record_memory_embedding(
+        self,
+        *,
+        phase: str,
+        outcome: str,
+    ) -> None:
+        self._memory_embedding_total.inc(outcome=outcome, phase=phase)
+
+    def record_memory_audit(self, *, outcome: str) -> None:
+        self._memory_audit_total.inc(outcome=outcome)
+
+    def record_memory_materialization(
+        self,
+        *,
+        outcome: str,
+        duration_seconds: float | None = None,
+    ) -> None:
+        self._memory_materialization_total.inc(outcome=outcome)
+        if duration_seconds is not None:
+            self._memory_materialization_duration.observe(
+                duration_seconds,
+                outcome=outcome,
+            )
+
     def reset(self) -> None:
         for metric in (
             self._request_total,
@@ -237,6 +310,13 @@ class AgentApiMetrics:
             self._tool_execution_total,
             self._tool_audit_total,
             self._readiness_total,
+            self._memory_retrieval_total,
+            self._memory_retrieval_duration,
+            self._memory_retrieval_hits_total,
+            self._memory_embedding_total,
+            self._memory_audit_total,
+            self._memory_materialization_total,
+            self._memory_materialization_duration,
         ):
             metric.reset()
 
@@ -251,6 +331,13 @@ class AgentApiMetrics:
             self._tool_execution_total,
             self._tool_audit_total,
             self._readiness_total,
+            self._memory_retrieval_total,
+            self._memory_retrieval_duration,
+            self._memory_retrieval_hits_total,
+            self._memory_embedding_total,
+            self._memory_audit_total,
+            self._memory_materialization_total,
+            self._memory_materialization_duration,
         ):
             lines.extend(metric.render_prometheus())
         return "\n".join(lines) + "\n"

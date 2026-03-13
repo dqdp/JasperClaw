@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from app.clients.ollama import OllamaChatClient
 from app.core.config import Settings
 from app.core.errors import APIError
+from app.core.metrics import get_agent_metrics
 from app.modules.chat.formatters import ChatPromptFormatter
 from app.modules.chat.memory import MemoryContext, MemoryService
 from app.repositories import ChatPersistenceResult, MemorySearchHit, PersistedMessage
@@ -99,6 +100,13 @@ def test_memory_service_augments_prompt_with_retrieved_memory() -> None:
     assert context.retrieval.status == "completed"
     assert "Relevant memory from prior conversations" in context.runtime_messages[0].content
     assert repository.retrieve_calls[0]["limit"] == 3
+    exported = get_agent_metrics().render_prometheus()
+    assert 'agent_api_memory_retrieval_total{outcome="success"} 1' in exported
+    assert "agent_api_memory_retrieval_hits_total 1" in exported
+    assert (
+        'agent_api_memory_embedding_total{outcome="success",phase="retrieve"} 1'
+        in exported
+    )
 
 
 def test_memory_service_degrades_on_embedding_error() -> None:
@@ -125,6 +133,31 @@ def test_memory_service_degrades_on_embedding_error() -> None:
     assert context.retrieval is not None
     assert context.retrieval.status == "error"
     assert context.runtime_messages == request.messages
+    exported = get_agent_metrics().render_prometheus()
+    assert 'agent_api_memory_retrieval_total{outcome="error"} 1' in exported
+    assert (
+        'agent_api_memory_embedding_total{outcome="error",phase="retrieve"} 1'
+        in exported
+    )
+
+
+def test_memory_service_marks_retrieval_as_skipped_when_memory_is_disabled() -> None:
+    service = MemoryService(
+        settings=_settings(memory_enabled=False, ollama_embed_model=""),
+        ollama_client=_FakeOllamaClient(),
+        repository=_FakeRepository(),
+        prompt_formatter=ChatPromptFormatter(),
+    )
+    request = ChatCompletionRequest(
+        model="assistant-v1",
+        messages=[ChatMessage(role="user", content="Tell me about my preferences")],
+    )
+
+    context = service.prepare_context(request_id="req_skip", request=request)
+
+    assert context.retrieval is None
+    exported = get_agent_metrics().render_prometheus()
+    assert 'agent_api_memory_retrieval_total{outcome="skipped"} 1' in exported
 
 
 def test_memory_service_stores_only_candidate_messages() -> None:
@@ -174,6 +207,12 @@ def test_memory_service_stores_only_candidate_messages() -> None:
     assert len(repository.store_memory_calls) == 1
     stored_messages = repository.store_memory_calls[0]["messages"]
     assert tuple(message.message_id for message in stored_messages) == ("msg_long",)
+    exported = get_agent_metrics().render_prometheus()
+    assert 'agent_api_memory_materialization_total{outcome="success"} 1' in exported
+    assert (
+        'agent_api_memory_embedding_total{outcome="success",phase="store"} 1'
+        in exported
+    )
 
 
 def test_memory_service_records_retrieval_when_conversation_is_present() -> None:
@@ -205,3 +244,47 @@ def test_memory_service_records_retrieval_when_conversation_is_present() -> None
 
     assert len(repository.record_retrieval_calls) == 1
     assert repository.record_retrieval_calls[0]["public_model"] == "assistant-v1"
+    exported = get_agent_metrics().render_prometheus()
+    assert 'agent_api_memory_audit_total{outcome="success"} 1' in exported
+
+
+def test_memory_service_skips_materialization_without_candidates() -> None:
+    repository = _FakeRepository()
+    service = MemoryService(
+        settings=_settings(),
+        ollama_client=_FakeOllamaClient(),
+        repository=repository,
+        prompt_formatter=ChatPromptFormatter(),
+    )
+    persistence = ChatPersistenceResult(
+        conversation_id="conv_1",
+        assistant_message_id="msg_a",
+        model_run_id="run_1",
+        persisted_messages=(
+            PersistedMessage(
+                message_id="msg_short",
+                message_index=0,
+                role="user",
+                content="short",
+                source="request_transcript",
+            ),
+            PersistedMessage(
+                message_id="msg_question",
+                message_index=1,
+                role="user",
+                content="Do I like music?",
+                source="request_transcript",
+            ),
+        ),
+    )
+
+    service.store_items(
+        request_id="req_skip_store",
+        conversation_id="conv_1",
+        persistence=persistence,
+        created_at=datetime.now(timezone.utc),
+    )
+
+    assert repository.store_memory_calls == []
+    exported = get_agent_metrics().render_prometheus()
+    assert 'agent_api_memory_materialization_total{outcome="skipped"} 1' in exported

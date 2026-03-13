@@ -141,7 +141,7 @@ Meaning:
 - exports Prometheus-compatible process metrics for `agent-api`
 - intended for internal scraping, not end-user clients
 - current metric families cover request traffic, chat runtime, persistence,
-  tool execution/audit, and readiness outcomes
+  tool execution/audit, readiness outcomes, and memory retrieval/materialization
 
 ### `GET /v1/models`
 

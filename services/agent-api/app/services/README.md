@@ -11,4 +11,4 @@ Index:
 - `readiness.py`: open when changing downstream dependency checks behind `/readyz`.
 
 Notes:
-- process-level observability now includes Prometheus-compatible `/metrics` export for request, chat runtime, storage, tool, and readiness counters/histograms.
+- process-level observability now includes Prometheus-compatible `/metrics` export for request, chat runtime, storage, tool, readiness, and memory-path counters/histograms.

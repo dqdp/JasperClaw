@@ -131,6 +131,13 @@ Current implemented baseline:
   - `agent_api_tool_execution_total`
   - `agent_api_tool_audit_total`
   - `agent_api_readiness_total`
+  - `agent_api_memory_retrieval_total`
+  - `agent_api_memory_retrieval_duration_seconds`
+  - `agent_api_memory_retrieval_hits_total`
+  - `agent_api_memory_embedding_total`
+  - `agent_api_memory_audit_total`
+  - `agent_api_memory_materialization_total`
+  - `agent_api_memory_materialization_duration_seconds`
 
 Metric labels are intentionally low-cardinality.
 
@@ -140,6 +147,8 @@ Examples:
   `chat_completions`, `readyz`, and `models`
 - tool metrics label fixed `tool_name` values and coarse `error_type`
 - chat runtime metrics label `public_model`, `phase`, and `outcome`
+- memory metrics distinguish `skipped`, `empty`, `success`, and `error` outcomes
+  instead of relying only on request-level success/failure
 
 ## Failure investigation order
 

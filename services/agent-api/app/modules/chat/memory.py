@@ -9,6 +9,7 @@ from app.clients.ollama import OllamaChatClient
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
+from app.core.metrics import get_agent_metrics
 from app.modules.chat.formatters import ChatPromptFormatter
 from app.repositories import (
     ChatPersistenceResult,
@@ -48,10 +49,18 @@ class MemoryService:
         request: ChatCompletionRequest,
     ) -> MemoryContext:
         if not self._settings.memory_enabled or not self._settings.ollama_embed_model:
+            get_agent_metrics().record_memory_retrieval(
+                outcome="skipped",
+                duration_seconds=0.0,
+            )
             return MemoryContext(runtime_messages=list(request.messages))
 
         query_text = self._latest_user_message(request.messages)
         if not query_text:
+            get_agent_metrics().record_memory_retrieval(
+                outcome="skipped",
+                duration_seconds=0.0,
+            )
             return MemoryContext(runtime_messages=list(request.messages))
 
         retrieval_started = perf_counter()
@@ -61,6 +70,10 @@ class MemoryService:
                 input_text=query_text,
             )
             query_embedding = self._require_single_embedding(embeddings)
+            get_agent_metrics().record_memory_embedding(
+                phase="retrieve",
+                outcome="success",
+            )
             hits = tuple(
                 self._repository.retrieve_memory(
                     query_embedding=query_embedding,
@@ -79,6 +92,12 @@ class MemoryService:
                 request_id=request_id,
                 outcome="success",
                 retrieval=retrieval,
+            )
+            retrieval_outcome = "success" if hits else "empty"
+            get_agent_metrics().record_memory_retrieval(
+                outcome=retrieval_outcome,
+                duration_seconds=retrieval.latency_ms / 1000,
+                hit_count=len(hits),
             )
             if not hits:
                 return MemoryContext(
@@ -101,10 +120,18 @@ class MemoryService:
                 error_type=exc.error_type,
                 error_code=exc.code,
             )
+            get_agent_metrics().record_memory_embedding(
+                phase="retrieve",
+                outcome="error",
+            )
             self._log_memory_retrieval(
                 request_id=request_id,
                 outcome="error",
                 retrieval=retrieval,
+            )
+            get_agent_metrics().record_memory_retrieval(
+                outcome="error",
+                duration_seconds=retrieval.latency_ms / 1000,
             )
             return MemoryContext(
                 runtime_messages=list(request.messages),
@@ -141,6 +168,7 @@ class MemoryService:
                 retrieval_status=memory_context.retrieval.status,
                 retrieval_hit_count=len(memory_context.retrieval.hits),
             )
+            get_agent_metrics().record_memory_audit(outcome="success")
         except APIError as exc:
             log_event(
                 "chat_memory_audit_completed",
@@ -152,6 +180,7 @@ class MemoryService:
                 error_type=exc.error_type,
                 error_code=exc.code,
             )
+            get_agent_metrics().record_memory_audit(outcome="error")
 
     def store_items(
         self,
@@ -162,6 +191,7 @@ class MemoryService:
         created_at: datetime,
     ) -> None:
         if not self._settings.memory_enabled or not self._settings.ollama_embed_model:
+            get_agent_metrics().record_memory_materialization(outcome="skipped")
             return
 
         candidate_messages = tuple(
@@ -170,6 +200,7 @@ class MemoryService:
             if self._is_memory_candidate(message)
         )
         if not candidate_messages:
+            get_agent_metrics().record_memory_materialization(outcome="skipped")
             return
 
         try:
@@ -186,6 +217,10 @@ class MemoryService:
                     code="dependency_bad_response",
                     message="Model runtime returned an unexpected embedding payload",
                 )
+            get_agent_metrics().record_memory_embedding(
+                phase="store",
+                outcome="success",
+            )
         except APIError as exc:
             log_event(
                 "chat_memory_materialization_completed",
@@ -196,6 +231,11 @@ class MemoryService:
                 error_type=exc.error_type,
                 error_code=exc.code,
             )
+            get_agent_metrics().record_memory_embedding(
+                phase="store",
+                outcome="error",
+            )
+            get_agent_metrics().record_memory_materialization(outcome="error")
             return
 
         storage_started = perf_counter()
@@ -215,6 +255,11 @@ class MemoryService:
                 conversation_id=conversation_id,
                 memory_item_count=len(candidate_messages),
             )
+            get_agent_metrics().record_memory_materialization(
+                outcome="success",
+                duration_seconds=round((perf_counter() - storage_started) * 1000, 2)
+                / 1000,
+            )
         except APIError as exc:
             log_event(
                 "chat_memory_materialization_completed",
@@ -225,6 +270,11 @@ class MemoryService:
                 conversation_id=conversation_id,
                 error_type=exc.error_type,
                 error_code=exc.code,
+            )
+            get_agent_metrics().record_memory_materialization(
+                outcome="error",
+                duration_seconds=round((perf_counter() - storage_started) * 1000, 2)
+                / 1000,
             )
 
     def _log_memory_retrieval(
