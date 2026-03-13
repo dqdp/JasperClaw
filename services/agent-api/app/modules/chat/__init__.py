@@ -1,3 +1,4 @@
+from .executor import ToolContext, ToolExecutor
 from .facade import ChatFacade
 from .formatters import ChatPromptFormatter
 from .memory import MemoryContext, MemoryService
@@ -15,6 +16,8 @@ __all__ = [
     "MemoryContext",
     "MemoryService",
     "SUPPORTED_TOOL_NAMES",
+    "ToolContext",
+    "ToolExecutor",
     "ToolPlanner",
     "ToolPlanningDecision",
     "ToolPlanningResult",

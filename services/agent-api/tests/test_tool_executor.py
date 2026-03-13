@@ -1,0 +1,174 @@
+from app.clients.search import WebSearchResultItem
+from app.clients.spotify import SpotifyTrackItem
+from app.core.config import Settings
+from app.core.errors import APIError
+from app.modules.chat.executor import ToolContext, ToolExecutor
+from app.modules.chat.formatters import ChatPromptFormatter
+from app.modules.chat.planner import ToolPlanningDecision
+from app.modules.chat.policy import ToolPolicyEngine
+from app.schemas.chat import ChatMessage
+
+
+class _FakeSearchClient:
+    def __init__(
+        self,
+        *,
+        results: list[object] | None = None,
+        error: APIError | None = None,
+    ) -> None:
+        self.results = results or []
+        self.error = error
+        self.calls: list[dict[str, object]] = []
+
+    def search(self, *, query: str, limit: int):
+        self.calls.append({"query": query, "limit": limit})
+        if self.error is not None:
+            raise self.error
+        return list(self.results)
+
+
+class _FakeSpotifyClient:
+    def __init__(self) -> None:
+        self.search_calls: list[dict[str, object]] = []
+        self.play_calls: list[dict[str, object]] = []
+
+    def search_tracks(self, *, query: str, limit: int) -> list[SpotifyTrackItem]:
+        self.search_calls.append({"query": query, "limit": limit})
+        return [
+            SpotifyTrackItem(
+                name="Lofi Track",
+                artists="DJ Test",
+                uri="spotify:track:001",
+                album="Focus",
+                external_url="https://open.spotify.com/track/001",
+            )
+        ]
+
+    def play_track(self, *, track_uri: str, device_id: str | None = None) -> None:
+        self.play_calls.append({"track_uri": track_uri, "device_id": device_id})
+
+    def pause_playback(self, *, device_id: str | None = None) -> None:
+        raise AssertionError("unexpected pause")
+
+    def next_track(self, *, device_id: str | None = None) -> None:
+        raise AssertionError("unexpected next")
+
+
+def _settings(**overrides: object) -> Settings:
+    base: dict[str, object] = {
+        "ollama_base_url": "http://ollama:11434",
+        "ollama_chat_model": "qwen3:8b",
+        "ollama_fast_chat_model": "qwen3:8b",
+        "ollama_timeout_seconds": 30.0,
+        "database_url": "postgresql://assistant:change-me@postgres:5432/assistant",
+        "internal_openai_api_key": "secret",
+        "web_search_enabled": True,
+        "spotify_access_token": "token",
+    }
+    base.update(overrides)
+    return Settings(**base)
+
+
+def test_tool_executor_denies_policy_blocked_tools_with_annotation() -> None:
+    settings = _settings(web_search_enabled=True)
+    policy = ToolPolicyEngine(
+        settings=settings,
+        web_search_adapter_available=True,
+    )
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=_FakeSpotifyClient(),
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=policy,
+    )
+
+    context = executor.execute(
+        request_id="req_1",
+        base_messages=[ChatMessage(role="user", content="latest updates")],
+        decision=ToolPlanningDecision(
+            tool_name="web-search",
+            arguments={"query": "latest updates"},
+        ),
+        annotate_failures=True,
+        request_source="telegram",
+    )
+
+    assert isinstance(context, ToolContext)
+    assert context.execution is not None
+    assert context.execution.status == "failed"
+    assert context.execution.error_code == "tool_not_allowed"
+    assert "Web search was requested but is currently unavailable." in context.runtime_messages[0].content
+
+
+def test_tool_executor_executes_web_search_and_augments_prompt() -> None:
+    settings = _settings(web_search_enabled=True)
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(
+            results=[
+                WebSearchResultItem(
+                    title="Release notes",
+                    url="https://example.com/release",
+                    snippet="Recent changes",
+                )
+            ]
+        ),
+        spotify_client=_FakeSpotifyClient(),
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_2",
+        base_messages=[ChatMessage(role="user", content="latest updates")],
+        decision=ToolPlanningDecision(
+            tool_name="web-search",
+            arguments={"query": "latest updates"},
+        ),
+        annotate_failures=False,
+        request_source=None,
+    )
+
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output is not None
+    assert context.execution.output["results"][0]["url"] == "https://example.com/release"
+    assert "Relevant web search results" in context.runtime_messages[0].content
+
+
+def test_tool_executor_executes_spotify_play_action() -> None:
+    settings = _settings()
+    spotify_client = _FakeSpotifyClient()
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=spotify_client,
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_3",
+        base_messages=[ChatMessage(role="user", content="play lofi")],
+        decision=ToolPlanningDecision(
+            tool_name="spotify-play",
+            arguments={"track_uri": "spotify:track:001", "device_id": "phone"},
+        ),
+        annotate_failures=True,
+        request_source=None,
+    )
+
+    assert spotify_client.play_calls == [
+        {"track_uri": "spotify:track:001", "device_id": "phone"}
+    ]
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output == {"status": "ok"}
+    assert "Spotify action completed: spotify-play." in context.runtime_messages[0].content
