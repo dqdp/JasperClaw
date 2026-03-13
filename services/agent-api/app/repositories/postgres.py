@@ -1,4 +1,3 @@
-import json
 from datetime import datetime, timezone
 from typing import Protocol, Sequence
 from uuid import uuid4
@@ -16,7 +15,9 @@ from app.persistence.models import (
     ToolExecutionRecord,
     TranscriptMessage,
 )
+from app.persistence.tool_exec_repo import PostgresToolExecutionRepository
 from app.schemas.chat import ChatCompletionUsage, ChatMessage
+
 
 class ChatRepository(Protocol):
     def prepare_conversation(
@@ -107,6 +108,7 @@ class PostgresChatRepository:
         # Memory persistence is already a distinct storage concern and can be
         # split first without changing the public chat repository contract.
         self._memory_repository = PostgresMemoryRepository(database_url)
+        self._tool_execution_repository = PostgresToolExecutionRepository(database_url)
 
     def prepare_conversation(
         self,
@@ -333,60 +335,12 @@ class PostgresChatRepository:
         model_run_id: str | None,
         tool_execution: ToolExecutionRecord,
     ) -> None:
-        def write(conn: psycopg.Connection) -> None:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO tool_executions (
-                        id,
-                        conversation_id,
-                        model_run_id,
-                        request_id,
-                        tool_name,
-                        status,
-                        started_at,
-                        finished_at,
-                        latency_ms,
-                        error_type,
-                        error_code,
-                        request_payload_json,
-                        response_payload_json,
-                        policy_decision,
-                        adapter_name,
-                        provider,
-                        created_at
-                    )
-                    VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s::jsonb, %s::jsonb, %s, %s, %s, %s
-                    )
-                    """,
-                    (
-                        tool_execution.invocation_id,
-                        conversation_id,
-                        model_run_id,
-                        request_id,
-                        tool_execution.tool_name,
-                        tool_execution.status,
-                        tool_execution.started_at.astimezone(timezone.utc),
-                        tool_execution.completed_at.astimezone(timezone.utc),
-                        tool_execution.latency_ms,
-                        tool_execution.error_type,
-                        tool_execution.error_code,
-                        json.dumps(tool_execution.arguments),
-                        (
-                            json.dumps(tool_execution.output)
-                            if tool_execution.output is not None
-                            else None
-                        ),
-                        tool_execution.policy_decision,
-                        tool_execution.adapter_name,
-                        tool_execution.provider,
-                        tool_execution.completed_at.astimezone(timezone.utc),
-                    ),
-                )
-
-        self._execute(write)
+        self._tool_execution_repository.record_tool_execution(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            model_run_id=model_run_id,
+            tool_execution=tool_execution,
+        )
 
     def _execute(self, operation):
         try:

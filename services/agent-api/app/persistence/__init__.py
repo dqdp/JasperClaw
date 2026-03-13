@@ -8,6 +8,7 @@ from app.persistence.models import (
     ToolExecutionRecord,
     TranscriptMessage,
 )
+from app.persistence.tool_exec_repo import PostgresToolExecutionRepository
 
 __all__ = [
     "ChatPersistenceResult",
@@ -16,6 +17,7 @@ __all__ = [
     "MemorySearchHit",
     "PersistedMessage",
     "PostgresMemoryRepository",
+    "PostgresToolExecutionRepository",
     "ToolExecutionRecord",
     "TranscriptMessage",
 ]
