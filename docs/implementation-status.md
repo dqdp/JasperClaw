@@ -96,6 +96,7 @@ Implemented:
 
 - buffered `POST /speak` synthesis endpoint
 - `GET /healthz` and `GET /readyz`
+- `GET /metrics` with request, synthesis, and readiness metrics
 - static voice registry and bounded-concurrency synthesis facade
 - Piper-compatible first local backend path
 - Docker packaging that installs the Piper runtime and preloads the bundled default voice models

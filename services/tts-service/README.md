@@ -19,6 +19,7 @@ Notes:
   - one active local engine per deployment
   - buffered `audio/wav` responses
   - service-local `healthz` and `readyz` probes
+  - Prometheus-compatible `/metrics` export for request, synthesis, and readiness signals
   - Piper-compatible default profile
   - XTTS remains a later premium GPU profile
 - Docker builds preload the Piper models referenced by `app/voices.toml` so the

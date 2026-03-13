@@ -122,6 +122,7 @@ If metrics are added in v1, start with:
 Current implemented baseline:
 
 - `agent-api` exposes `GET /metrics` with Prometheus-compatible text output
+- `tts-service` exposes `GET /metrics` with first-wave request, synthesis, and readiness series
 - implemented first-wave series currently cover:
   - `agent_api_http_request_total`
   - `agent_api_http_request_duration_seconds`
@@ -138,6 +139,11 @@ Current implemented baseline:
   - `agent_api_memory_audit_total`
   - `agent_api_memory_materialization_total`
   - `agent_api_memory_materialization_duration_seconds`
+  - `tts_service_http_request_total`
+  - `tts_service_http_request_duration_seconds`
+  - `tts_service_synthesis_total`
+  - `tts_service_synthesis_duration_seconds`
+  - `tts_service_readiness_total`
 
 Metric labels are intentionally low-cardinality.
 
