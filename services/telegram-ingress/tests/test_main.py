@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import warnings
 import json
 import logging
 import time
@@ -312,6 +313,20 @@ def test_metrics_endpoint_exposes_alert_delivery_metrics() -> None:
         in response.text
     )
     assert 'telegram_alert_delivery_finalize_total{status="completed"} 1' in response.text
+
+
+def test_create_app_does_not_emit_on_event_deprecation_warning() -> None:
+    settings = _operational_settings({})
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", DeprecationWarning)
+        create_app(settings=settings)
+
+    assert not any(
+        isinstance(warning.message, DeprecationWarning)
+        and "on_event is deprecated" in str(warning.message)
+        for warning in caught
+    )
 
 
 def test_webhook_facade_passes_request_id_to_bridge_service() -> None:

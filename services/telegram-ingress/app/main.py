@@ -1,6 +1,7 @@
 import asyncio
 import hmac
 import logging
+from contextlib import asynccontextmanager
 from contextlib import suppress
 from time import perf_counter
 
@@ -38,31 +39,7 @@ def create_app(
     alert_delivery_metrics: AlertDeliveryMetrics | None = None,
 ) -> FastAPI:
     config = settings if settings is not None else get_settings()
-    app = FastAPI(title="telegram-ingress", version="0.1.0")
     metrics = alert_delivery_metrics or AlertDeliveryMetrics()
-
-    @app.middleware("http")
-    async def attach_request_id(request: Request, call_next):
-        request.state.request_id = request.headers.get("X-Request-ID") or new_request_id()
-        started = perf_counter()
-        log_event(
-            "request_started",
-            request_id=request.state.request_id,
-            method=request.method,
-            path=request.url.path,
-        )
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request.state.request_id
-        event = "request_completed" if response.status_code < 400 else "request_failed"
-        log_event(
-            event,
-            request_id=request.state.request_id,
-            method=request.method,
-            path=request.url.path,
-            status_code=response.status_code,
-            duration_ms=round((perf_counter() - started) * 1000, 2),
-        )
-        return response
 
     telegram_client = None
     if bridge_service is None:
@@ -115,8 +92,76 @@ def create_app(
             poll_seconds=config.telegram_alert_retry_poll_seconds,
         )
 
-    polling_task: asyncio.Task[None] | None = None
-    alert_retry_task: asyncio.Task[None] | None = None
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        polling_task: asyncio.Task[None] | None = None
+        alert_retry_task: asyncio.Task[None] | None = None
+
+        if config.telegram_webhook_url and not config.telegram_webhook_secret_token:
+            raise RuntimeError(
+                "TELEGRAM_WEBHOOK_SECRET_TOKEN is required when "
+                "TELEGRAM_WEBHOOK_URL is configured"
+            )
+        if (
+            alert_delivery_service is not None
+            and config.telegram_alert_retry_worker_enabled
+            and alert_retry_worker is not None
+        ):
+            alert_retry_task = asyncio.create_task(alert_retry_worker.run_forever())
+            app.state.alert_retry_task = alert_retry_task
+        if config.is_operational() and telegram_client is not None:
+            if config.telegram_webhook_url:
+                await telegram_client.set_webhook(
+                    url=config.telegram_webhook_url,
+                    secret_token=config.telegram_webhook_secret_token,
+                )
+                logger.info("telegram ingress webhook registered")
+            elif config.telegram_polling_enabled:
+                logger.info("telegram polling enabled, no webhook URL configured")
+                polling_task = asyncio.create_task(_poll_updates_forever())
+                app.state.telegram_polling_task = polling_task
+
+        try:
+            yield
+        finally:
+            if alert_retry_task is not None:
+                alert_retry_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await alert_retry_task
+            if polling_task is not None:
+                polling_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await polling_task
+            if alert_delivery_service is not None:
+                await alert_delivery_service.close()
+            if alert_telegram_client is not None:
+                await alert_telegram_client.close()
+            await bridge_service.close()
+
+    app = FastAPI(title="telegram-ingress", version="0.1.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def attach_request_id(request: Request, call_next):
+        request.state.request_id = request.headers.get("X-Request-ID") or new_request_id()
+        started = perf_counter()
+        log_event(
+            "request_started",
+            request_id=request.state.request_id,
+            method=request.method,
+            path=request.url.path,
+        )
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request.state.request_id
+        event = "request_completed" if response.status_code < 400 else "request_failed"
+        log_event(
+            event,
+            request_id=request.state.request_id,
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            duration_ms=round((perf_counter() - started) * 1000, 2),
+        )
+        return response
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
@@ -179,37 +224,6 @@ def create_app(
                         next_offset = max_seen_update_id + 1
             else:
                 await asyncio.sleep(1.0)
-
-    @app.on_event("startup")
-    async def _startup() -> None:
-        nonlocal alert_retry_task, polling_task
-        if config.telegram_webhook_url and not config.telegram_webhook_secret_token:
-            raise RuntimeError(
-                "TELEGRAM_WEBHOOK_SECRET_TOKEN is required when "
-                "TELEGRAM_WEBHOOK_URL is configured"
-            )
-        if (
-            alert_delivery_service is not None
-            and config.telegram_alert_retry_worker_enabled
-            and alert_retry_worker is not None
-        ):
-            alert_retry_task = asyncio.create_task(alert_retry_worker.run_forever())
-            app.state.alert_retry_task = alert_retry_task
-        if not config.is_operational() or telegram_client is None:
-            return
-
-        if config.telegram_webhook_url:
-            await telegram_client.set_webhook(
-                url=config.telegram_webhook_url,
-                secret_token=config.telegram_webhook_secret_token,
-            )
-            logger.info("telegram ingress webhook registered")
-            return
-
-        if config.telegram_polling_enabled:
-            logger.info("telegram polling enabled, no webhook URL configured")
-            polling_task = asyncio.create_task(_poll_updates_forever())
-            app.state.telegram_polling_task = polling_task
 
     @app.post(config.webhook_path)
     async def webhook(
@@ -282,22 +296,6 @@ def create_app(
             ) from exc
 
         return JSONResponse(status_code=result.status_code, content=result.payload)
-
-    @app.on_event("shutdown")
-    async def _shutdown() -> None:
-        if alert_retry_task is not None:
-            alert_retry_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await alert_retry_task
-        if polling_task is not None:
-            polling_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await polling_task
-        if alert_delivery_service is not None:
-            await alert_delivery_service.close()
-        if alert_telegram_client is not None:
-            await alert_telegram_client.close()
-        await bridge_service.close()
 
     return app
 
