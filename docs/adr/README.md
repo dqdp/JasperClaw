@@ -22,3 +22,4 @@ Index:
 - `0013-layered-testing-and-linting-gates.md`: open when defining test layers, lint gates, or merge readiness.
 - `0014-directory-readmes-and-agent-rules-separation.md`: open when adding or updating local index files or `AGENTS.md` usage.
 - `0015-modular-slice-boundaries-and-ownership.md`: open when refactoring internal module seams, ownership boundaries, or migration authority.
+- `0016-defer-tools-gateway-extraction-while-keeping-agent-api-as-control-plane.md`: open when deciding whether tool execution should remain in-process or move into a separate runtime service.

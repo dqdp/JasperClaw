@@ -40,7 +40,7 @@ Implemented:
 
 Implemented:
 
-- accepted ADR set through `ADR 0013`
+- accepted ADR set through `ADR 0016`
 - roadmap and backlog
 - canonical `agent-api` service contract
 - canonical tools integration contract
@@ -107,6 +107,7 @@ Not yet implemented:
 Implemented:
 
 - accepted architectural decision that tools live in-process inside `agent-api` in v1
+- accepted architectural decision that any future `tools-gateway` extraction must preserve `agent-api` as the canonical control plane
 - in-process `web-search` and `spotify-*` policy-gated execution in `agent-api`
 - bounded one-hop model-driven tool planning with fail-open fallback into the final answer path
 - canonical `tool_executions` persistence and basic tool planning audit
@@ -158,6 +159,7 @@ Current accepted v1 meaning:
 - it is not part of the active Compose topology
 - it is not part of the active image-build matrix
 - it does not define the accepted runtime architecture
+- it is only future extraction scaffold unless a later ADR explicitly activates a standalone tools runtime
 
 It remains only as leftover scaffold material unless a later extraction is deliberately reintroduced.
 

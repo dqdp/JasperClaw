@@ -1,10 +1,10 @@
 # Tools Gateway
 
 Purpose:
-This directory is legacy scaffold material from an earlier topology idea.
+This directory is future extraction scaffold for a possible standalone tools execution service.
 
 Start here:
-- `README.md`: open first only to confirm that this path is non-canonical in v1.
+- `README.md`: open first to confirm that this path is not an active runtime service in the current architecture.
 
 Index:
 - `Dockerfile`: open only when auditing leftover scaffold build behavior.
@@ -14,4 +14,6 @@ Index:
 - `tests/`: open only when auditing the placeholder health check.
 
 Notes:
-- This service is not part of the accepted active v1 runtime architecture.
+- This directory is not part of the accepted active v1 runtime architecture today.
+- Current accepted control-plane rule: tool planning, policy, approvals, audit, and client-facing error mapping stay in `agent-api`.
+- If a standalone tools runtime is introduced later, it must be an extraction of the internal tools execution boundary, not a second public control plane.
