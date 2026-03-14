@@ -22,11 +22,14 @@ Deliver a self-hosted assistant where all user-facing AI traffic flows through `
 
 ## Current state
 
-- repository skeleton exists
-- docker compose topology exists for the accepted v1 core services
-- service stubs exist
-- `agent-api` exposes placeholder OpenAI-compatible endpoints
-- STT/TTS placeholders exist for the future voice path
+- the repository contains working text, memory, tools, Telegram, and buffered
+  voice slices
+- Docker Compose topology exists for the accepted v1 core services
+- `agent-api` exposes real OpenAI-compatible text and buffered voice endpoints
+- `stt-service` and `tts-service` exist as real optional voice-profile
+  services
+- remaining work is primarily convergence and hardening rather than replacing
+  placeholders
 
 ## Architecture review outcomes already accepted
 
@@ -117,6 +120,13 @@ Remaining hardening focus:
 ### Goal
 
 Only after Milestone 1 is stable, make voice a second-order v1 feature using the same orchestration core as text.
+
+Current baseline:
+
+- buffered STT and TTS services are already implemented behind the optional
+  voice profile
+- remaining work is centered on canonical persistence convergence, runtime
+  policy, and operational hardening
 
 ### Scope
 

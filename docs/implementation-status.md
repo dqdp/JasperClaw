@@ -18,10 +18,13 @@ The repository currently contains:
 
 - an accepted architecture and ADR set
 - a working documentation baseline for data model, chat flow, configuration, observability, and error semantics
-- a Docker Compose scaffold
-- service placeholders for `agent-api`, `stt-service`, `tts-service`, and the legacy `tools-gateway` directory
+- a Docker Compose runtime topology
+- real `agent-api`, `stt-service`, `tts-service`, and `telegram-ingress`
+  service implementations
+- the legacy `tools-gateway` placeholder directory, which is not part of the
+  canonical runtime path
 
-The repository does **not** yet contain a real end-to-end assistant implementation.
+The repository does **not** yet contain a fully hardened production platform.
 
 ## What is implemented today
 
@@ -32,8 +35,8 @@ Implemented:
 - monorepo layout
 - GitHub Actions CI
 - image-build workflow
-- deploy script scaffold
-- smoke script scaffold
+- deploy script baseline
+- smoke script baseline with chat and optional voice coverage
 - Compose topology for the accepted v1 core services
 
 ### Documentation and architecture

@@ -6,7 +6,9 @@
 
 It provides an OpenAI-compatible facade for `Open WebUI` and orchestrates calls to internal runtime services.
 
-For v1 delivery sequencing, the first real vertical slice is the text path. Voice endpoints may exist as contract stubs before voice is production-ready.
+For v1 delivery sequencing, the first real vertical slice was the text path.
+Buffered voice endpoints now exist behind the optional voice profile, while the
+core readiness contract remains text-first.
 
 ## Responsibilities
 
@@ -240,12 +242,11 @@ Behavior:
 
 - accepts uploaded audio
 - forwards normalized transcription request to `stt-service`
+- persists the resulting transcript as one canonical `user` message
 - returns normalized OpenAI-style response
-
-Implementation note:
-
-- this endpoint may remain a contract stub until the text path is stable enough for voice work to begin
-- its existence does not make voice part of the first delivery slice
+- returns the canonical conversation identity in the `X-Conversation-ID` header
+- currently uses explicit canonical conversation hints for continuity via the
+  `X-Conversation-ID` header
 
 ### `POST /v1/audio/speech`
 
@@ -266,11 +267,8 @@ Behavior:
 - validates requested voice or profile
 - forwards synthesis request to `tts-service`
 - returns audio bytes with correct content type
-
-Implementation note:
-
-- this endpoint may remain a contract stub until the text path is stable enough for voice work to begin
-- its existence does not make voice part of the first delivery slice
+- remains optional behind `VOICE_ENABLED`
+- does not create canonical transcript rows in the current slice
 
 ## Error contract
 

@@ -13,7 +13,7 @@ Index:
 - `observability/`: open when changing the optional Prometheus/Grafana stack, scrape config, alert rules, or provisioned dashboards.
 
 Notes:
-- `stt-service` remains a voice-profile placeholder.
+- `stt-service` is implemented as an optional buffered voice-profile service.
 - `tts-service` now has a first buffered Piper-compatible implementation, but it
   still lives behind the optional `voice` profile and is not part of the
   default text-path startup sequence.

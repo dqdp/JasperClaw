@@ -2,10 +2,12 @@
 
 ## Mission
 
-Bootstrap the repository for `local-assistant` according to the documented target architecture.
+Maintain and extend the repository for `local-assistant` according to the
+documented target architecture.
 
 Your job is not to redesign the system.
-Your job is to create a clean v1 skeleton that preserves the accepted architectural invariants.
+Your job is to preserve the accepted architectural invariants while evolving the
+existing implementation.
 
 ## Non-negotiable architecture rules
 
@@ -18,11 +20,12 @@ Your job is to create a clean v1 skeleton that preserves the accepted architectu
 7. In v1, the tools boundary is typed but in-process inside `agent-api`.
 8. Agent actions must remain capability-gated, least-privilege, and audit-first.
 9. Do not introduce a standalone tools service in v1 unless an ADR explicitly reopens that decision.
-10. Speech endpoints may exist as contract stubs, but voice is not part of the first real delivery slice.
+10. Speech endpoints are now implemented as buffered optional slices, but voice
+    remains secondary to the text-first control-plane path.
 
 ## First repository deliverables
 
-Create the initial repository structure with at least:
+The repository should continue to preserve at least:
 
 - `README.md`
 - `docs/architecture.md`
@@ -36,9 +39,9 @@ Create the initial repository structure with at least:
 - `infra/scripts/bootstrap-host.sh`
 - `infra/scripts/deploy.sh`
 - `infra/scripts/smoke.sh`
-- `services/agent-api/` skeleton
-- `services/stt-service/` skeleton
-- `services/tts-service/` skeleton
+- `services/agent-api/`
+- `services/stt-service/`
+- `services/tts-service/`
 - optional legacy `services/tools-gateway/` placeholder directory may still exist, but it is not part of the accepted active v1 topology
 - `.github/workflows/ci.yml`
 - `.github/workflows/images.yml`
@@ -64,7 +67,7 @@ Create three Compose networks:
 
 ## Required `agent-api` public endpoints
 
-Provide stubs or initial implementation for:
+Maintain implemented public endpoints for:
 
 - `GET /v1/models`
 - `POST /v1/chat/completions`
