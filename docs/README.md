@@ -8,6 +8,7 @@ Start here:
 
 Index:
 - `architecture.md`: open when you need the global v1 system shape and invariants.
+- `current-priorities.md`: open when deciding the near-term execution order after the latest repo-wide review.
 - `implementation-status.md`: open when checking what is real versus placeholder or planned.
 - `roadmap.md`: open when deciding milestone order and delivery sequencing.
 - `backlog.md`: open when translating milestones into executable epics and tasks.
