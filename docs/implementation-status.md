@@ -155,6 +155,7 @@ Implemented:
 - readiness checks that fail when required migrations are still pending
 - conservative memory extraction/materialization from selected `user` turns
 - retrieval query behavior with explicit audit traces
+- fixed retrieval fixtures for positive, false-positive, and stale-memory cases
 - explicit `active -> invalidated -> deleted` lifecycle transitions for memory items
 
 Not yet implemented:
