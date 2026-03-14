@@ -68,6 +68,11 @@ class AlertDeliveryMetrics:
             "Alert delivery finalize failures.",
             (),
         )
+        self._escalated_total = _CounterMetric(
+            "telegram_alert_delivery_escalated_total",
+            "Alert deliveries escalated after terminal failure or retry exhaustion.",
+            ("reason",),
+        )
 
     def record_claim(self, *, origin: str) -> None:
         self._claim_total.inc(origin=origin)
@@ -90,6 +95,9 @@ class AlertDeliveryMetrics:
     def record_finalize_failed(self) -> None:
         self._finalize_failed_total.inc()
 
+    def record_escalation(self, *, reason: str) -> None:
+        self._escalated_total.inc(reason=reason)
+
     def render_prometheus(self) -> str:
         lines: list[str] = []
         for metric in (
@@ -99,6 +107,7 @@ class AlertDeliveryMetrics:
             self._target_attempt_persist_failed_total,
             self._finalize_total,
             self._finalize_failed_total,
+            self._escalated_total,
         ):
             lines.extend(metric.render_prometheus())
         return "\n".join(lines) + "\n"

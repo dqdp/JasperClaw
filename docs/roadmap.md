@@ -112,7 +112,7 @@ Current baseline:
 
 Remaining hardening focus:
 
-- add escalation and terminal-failure handling beyond the current durable retry/dedupe alert fanout baseline
+- build broader incident-management on top of the current durable retry/dedupe plus escalation alert fanout baseline
 - expand command/approval behavior only when a concrete non-chat operational need justifies it
 
 ## Milestone 3: Voice and Hardening

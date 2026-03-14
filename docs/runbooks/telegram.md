@@ -32,7 +32,7 @@ This runbook separates:
 Что не реализовано сейчас:
 
 - richer command/approval model beyond `/help`, `/status`, and `/ask`;
-- escalation and terminal-failure handling beyond the current durable alert-delivery baseline.
+- broader incident-management beyond the current durable alert-delivery baseline; the MVP slice now emits one-shot escalation markers, events, and metrics for terminal failures and retry exhaustion, but does not add a separate secondary notification channel.
 
 ## Enterprise pattern (practical baseline)
 
@@ -144,6 +144,9 @@ Policy baseline:
   - содержит `chat_id`, `attempt_status`, `error_code`, `retry_after_seconds`.
 - `telegram_alert_delivery_finalized`:
   - содержит агрегатный итог `delivery_status` и counts по `sent_targets` / `pending_targets` / `failed_targets`.
+- `telegram_alert_delivery_escalated`:
+  - emitted один раз на delivery, когда в durable state записан escalation marker;
+  - содержит `escalation_reason`, `escalated_at`, `delivery_status`, `failed_targets`.
 - `telegram_alert_delivery_finalize_failed`:
   - показывает, что external sends могли уже произойти, но delivery-level finalize не зафиксировался.
 - `telegram_alert_delivery_claim_skipped`:
@@ -154,7 +157,9 @@ Policy baseline:
 - если есть `target_attempt_recorded` c `attempt_status=sent`, но затем `finalize_failed`, это crash/recovery-sensitive окно и возможный источник редкого duplicate на in-flight target;
 - если растет доля `claim_origin=stale_reclaim`, нужно смотреть worker health, shutdown path и storage latency;
 - если `attempt_status=pending` часто сопровождается `error_code=http_429`, проблема в Telegram backpressure, а не в storage path;
+- если появился `telegram_alert_delivery_escalated`, смотреть durable marker в `telegram_alert_deliveries.escalated_at` / `escalation_reason`; `terminal_target_failure` означает permanent downstream rejection, `retry_exhausted` означает исчерпан bounded retry budget;
 - если delivery зависает в `pending`, ключевой ориентир — `next_attempt_at` из `telegram_alert_delivery_finalized`.
+- `finalize_failed` остается отдельным storage-sensitive сигналом и не записывает durable escalation marker, потому что finalize state сам не зафиксирован.
 
 Prometheus-compatible export path:
 
@@ -163,6 +168,7 @@ Prometheus-compatible export path:
   - `telegram_alert_delivery_claim_total{origin="pending|stale_reclaim"}`
   - `telegram_alert_delivery_target_attempt_total{status="sent|pending|failed",error_class="none|http_429|http_4xx|http_5xx|other"}`
   - `telegram_alert_delivery_finalize_total{status="completed|pending|failed"}`
+  - `telegram_alert_delivery_escalated_total{reason="terminal_target_failure|retry_exhausted|delivery_failed"}`
 - без labels экспортируются:
   - `telegram_alert_delivery_claim_skipped_total`
   - `telegram_alert_delivery_target_attempt_persist_failed_total`
@@ -174,7 +180,8 @@ Prometheus-compatible export path:
 - `target_attempt_total{status="pending",error_class="http_429"}` показывает Telegram backpressure;
 - `target_attempt_persist_failed_total` сигнализирует, что side effect уже мог случиться, а durable outcome не записался;
 - `finalize_failed_total` помогает отличать storage/finalize problems от send failures;
-- `finalize_total{status="pending"}` удобно использовать как coarse retry-pressure indicator.
+- `finalize_total{status="pending"}` удобно использовать как coarse retry-pressure indicator;
+- `escalated_total{reason=...}` показывает, что delivery перешел в durable terminal/escalated state и уже требует operator attention, а не просто очередной retry.
 
 Текущая эксплуатация:
 
@@ -204,7 +211,7 @@ curl -s -X POST \
 - прокидывать стабильный `X-Telegram-Alert-Idempotency-Key` для одного notification/retry chain;
 - не строить этот key из rendered message text; одинаковый текст у разных notifications должен иметь разные keys;
 - использовать route groups по severity (`default`, `warning`, `critical`),
-- текущий ingress already honors Telegram `429 retry_after` when scheduling durable alert retries; следующий follow-up slice нужен только для escalation/terminal-failure policy.
+- текущий ingress honors Telegram `429 retry_after` when scheduling durable alert retries и теперь пишет one-shot escalation marker для terminal failure / retry exhaustion; следующий follow-up slice, если понадобится, уже про broader incident-management, а не про базовый escalation contract.
 
 ## Incident checks
 

@@ -301,6 +301,7 @@ def test_metrics_endpoint_exposes_alert_delivery_metrics() -> None:
     metrics.record_claim(origin="pending")
     metrics.record_target_attempt(status="sent", error_code=None)
     metrics.record_finalize(status="completed")
+    metrics.record_escalation(reason="retry_exhausted")
     client, _ = _create_alert_client(alert_delivery_metrics=metrics)
 
     response = client.get("/metrics")
@@ -313,6 +314,7 @@ def test_metrics_endpoint_exposes_alert_delivery_metrics() -> None:
         in response.text
     )
     assert 'telegram_alert_delivery_finalize_total{status="completed"} 1' in response.text
+    assert 'telegram_alert_delivery_escalated_total{reason="retry_exhausted"} 1' in response.text
 
 
 def test_create_app_does_not_emit_on_event_deprecation_warning() -> None:

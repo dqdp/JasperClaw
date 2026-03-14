@@ -75,7 +75,7 @@ Safety note:
 
 Remaining hardening:
 
-- escalation and terminal-failure handling remain follow-up work beyond the current durable retry/dedupe baseline
+- broader incident-management remains follow-up work beyond the current durable retry/dedupe plus escalation baseline
 
 ## Safe Telegram integration requirements
 

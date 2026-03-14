@@ -150,7 +150,7 @@ Implemented:
 Not yet implemented:
 
 - richer command/approval routing beyond the current local command set
-- escalation behavior beyond the current bounded retry/dedupe alert fanout baseline
+- broader incident-management beyond the current bounded retry/dedupe plus escalation alert fanout baseline
 
 ### Database and memory
 

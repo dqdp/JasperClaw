@@ -33,8 +33,8 @@ cross-cutting areas are only partially closed:
 - structured tracing still stops at request IDs and JSON event logs
 - broader memory expiry and contradiction heuristics remain intentionally
   deferred
-- Telegram escalation and terminal-failure handling are still behind the current
-  durable alert retry baseline
+- Telegram alert delivery now has a baseline escalation contract, but broader
+  incident-management plus observability/security closure remain open
 
 ## Recommended Direction
 
@@ -49,7 +49,7 @@ Rationale:
 - the highest-value next work is narrowing the remaining operability gaps
   exposed after restore, rollback, deploy, and smoke proof landed on the now-real
   stack
-- Telegram escalation and terminal-failure policy are a stronger next candidate
+- Telegram observability and security closure are now stronger next candidates
   than another round of generic release-path proof
 
 ## Phase A: Stabilization
@@ -452,8 +452,8 @@ Do not prioritize these ahead of the remaining Telegram and operability follow-u
 Execute in this order:
 
 1. choose the next expansion block now that Phase C is complete, with Telegram
-   escalation the most likely candidate before premium voice or broader tool
-   surfacing
+   observability/security closure the most likely candidate before premium
+   voice or broader tool surfacing
 
 ## Change Rule
 

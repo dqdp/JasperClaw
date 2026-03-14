@@ -59,6 +59,8 @@ class _InMemoryAlertDeliveryRepository:
             next_attempt_at=created_at,
             last_error_code=None,
             last_error_message=None,
+            escalated_at=None,
+            escalation_reason=None,
             targets=tuple(
                 AlertDeliveryTargetRecord(
                     chat_id=chat_id,
@@ -238,6 +240,23 @@ class _InMemoryAlertDeliveryRepository:
             last_error_code=last_error_code,
             last_error_message=last_error_message,
             targets=tuple(updated_targets),
+        )
+        return stored.record
+
+    def mark_delivery_escalated(
+        self,
+        *,
+        delivery_id: str,
+        escalated_at: datetime,
+        reason: str,
+    ) -> AlertDeliveryRecord | None:
+        stored = self._records[delivery_id]
+        if stored.record.escalated_at is not None:
+            return None
+        stored.record = replace(
+            stored.record,
+            escalated_at=escalated_at,
+            escalation_reason=reason,
         )
         return stored.record
 
@@ -656,6 +675,112 @@ def test_submit_delivery_updates_metrics_for_retryable_attempt() -> None:
     assert 'telegram_alert_delivery_finalize_total{status="pending"} 1' in exported
 
 
+def test_submit_delivery_emits_one_shot_escalation_for_terminal_failure(caplog) -> None:
+    repository = _InMemoryAlertDeliveryRepository()
+    telegram_client = _SequencedTelegramClient(
+        failures={11: [TelegramSendError("invalid chat", status_code=400)]}
+    )
+    metrics = AlertDeliveryMetrics()
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        metrics=metrics,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        first = asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+        second = asyncio.run(service.submit_delivery(request=request, request_id="req_2"))
+
+    record = repository.get_delivery(delivery_id=first.delivery_id)
+
+    assert first.status == "failed"
+    assert second.status == "failed"
+    assert second.deduplicated is True
+    assert record is not None
+    assert record.status == "failed"
+    assert record.escalated_at is not None
+    assert record.escalation_reason == "terminal_target_failure"
+
+    events = _events(caplog)
+    escalation_events = [
+        event for event in events if event["event"] == "telegram_alert_delivery_escalated"
+    ]
+    assert len(escalation_events) == 1
+    assert escalation_events[0]["delivery_id"] == first.delivery_id
+    assert escalation_events[0]["escalation_reason"] == "terminal_target_failure"
+    exported = metrics.render_prometheus()
+    assert (
+        'telegram_alert_delivery_escalated_total{reason="terminal_target_failure"} 1'
+        in exported
+    )
+
+
+def test_submit_delivery_escalates_only_after_retry_exhaustion(caplog) -> None:
+    repository = _InMemoryAlertDeliveryRepository()
+    telegram_client = _SequencedTelegramClient(
+        failures={
+            11: [
+                TelegramSendError("temporary", status_code=503),
+                TelegramSendError("temporary", status_code=503),
+                TelegramSendError("temporary", status_code=503),
+            ]
+        }
+    )
+    metrics = AlertDeliveryMetrics()
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+        metrics=metrics,
+        retry_backoff_seconds=0.0,
+        max_attempts=3,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        submission = asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+        after_submit = repository.get_delivery(delivery_id=submission.delivery_id)
+        repository.force_due(submission.delivery_id)
+        processed_first_retry = asyncio.run(service.process_due_deliveries())
+        after_first_retry = repository.get_delivery(delivery_id=submission.delivery_id)
+        repository.force_due(submission.delivery_id)
+        processed_second_retry = asyncio.run(service.process_due_deliveries())
+
+    final_record = repository.get_delivery(delivery_id=submission.delivery_id)
+
+    assert submission.status == "accepted"
+    assert processed_first_retry == 1
+    assert processed_second_retry == 1
+    assert after_submit is not None
+    assert after_submit.status == "pending"
+    assert after_submit.escalated_at is None
+    assert after_first_retry is not None
+    assert after_first_retry.status == "pending"
+    assert after_first_retry.escalated_at is None
+    assert final_record is not None
+    assert final_record.status == "failed"
+    assert final_record.escalated_at is not None
+    assert final_record.escalation_reason == "retry_exhausted"
+
+    events = _events(caplog)
+    escalation_events = [
+        event for event in events if event["event"] == "telegram_alert_delivery_escalated"
+    ]
+    assert len(escalation_events) == 1
+    assert escalation_events[0]["delivery_id"] == submission.delivery_id
+    assert escalation_events[0]["escalation_reason"] == "retry_exhausted"
+    exported = metrics.render_prometheus()
+    assert 'telegram_alert_delivery_escalated_total{reason="retry_exhausted"} 1' in exported
+
+
 def test_finalize_failure_updates_metrics() -> None:
     repository = _InMemoryAlertDeliveryRepository(
         fail_finalize_delivery_once=True,
@@ -910,3 +1035,31 @@ def test_finalize_failure_preserves_pending_backoff() -> None:
     assert record.status == "delivering"
     assert record.next_attempt_at is not None
     assert telegram_client.sent_messages == []
+
+
+def test_finalize_failure_does_not_emit_delivery_escalation(caplog) -> None:
+    repository = _InMemoryAlertDeliveryRepository(
+        fail_finalize_delivery_once=True,
+    )
+    telegram_client = _SequencedTelegramClient()
+    service = _service(
+        repository=repository,
+        telegram_client=telegram_client,
+    )
+    request = AlertDeliveryRequest(
+        deliveries=((11, "critical alert"),),
+        matched_alerts=1,
+        idempotency_key="critical-alert-v1",
+    )
+
+    with caplog.at_level(logging.INFO, logger="telegram_ingress"):
+        with pytest.raises(AlertDeliveryStorageError):
+            asyncio.run(service.submit_delivery(request=request, request_id="req_1"))
+
+    events = _events(caplog)
+    assert "telegram_alert_delivery_finalize_failed" in [
+        event["event"] for event in events
+    ]
+    assert "telegram_alert_delivery_escalated" not in [
+        event["event"] for event in events
+    ]

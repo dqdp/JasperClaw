@@ -43,6 +43,8 @@ class AlertDeliveryRecord:
     next_attempt_at: datetime | None = None
     last_error_code: str | None = None
     last_error_message: str | None = None
+    escalated_at: datetime | None = None
+    escalation_reason: str | None = None
     deduplicated: bool = False
 
 
@@ -133,6 +135,14 @@ class AlertDeliveryRepository(Protocol):
         retry_backoff_seconds: float,
         max_attempts: int,
     ) -> AlertDeliveryRecord: ...
+
+    def mark_delivery_escalated(
+        self,
+        *,
+        delivery_id: str,
+        escalated_at: datetime,
+        reason: str,
+    ) -> AlertDeliveryRecord | None: ...
 
 
 class PostgresAlertDeliveryRepository:
@@ -254,6 +264,52 @@ class PostgresAlertDeliveryRepository:
                     "telegram alert delivery missing after insert"
                 )
             return record
+
+        return self._execute(write)
+
+    def mark_delivery_escalated(
+        self,
+        *,
+        delivery_id: str,
+        escalated_at: datetime,
+        reason: str,
+    ) -> AlertDeliveryRecord | None:
+        escalated_at_utc = escalated_at.astimezone(timezone.utc)
+
+        def write(conn: psycopg.Connection) -> AlertDeliveryRecord | None:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE telegram_alert_deliveries
+                    SET
+                        escalated_at = %s,
+                        escalation_reason = %s,
+                        updated_at = %s
+                    WHERE id = %s AND escalated_at IS NULL
+                    RETURNING id
+                    """,
+                    (
+                        escalated_at_utc,
+                        reason,
+                        escalated_at_utc,
+                        delivery_id,
+                    ),
+                )
+                row = cursor.fetchone()
+            if row is None:
+                record = self._get_delivery(conn, delivery_id=delivery_id)
+                if record is None:
+                    raise AlertDeliveryStorageError(
+                        "telegram alert delivery missing during escalation"
+                    )
+                return None
+
+            escalated = self._get_delivery(conn, delivery_id=delivery_id)
+            if escalated is None:
+                raise AlertDeliveryStorageError(
+                    "telegram alert delivery missing after escalation update"
+                )
+            return escalated
 
         return self._execute(write)
 
@@ -579,7 +635,9 @@ class PostgresAlertDeliveryRepository:
                     attempt_count,
                     next_attempt_at,
                     last_error_code,
-                    last_error_message
+                    last_error_message,
+                    escalated_at,
+                    escalation_reason
                 FROM telegram_alert_deliveries
                 WHERE id = %s
                 """,
@@ -598,6 +656,8 @@ class PostgresAlertDeliveryRepository:
             next_attempt_at=row[4],
             last_error_code=row[5],
             last_error_message=row[6],
+            escalated_at=row[7],
+            escalation_reason=row[8],
             targets=targets,
         )
 
@@ -808,6 +868,9 @@ class AlertDeliveryService:
                 last_error_code=finalized.last_error_code,
             )
             self._metrics.record_finalize(status=finalized.status)
+            escalated = await self._maybe_escalate_delivery(finalized)
+            if escalated is not None:
+                finalized = escalated
             return finalized
         except Exception as exc:
             log_event(
@@ -820,6 +883,42 @@ class AlertDeliveryService:
             raise AlertDeliveryStorageError(
                 "telegram alert delivery finalize failed"
             ) from exc
+
+    async def _maybe_escalate_delivery(
+        self,
+        record: AlertDeliveryRecord,
+    ) -> AlertDeliveryRecord | None:
+        reason = self._escalation_reason(record)
+        if reason is None:
+            return None
+
+        try:
+            escalated = await asyncio.to_thread(
+                self._repository.mark_delivery_escalated,
+                delivery_id=record.delivery_id,
+                escalated_at=datetime.now(timezone.utc),
+                reason=reason,
+            )
+        except Exception as exc:
+            raise AlertDeliveryStorageError(
+                "telegram alert delivery escalation update failed"
+            ) from exc
+
+        if escalated is None:
+            return None
+
+        log_event(
+            "telegram_alert_delivery_escalated",
+            delivery_id=escalated.delivery_id,
+            escalation_reason=reason,
+            delivery_status=escalated.status,
+            attempt_count=escalated.attempt_count,
+            failed_targets=self._count_targets(escalated, "failed"),
+            last_error_code=escalated.last_error_code,
+            escalated_at=escalated.escalated_at,
+        )
+        self._metrics.record_escalation(reason=reason)
+        return escalated
 
     async def _claim_delivery(
         self,
@@ -918,3 +1017,25 @@ class AlertDeliveryService:
         status: str,
     ) -> int:
         return sum(1 for target in record.targets if target.status == status)
+
+    def _escalation_reason(self, record: AlertDeliveryRecord) -> str | None:
+        if record.status != "failed" or record.escalated_at is not None:
+            return None
+
+        failed_targets = [target for target in record.targets if target.status == "failed"]
+        if not failed_targets:
+            return None
+        if any(self._is_terminal_error_code(target.last_error_code) for target in failed_targets):
+            return "terminal_target_failure"
+        if any(target.attempt_count >= self._max_attempts for target in failed_targets):
+            return "retry_exhausted"
+        return "delivery_failed"
+
+    def _is_terminal_error_code(self, error_code: str | None) -> bool:
+        if error_code is None or not error_code.startswith("http_"):
+            return False
+        try:
+            status_code = int(error_code.removeprefix("http_"))
+        except ValueError:
+            return False
+        return status_code in _TERMINAL_STATUS_CODES
