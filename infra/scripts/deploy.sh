@@ -53,6 +53,17 @@ is_truthy() {
   esac
 }
 
+is_placeholder_secret() {
+  case "${1:-}" in
+    ""|change-me|CHANGE-ME|Change-me|Change-Me)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 has_voice_profile() {
   local profiles="${1:-}"
   local profile
@@ -77,11 +88,40 @@ require_env() {
   fi
 }
 
+require_non_placeholder_secret() {
+  local name="$1"
+  if is_placeholder_secret "${!name:-}"; then
+    echo "Invalid telegram security contract: ${name} must be set to a non-placeholder secret" >&2
+    exit 1
+  fi
+}
+
+telegram_alerting_enabled() {
+  [[ -n "${TELEGRAM_ALERT_BOT_TOKEN:-}" ]] || return 1
+  [[ -n "${TELEGRAM_ALERT_CHAT_IDS:-}${TELEGRAM_ALERT_WARNING_CHAT_IDS:-}${TELEGRAM_ALERT_CRITICAL_CHAT_IDS:-}" ]]
+}
+
+validate_telegram_security_contract() {
+  if [[ -n "${TELEGRAM_WEBHOOK_URL:-}" ]]; then
+    require_non_placeholder_secret TELEGRAM_WEBHOOK_SECRET_TOKEN
+  fi
+
+  if telegram_alerting_enabled; then
+    require_non_placeholder_secret TELEGRAM_ALERT_AUTH_TOKEN
+    require_non_placeholder_secret TELEGRAM_ALERT_BOT_TOKEN
+    if [[ -n "${TELEGRAM_BOT_TOKEN:-}" && "${TELEGRAM_ALERT_BOT_TOKEN}" == "${TELEGRAM_BOT_TOKEN}" ]]; then
+      echo "Invalid telegram security contract: TELEGRAM_ALERT_BOT_TOKEN must differ from TELEGRAM_BOT_TOKEN" >&2
+      exit 1
+    fi
+  fi
+}
+
 require_env APP_VERSION
 require_env GHCR_OWNER
 require_env POSTGRES_PASSWORD
 require_env INTERNAL_OPENAI_API_KEY
 require_env WEBUI_SECRET_KEY
+validate_telegram_security_contract
 
 voice_enabled=false
 if is_truthy "${VOICE_ENABLED:-false}"; then

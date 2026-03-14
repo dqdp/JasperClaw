@@ -644,6 +644,7 @@ Notes:
 
 - this is a webhook authenticity guard, not a full auth for downstream user actions
 - rotate this value with the bot token as part of the same security domain
+- deploy environments should treat blank or placeholder values as invalid when webhook mode is enabled
 
 ### `TELEGRAM_BOT_TOKEN`
 
@@ -847,6 +848,11 @@ Purpose:
 
 - dedicated Telegram bot token used for operational alert delivery
 
+Notes:
+
+- keep this token separate from `TELEGRAM_BOT_TOKEN`
+- deploy environments should treat reuse of the user bot token here as an invalid security contract
+
 ### `TELEGRAM_ALERT_CHAT_IDS`
 
 Required: no unless alert relaying is enabled
@@ -861,7 +867,7 @@ Purpose:
 
 ### `TELEGRAM_ALERT_WARNING_CHAT_IDS`
 
-Required: no
+Required: yes when alert relaying is enabled
 
 Used by:
 
@@ -897,6 +903,7 @@ Purpose:
 
 Notes:
 
+- deploy environments should treat blank or placeholder values as invalid when alert relaying is enabled
 - replay-safe alert dedupe depends on the sender supplying a stable `X-Telegram-Alert-Idempotency-Key`
 - reuse the same key for retries of the same upstream notification
 - generate a new key for each new upstream notification, even when the rendered alert text is unchanged

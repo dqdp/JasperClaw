@@ -42,7 +42,8 @@ This runbook separates:
 - отдельный Telegram бот/токен для алертинга, чтобы не смешивать пользовательские чаты и operational notifications;
 - отдельный allowlist-командный слой (или metadata-канал) на уровне ingress или edge-сервисов;
 - полный audit/корреляция по `request_id` для всех Telegram-запросов;
-- строгий rotation policy для `TELEGRAM_BOT_TOKEN` и `TELEGRAM_WEBHOOK_SECRET_TOKEN`.
+- строгий rotation policy для `TELEGRAM_BOT_TOKEN` и `TELEGRAM_WEBHOOK_SECRET_TOKEN`;
+- отдельный `TELEGRAM_ALERT_AUTH_TOKEN` для `/telegram/alerts`, не оставленный пустым или placeholder, когда alert relay включен.
 
 ## Two-way communication: user bot setup
 
@@ -73,6 +74,14 @@ This runbook separates:
    - `TELEGRAM_ALERT_BOT_TOKEN` — token отдельного Telegram-бота для алертов
    - `TELEGRAM_ALERT_AUTH_TOKEN` — статический секрет для входа в `/telegram/alerts`
    - `TELEGRAM_ALERT_CHAT_IDS` — список chat_id через запятую для доставки алертов
+   - `TELEGRAM_ALERT_BOT_TOKEN` не должен совпадать с `TELEGRAM_BOT_TOKEN`
+   - при включенном webhook `TELEGRAM_WEBHOOK_SECRET_TOKEN` не должен оставаться placeholder вроде `change-me`
+
+Практический deploy contract:
+
+- `infra/scripts/deploy.sh` fail-fast проверяет, что webhook mode не запускается с пустым или placeholder `TELEGRAM_WEBHOOK_SECRET_TOKEN`;
+- тот же deploy path требует непустой `TELEGRAM_ALERT_AUTH_TOKEN`, когда alert relay реально включен;
+- deploy path отдельно валидирует, что user bot и alert bot используют разные токены.
 
 If webhook cannot be set publicly, set:
 

@@ -190,3 +190,62 @@ def test_deploy_reads_root_env_without_shell_expansion(tmp_path: Path) -> None:
     assert not marker_path.exists()
     docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
     assert docker_calls
+
+
+def test_deploy_rejects_webhook_without_non_placeholder_secret(tmp_path: Path) -> None:
+    result, docker_log, script_log = _run_deploy(
+        tmp_path,
+        voice_enabled="false",
+        compose_profiles="",
+        extra_env_lines=[
+            "TELEGRAM_WEBHOOK_URL=https://example.com/telegram/webhook",
+            "TELEGRAM_WEBHOOK_SECRET_TOKEN=change-me",
+        ],
+    )
+
+    assert result.returncode != 0
+    assert "Invalid telegram security contract" in result.stderr
+    assert "TELEGRAM_WEBHOOK_SECRET_TOKEN" in result.stderr
+    assert not docker_log.exists()
+    assert not script_log.exists()
+
+
+def test_deploy_rejects_alert_relay_without_non_placeholder_auth_token(
+    tmp_path: Path,
+) -> None:
+    result, docker_log, script_log = _run_deploy(
+        tmp_path,
+        voice_enabled="false",
+        compose_profiles="",
+        extra_env_lines=[
+            "TELEGRAM_ALERT_BOT_TOKEN=alert-bot-token",
+            "TELEGRAM_ALERT_CHAT_IDS=11",
+            "TELEGRAM_ALERT_AUTH_TOKEN=change-me",
+        ],
+    )
+
+    assert result.returncode != 0
+    assert "Invalid telegram security contract" in result.stderr
+    assert "TELEGRAM_ALERT_AUTH_TOKEN" in result.stderr
+    assert not docker_log.exists()
+    assert not script_log.exists()
+
+
+def test_deploy_rejects_reused_user_and_alert_bot_tokens(tmp_path: Path) -> None:
+    result, docker_log, script_log = _run_deploy(
+        tmp_path,
+        voice_enabled="false",
+        compose_profiles="",
+        extra_env_lines=[
+            "TELEGRAM_BOT_TOKEN=shared-bot-token",
+            "TELEGRAM_ALERT_BOT_TOKEN=shared-bot-token",
+            "TELEGRAM_ALERT_CHAT_IDS=11",
+            "TELEGRAM_ALERT_AUTH_TOKEN=alert-auth-token",
+        ],
+    )
+
+    assert result.returncode != 0
+    assert "Invalid telegram security contract" in result.stderr
+    assert "TELEGRAM_ALERT_BOT_TOKEN must differ from TELEGRAM_BOT_TOKEN" in result.stderr
+    assert not docker_log.exists()
+    assert not script_log.exists()

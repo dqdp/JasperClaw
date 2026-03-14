@@ -67,6 +67,16 @@ text-only Compose profile is considered an invalid rollout contract. The
 canonical `infra/scripts/deploy.sh` now fails fast on that mismatch instead of
 continuing with an ambiguous rollout.
 
+Telegram security contract for deploy environments:
+
+- if `TELEGRAM_WEBHOOK_URL` is configured, `TELEGRAM_WEBHOOK_SECRET_TOKEN` must
+  be set to a non-placeholder secret
+- if alert relay is enabled through `TELEGRAM_ALERT_BOT_TOKEN` plus alert chat
+  ids, `TELEGRAM_ALERT_AUTH_TOKEN` must be set to a non-placeholder secret
+- `TELEGRAM_ALERT_BOT_TOKEN` must differ from `TELEGRAM_BOT_TOKEN`
+- `infra/scripts/deploy.sh` now fails fast on those Telegram security contract
+  violations before the rollout proceeds
+
 For the normal host-local flow, prefer the script entrypoint:
 
 ```bash
