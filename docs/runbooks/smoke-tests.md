@@ -29,6 +29,17 @@ That script checks:
 
 The rest of this document is still the broader manual checklist to use after the automated baseline passes.
 
+Supported profile expectations:
+
+- `text-only`
+  - `VOICE_ENABLED=false`
+  - smoke must validate chat and model listing, but must not require STT or TTS
+- `voice-enabled-cpu`
+  - `VOICE_ENABLED=true`
+  - smoke must validate chat, STT, and TTS through `agent-api`
+  - `stt-service` is expected to prewarm its configured runtime during startup
+    instead of acquiring it lazily on the first readiness call
+
 When Telegram smoke inputs are configured, the automated baseline may also run:
 
 - `infra/scripts/smoke-telegram-ingress.py`
@@ -93,6 +104,9 @@ Expected result:
 - latency is acceptable for v1 expectations
 
 Run this only if voice is enabled in that environment.
+
+For the supported `voice-enabled-cpu` profile, readiness should already have
+prewarmed the configured STT runtime before this smoke step begins.
 
 ### 8. TTS path works
 

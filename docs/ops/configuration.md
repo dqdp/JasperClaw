@@ -1031,7 +1031,13 @@ Notes:
 
 ## Speech-related variables
 
-These remain part of the config surface even though real voice delivery comes after the text path stabilizes.
+The currently supported deployment profiles are:
+
+- `text-only`
+- `voice-enabled-cpu`
+
+Speech-related variables remain feature-gated because `text-only` is still the
+default profile.
 
 ### `STT_BASE_URL`
 
@@ -1080,6 +1086,24 @@ Used by:
 Purpose:
 
 - `faster-whisper` compute profile, for example `int8` or `float16`
+
+### `STT_PREWARM_ON_STARTUP`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `stt-service`
+
+Purpose:
+
+- explicitly preload the active STT runtime during service startup instead of
+  waiting for the first readiness or transcription request
+
+Notes:
+
+- recommended `true` for the supported `voice-enabled-cpu` profile
+- when enabled, startup fails fast if the configured runtime cannot be prepared
 
 ### `STT_TIMEOUT_SECONDS`
 
@@ -1249,8 +1273,26 @@ Additional required only if enabled:
 - `VOICE_ENABLED`
 - `STT_BASE_URL`
 - `STT_MODEL`
+- `STT_DEVICE`
+- `STT_COMPUTE_TYPE`
+- `STT_PREWARM_ON_STARTUP`
 - `TTS_BASE_URL`
 - `TTS_DEFAULT_VOICE`
+
+Recommended supported profiles:
+
+- `text-only`
+  - `VOICE_ENABLED=false`
+  - `stt-service` and `tts-service` may remain absent from the runtime graph
+  - smoke checks cover chat but skip STT and TTS
+- `voice-enabled-cpu`
+  - `VOICE_ENABLED=true`
+  - `STT_MODEL=base`
+  - `STT_DEVICE=cpu`
+  - `STT_COMPUTE_TYPE=int8`
+  - `STT_PREWARM_ON_STARTUP=true`
+  - `TTS_DEFAULT_VOICE=assistant-default`
+  - smoke checks cover chat, STT, and TTS through `agent-api`
 
 ## Secret-handling rules
 

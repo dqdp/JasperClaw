@@ -19,3 +19,6 @@ Current baseline:
 - `GET /healthz`
 - `GET /readyz`
 - `GET /metrics`
+- supported deployment profiles are `text-only` and `voice-enabled-cpu`
+- the current recommended voice-enabled profile is CPU-backed `faster-whisper`
+  with startup prewarm enabled
