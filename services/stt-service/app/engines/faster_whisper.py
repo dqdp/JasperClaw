@@ -11,6 +11,23 @@ from app.engines.base import (
     SttEngineUnavailableError,
 )
 
+_REQUEST_LOCAL_EXCEPTION_NAMES = frozenset(
+    {
+        "DecoderNotFoundError",
+        "DemuxerNotFoundError",
+        "InvalidDataError",
+    }
+)
+_REQUEST_LOCAL_ERROR_PATTERNS = (
+    "could not decode",
+    "decode failed",
+    "error opening input",
+    "failed to open input",
+    "invalid data found when processing input",
+    "moov atom not found",
+    "unsupported codec",
+)
+
 
 class FasterWhisperEngine(SttEngine):
     def __init__(
@@ -74,9 +91,11 @@ class FasterWhisperEngine(SttEngine):
         except SttEngineUnavailableError:
             raise
         except Exception as exc:
-            raise SttEngineRequestError(
-                "faster-whisper transcription failed"
-            ) from exc
+            if _is_request_local_transcription_error(exc):
+                raise SttEngineRequestError(
+                    "faster-whisper transcription failed"
+                ) from exc
+            raise
         finally:
             if temp_path is not None:
                 Path(temp_path).unlink(missing_ok=True)
@@ -100,3 +119,12 @@ class FasterWhisperEngine(SttEngine):
             ) from exc
 
         return " ".join(transcript_parts).strip()
+
+
+def _is_request_local_transcription_error(exc: Exception) -> bool:
+    for cls in type(exc).__mro__:
+        if cls.__name__ in _REQUEST_LOCAL_EXCEPTION_NAMES:
+            return True
+
+    normalized = " ".join(str(exc).casefold().split())
+    return any(pattern in normalized for pattern in _REQUEST_LOCAL_ERROR_PATTERNS)

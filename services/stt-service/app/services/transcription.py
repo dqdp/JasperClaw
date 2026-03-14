@@ -85,10 +85,10 @@ class TranscriptionService:
             ) from exc
         except SttEngineRequestError as exc:
             raise APIError(
-                status_code=500,
-                error_type="internal_error",
-                code="internal_failure",
-                message="Speech transcription failed unexpectedly",
+                status_code=422,
+                error_type="validation_error",
+                code="invalid_request",
+                message="Audio payload could not be decoded",
             ) from exc
         except Exception as exc:
             raise APIError(

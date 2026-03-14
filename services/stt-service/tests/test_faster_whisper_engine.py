@@ -37,3 +37,36 @@ def test_faster_whisper_preserves_request_local_transcription_failures(
             filename="clip.wav",
             content_type="audio/wav",
         )
+
+
+def test_faster_whisper_classifies_decoder_style_input_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_module = ModuleType("faster_whisper")
+
+    class InvalidDataError(RuntimeError):
+        pass
+
+    class _FakeModel:
+        def __init__(self, *args, **kwargs) -> None:
+            _ = (args, kwargs)
+
+        def transcribe(self, path: str):
+            _ = path
+            raise InvalidDataError("invalid data found when processing input")
+
+    fake_module.WhisperModel = _FakeModel
+    monkeypatch.setitem(sys.modules, "faster_whisper", fake_module)
+
+    engine = FasterWhisperEngine(
+        model_name="base",
+        device="cpu",
+        compute_type="int8",
+    )
+
+    with pytest.raises(SttEngineRequestError):
+        engine.transcribe(
+            audio_bytes=b"not-audio",
+            filename="clip.wav",
+            content_type="audio/wav",
+        )

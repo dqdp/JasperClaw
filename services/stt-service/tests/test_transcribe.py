@@ -170,9 +170,9 @@ def test_transcribe_maps_request_local_engine_failure() -> None:
         files={"file": ("clip.wav", b"RIFFfakeWAVE", "audio/wav")},
     )
 
-    assert response.status_code == 500
-    assert response.json()["error"]["type"] == "internal_error"
-    assert response.json()["error"]["code"] == "internal_failure"
+    assert response.status_code == 422
+    assert response.json()["error"]["type"] == "validation_error"
+    assert response.json()["error"]["code"] == "invalid_request"
 
 
 def test_readyz_remains_available_while_transcription_is_running() -> None:
