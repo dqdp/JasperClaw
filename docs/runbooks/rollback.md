@@ -21,6 +21,9 @@ Rollback targets must be immutable image versions, not floating tags.
 - previous known-good version is known
 - images for that version still exist in GHCR
 - host and volumes are intact
+- the root Compose env used by the stack is loaded, or commands are prefixed
+  with the required root variables such as `APP_VERSION`, `GHCR_OWNER`, and
+  `POSTGRES_PASSWORD`
 
 ## Standard rollback procedure
 
@@ -63,6 +66,16 @@ At minimum, the drill should prove:
 - the target image tag still exists in GHCR
 - Compose can pull and start the target images
 - the post-rollback smoke flow passes against that specific target
+
+For a deterministic local proof against explicit immutable tags, prefer the
+helper script:
+
+```bash
+bash infra/scripts/drill-rollback.sh
+```
+
+That helper uses `compose.ci.yml` and fake runtime dependencies so the rollback
+mechanics can be validated without depending on a real model runtime.
 
 ## When rollback may not be sufficient
 
