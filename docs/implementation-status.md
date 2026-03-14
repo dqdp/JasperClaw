@@ -39,6 +39,7 @@ Implemented:
 - smoke script baseline with chat and optional voice coverage
 - reproducible backup/restore drill helper for disposable Postgres validation
 - reproducible rollback drill helper for deterministic immutable-tag validation
+- shared step/timing logs across deploy and release-drill scripts
 - Compose topology for the accepted v1 core services
 
 ### Documentation and architecture

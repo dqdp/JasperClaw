@@ -9,6 +9,7 @@ Start here:
 Index:
 - `bootstrap-host.sh`: open when preparing a fresh host with required runtime dependencies.
 - `deploy.sh`: open when changing deployment orchestration.
+- `lib/release-logging.sh`: open when changing shared step/timing logs used by deploy and release-drill scripts.
 - `drill-backup-restore.sh`: open when proving the disposable Postgres backup and restore procedure against the current Compose stack.
 - `drill-rollback.sh`: open when proving rollback against explicit immutable image tags on a deterministic local stack.
 - `ensure-ollama-models.sh`: open when changing model preloading for CI or deployment.

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "${REPO_ROOT}/infra/scripts/lib/release-logging.sh"
+
 ROOT_ENV_FILE="${ROOT_ENV_FILE:-.env}"
 COMPOSE_BASE_FILE="${COMPOSE_BASE_FILE:-infra/compose/compose.yml}"
 COMPOSE_OVERRIDE_FILE="${COMPOSE_OVERRIDE_FILE:-infra/compose/compose.prod.yml}"
@@ -25,6 +28,20 @@ compose() {
   fi
   cmd+=("$@")
   "${cmd[@]}"
+}
+
+ensure_ollama_models() {
+  ROOT_ENV_FILE="$ROOT_ENV_FILE" \
+  COMPOSE_BASE_FILE="$COMPOSE_BASE_FILE" \
+  COMPOSE_OVERRIDE_FILE="$COMPOSE_OVERRIDE_FILE" \
+  bash "$ENSURE_OLLAMA_SCRIPT"
+}
+
+run_canonical_smoke() {
+  ROOT_ENV_FILE="$ROOT_ENV_FILE" \
+  COMPOSE_BASE_FILE="$COMPOSE_BASE_FILE" \
+  COMPOSE_OVERRIDE_FILE="$COMPOSE_OVERRIDE_FILE" \
+  bash "$SMOKE_SCRIPT"
 }
 
 is_truthy() {
@@ -84,20 +101,20 @@ if [[ "$voice_enabled" != "$voice_profile_enabled" ]]; then
 fi
 
 deploy_services=(agent-api telegram-ingress open-webui caddy)
+deploy_profile="text-only"
 if [[ "$voice_enabled" == "true" ]]; then
   deploy_services+=(stt-service tts-service)
+  deploy_profile="voice-enabled-cpu"
 fi
 
-compose pull
-compose up -d postgres ollama
-ROOT_ENV_FILE="$ROOT_ENV_FILE" \
-COMPOSE_BASE_FILE="$COMPOSE_BASE_FILE" \
-COMPOSE_OVERRIDE_FILE="$COMPOSE_OVERRIDE_FILE" \
-bash "$ENSURE_OLLAMA_SCRIPT"
-compose build platform-db
-compose run --rm --no-deps platform-db python -m platform_db.cli migrate
-compose up -d --remove-orphans "${deploy_services[@]}"
-ROOT_ENV_FILE="$ROOT_ENV_FILE" \
-COMPOSE_BASE_FILE="$COMPOSE_BASE_FILE" \
-COMPOSE_OVERRIDE_FILE="$COMPOSE_OVERRIDE_FILE" \
-bash "$SMOKE_SCRIPT"
+log_info "Deploy env file: ${ROOT_ENV_FILE}"
+log_info "Deploy profile: ${deploy_profile}"
+log_info "Deploy services: ${deploy_services[*]}"
+
+run_logged_step "pull images" compose pull
+run_logged_step "start foundation services" compose up -d postgres ollama
+run_logged_step "ensure ollama models" ensure_ollama_models
+run_logged_step "build platform-db image" compose build platform-db
+run_logged_step "apply platform migrations" compose run --rm --no-deps platform-db python -m platform_db.cli migrate
+run_logged_step "roll out application services" compose up -d --remove-orphans "${deploy_services[@]}"
+run_logged_step "run canonical smoke" run_canonical_smoke

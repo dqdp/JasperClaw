@@ -385,7 +385,11 @@ Status on current branch:
   successful disposable restore proof against the Compose-backed Postgres stack
 - `C2` is complete through a reproducible rollback drill helper and a
   successful immutable-tag rollback proof on the deterministic local stack
-- `C3` and `C4` remain open
+- `C3` is complete through a tightened deploy entrypoint with explicit
+  `VOICE_ENABLED` and `COMPOSE_PROFILES` contract checks plus black-box tests
+- `C4` is complete through shared step/timing logs in the deploy and
+  release-drill scripts, making release-path failures explainable without
+  reading shell internals
 
 ### C1. Prove Disposable Restore Against The Current Stack
 
@@ -444,10 +448,9 @@ Do not prioritize these before Phase A is complete:
 
 Execute in this order:
 
-1. tighten the deploy gate around proven restore and rollback drills
-2. fill observability gaps found during release drills
-3. only then choose the next expansion block, with Telegram escalation the most
-   likely candidate before premium voice or broader tool surfacing
+1. choose the next expansion block now that Phase C is complete, with Telegram
+   escalation the most likely candidate before premium voice or broader tool
+   surfacing
 
 ## Change Rule
 

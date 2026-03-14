@@ -125,6 +125,8 @@ def test_deploy_runs_text_only_service_set(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
+    assert "Deploy profile: text-only" in result.stdout
+    assert "Deploy services: agent-api telegram-ingress open-webui caddy" in result.stdout
     docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
     assert docker_calls[-1].endswith(
         "up -d --remove-orphans agent-api telegram-ingress open-webui caddy"
@@ -146,6 +148,11 @@ def test_deploy_runs_voice_enabled_service_set(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stderr
+    assert "Deploy profile: voice-enabled-cpu" in result.stdout
+    assert (
+        "Deploy services: agent-api telegram-ingress open-webui caddy stt-service tts-service"
+        in result.stdout
+    )
     docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
     assert docker_calls[-1].endswith(
         "up -d --remove-orphans agent-api telegram-ingress open-webui caddy stt-service tts-service"
