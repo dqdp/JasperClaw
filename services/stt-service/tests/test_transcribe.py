@@ -1,5 +1,8 @@
+import threading
+
 from fastapi.testclient import TestClient
 
+from app.engines.base import SttEngineRequestError
 from app.main import create_app
 
 
@@ -31,6 +34,25 @@ class _FakeEngine:
         if self.exc is not None:
             raise self.exc
         return self.transcript
+
+
+class _BlockingTranscriptionService:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def transcribe(
+        self,
+        *,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str | None,
+    ) -> str:
+        _ = (audio_bytes, filename, content_type)
+        self.started.set()
+        if not self.release.wait(timeout=5.0):
+            raise AssertionError("test transcription was not released")
+        return "ok"
 
 
 def test_transcribe_returns_json_text_for_valid_upload() -> None:
@@ -136,3 +158,56 @@ def test_transcribe_maps_unexpected_engine_failure() -> None:
     assert response.status_code == 500
     assert response.json()["error"]["type"] == "internal_error"
     assert response.json()["error"]["code"] == "internal_failure"
+
+
+def test_transcribe_maps_request_local_engine_failure() -> None:
+    client = TestClient(
+        create_app(engine=_FakeEngine(exc=SttEngineRequestError("decode failed")))
+    )
+
+    response = client.post(
+        "/transcribe",
+        files={"file": ("clip.wav", b"RIFFfakeWAVE", "audio/wav")},
+    )
+
+    assert response.status_code == 500
+    assert response.json()["error"]["type"] == "internal_error"
+    assert response.json()["error"]["code"] == "internal_failure"
+
+
+def test_readyz_remains_available_while_transcription_is_running() -> None:
+    service = _BlockingTranscriptionService()
+
+    with TestClient(
+        create_app(
+            transcription_service=service,
+            engine=_FakeEngine(),
+        )
+    ) as client:
+        responses: dict[str, object] = {}
+
+        transcribe_thread = threading.Thread(
+            target=lambda: responses.setdefault(
+                "transcribe",
+                client.post(
+                    "/transcribe",
+                    files={"file": ("clip.wav", b"RIFFfakeWAVE", "audio/wav")},
+                ),
+            )
+        )
+        transcribe_thread.start()
+        assert service.started.wait(timeout=1.0)
+
+        readyz_thread = threading.Thread(
+            target=lambda: responses.setdefault("readyz", client.get("/readyz"))
+        )
+        readyz_thread.start()
+        readyz_thread.join(timeout=1.0)
+
+        service.release.set()
+        transcribe_thread.join(timeout=2.0)
+        readyz_thread.join(timeout=2.0)
+
+    assert not readyz_thread.is_alive()
+    assert responses["readyz"].status_code == 200
+    assert responses["transcribe"].status_code == 200

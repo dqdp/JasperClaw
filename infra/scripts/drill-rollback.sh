@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${REPO_ROOT}/infra/scripts/lib/release-logging.sh"
+source "${REPO_ROOT}/infra/scripts/lib/dotenv.sh"
 
 ROOT_ENV_FILE="${ROOT_ENV_FILE:-.env}"
 COMPOSE_BASE_FILE="${COMPOSE_BASE_FILE:-infra/compose/compose.yml}"
@@ -17,10 +18,7 @@ CANDIDATE_APP_VERSION="${CANDIDATE_APP_VERSION:-candidate-proof}"
 KNOWN_GOOD_APP_VERSION="${KNOWN_GOOD_APP_VERSION:-known-good-proof}"
 
 if [[ -f "$ROOT_ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ROOT_ENV_FILE"
-  set +a
+  dotenv_export_file "$ROOT_ENV_FILE"
 fi
 
 : "${DRILL_GHCR_OWNER:=local}"

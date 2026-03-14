@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 import logging
 from time import perf_counter
@@ -160,7 +161,10 @@ def create_app(
         started = perf_counter()
         audio_bytes = await file.read(config.stt_max_file_bytes + 1)
         try:
-            transcript = service.transcribe(
+            # Model inference and temp-file I/O are blocking, so keep them off the
+            # event loop to preserve readiness and metrics responsiveness.
+            transcript = await asyncio.to_thread(
+                service.transcribe,
                 audio_bytes=audio_bytes,
                 filename=file.filename or "upload.bin",
                 content_type=file.content_type,

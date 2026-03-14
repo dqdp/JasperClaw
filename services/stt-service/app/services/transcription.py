@@ -7,6 +7,7 @@ from app.core.errors import APIError
 from app.engines.base import (
     SttEngine,
     SttEngineBadResponseError,
+    SttEngineRequestError,
     SttEngineUnavailableError,
 )
 
@@ -81,6 +82,13 @@ class TranscriptionService:
                 error_type="upstream_error",
                 code="dependency_bad_response",
                 message="Speech runtime returned an invalid transcript",
+            ) from exc
+        except SttEngineRequestError as exc:
+            raise APIError(
+                status_code=500,
+                error_type="internal_error",
+                code="internal_failure",
+                message="Speech transcription failed unexpectedly",
             ) from exc
         except Exception as exc:
             raise APIError(

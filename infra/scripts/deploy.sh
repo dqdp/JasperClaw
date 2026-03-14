@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${REPO_ROOT}/infra/scripts/lib/release-logging.sh"
+source "${REPO_ROOT}/infra/scripts/lib/dotenv.sh"
 
 ROOT_ENV_FILE="${ROOT_ENV_FILE:-.env}"
 COMPOSE_BASE_FILE="${COMPOSE_BASE_FILE:-infra/compose/compose.yml}"
@@ -16,10 +17,7 @@ if [[ ! -f "$ROOT_ENV_FILE" ]]; then
   exit 1
 fi
 
-set -a
-# shellcheck disable=SC1090
-source "$ROOT_ENV_FILE"
-set +a
+dotenv_export_file "$ROOT_ENV_FILE"
 
 compose() {
   local -a cmd=("$DOCKER_BIN" compose --env-file "$ROOT_ENV_FILE" -f "$COMPOSE_BASE_FILE")

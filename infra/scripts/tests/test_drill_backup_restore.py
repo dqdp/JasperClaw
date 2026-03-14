@@ -182,3 +182,33 @@ def test_drill_materializes_root_env_values_into_effective_env_file(tmp_path: Pa
     assert effective_env["WEBUI_SECRET_KEY"] == "webui-42"
     assert effective_env["DOMAIN"] == "backup.example.test"
     assert effective_env["TTS_DEFAULT_VOICE"] == "assistant-fast"
+
+
+def test_drill_reads_root_env_without_shell_expansion(tmp_path: Path) -> None:
+    marker_path = tmp_path / "drill-marker"
+    root_env_file = tmp_path / "backup.env"
+    root_env_file.write_text(
+        "\n".join(
+            [
+                "APP_VERSION=release-42",
+                "GHCR_OWNER=acme",
+                "POSTGRES_PASSWORD=super-secret$UNSET_VALUE",
+                "INTERNAL_OPENAI_API_KEY=internal-42",
+                "WEBUI_SECRET_KEY=webui-42",
+                f"DOMAIN=$(touch {marker_path})",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    result, _docker_log, _env_paths_log, captured_env = _run_drill(
+        tmp_path,
+        root_env_file=root_env_file,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not marker_path.exists()
+    effective_env = _parse_env_file(captured_env)
+    assert effective_env["POSTGRES_PASSWORD"] == "super-secret$UNSET_VALUE"
+    assert effective_env["DOMAIN"] == f"$(touch {marker_path})"

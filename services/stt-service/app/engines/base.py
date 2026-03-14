@@ -17,5 +17,9 @@ class SttEngineUnavailableError(RuntimeError):
     """Raised when the STT runtime cannot accept work."""
 
 
+class SttEngineRequestError(RuntimeError):
+    """Raised when one transcription request fails without losing the runtime."""
+
+
 class SttEngineBadResponseError(RuntimeError):
     """Raised when the STT runtime yields an invalid transcript payload."""

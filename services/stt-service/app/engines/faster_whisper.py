@@ -7,6 +7,7 @@ from threading import Lock
 from app.engines.base import (
     SttEngine,
     SttEngineBadResponseError,
+    SttEngineRequestError,
     SttEngineUnavailableError,
 )
 
@@ -73,7 +74,9 @@ class FasterWhisperEngine(SttEngine):
         except SttEngineUnavailableError:
             raise
         except Exception as exc:
-            raise SttEngineUnavailableError("faster-whisper transcription failed") from exc
+            raise SttEngineRequestError(
+                "faster-whisper transcription failed"
+            ) from exc
         finally:
             if temp_path is not None:
                 Path(temp_path).unlink(missing_ok=True)

@@ -15,23 +15,36 @@ def _write_file(path: Path, content: str) -> None:
 
 
 def _base_env_file(tmp_path: Path, *, voice_enabled: str, compose_profiles: str) -> Path:
-    env_file = tmp_path / "deploy.env"
-    env_file.write_text(
-        "\n".join(
-            [
-                "APP_VERSION=dev",
-                "GHCR_OWNER=local",
-                "POSTGRES_PASSWORD=change-me",
-                "INTERNAL_OPENAI_API_KEY=test-key",
-                "WEBUI_SECRET_KEY=test-secret",
-                f"VOICE_ENABLED={voice_enabled}",
-                f"COMPOSE_PROFILES={compose_profiles}",
-                "",
-            ]
-        ),
+    return _env_file(
+        tmp_path / "deploy.env",
+        voice_enabled=voice_enabled,
+        compose_profiles=compose_profiles,
+    )
+
+
+def _env_file(
+    path: Path,
+    *,
+    voice_enabled: str,
+    compose_profiles: str,
+    extra_lines: list[str] | None = None,
+) -> Path:
+    lines = [
+        "APP_VERSION=dev",
+        "GHCR_OWNER=local",
+        "POSTGRES_PASSWORD=change-me",
+        "INTERNAL_OPENAI_API_KEY=test-key",
+        "WEBUI_SECRET_KEY=test-secret",
+        f"VOICE_ENABLED={voice_enabled}",
+        f"COMPOSE_PROFILES={compose_profiles}",
+    ]
+    if extra_lines:
+        lines.extend(extra_lines)
+    path.write_text(
+        "\n".join([*lines, ""]),
         encoding="utf-8",
     )
-    return env_file
+    return path
 
 
 def _stub_script(path: Path, log_path: Path, label: str) -> Path:
@@ -71,13 +84,15 @@ def _run_deploy(
     *,
     voice_enabled: str,
     compose_profiles: str,
+    extra_env_lines: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     docker_log = tmp_path / "docker.log"
     script_log = tmp_path / "scripts.log"
-    env_file = _base_env_file(
-        tmp_path,
+    env_file = _env_file(
+        tmp_path / "deploy.env",
         voice_enabled=voice_enabled,
         compose_profiles=compose_profiles,
+        extra_lines=extra_env_lines,
     )
     docker_stub = _docker_stub(tmp_path / "docker-stub.sh", docker_log)
     ensure_stub = _stub_script(tmp_path / "ensure.sh", script_log, "ensure")
@@ -157,3 +172,21 @@ def test_deploy_runs_voice_enabled_service_set(tmp_path: Path) -> None:
     assert docker_calls[-1].endswith(
         "up -d --remove-orphans agent-api telegram-ingress open-webui caddy stt-service tts-service"
     )
+
+
+def test_deploy_reads_root_env_without_shell_expansion(tmp_path: Path) -> None:
+    marker_path = tmp_path / "deploy-marker"
+    result, docker_log, _script_log = _run_deploy(
+        tmp_path,
+        voice_enabled="false",
+        compose_profiles="",
+        extra_env_lines=[
+            "POSTGRES_PASSWORD=change-me$UNSET_VALUE",
+            f"WEBUI_SECRET_KEY=$(touch {marker_path})",
+        ],
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not marker_path.exists()
+    docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
+    assert docker_calls

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ROOT_ENV_FILE="${ROOT_ENV_FILE:-.env}"
 COMPOSE_BASE_FILE="${COMPOSE_BASE_FILE:-infra/compose/compose.yml}"
 COMPOSE_OVERRIDE_FILE="${COMPOSE_OVERRIDE_FILE:-infra/compose/compose.prod.yml}"
 APP_SERVICE_NAME="${APP_SERVICE_NAME:-agent-api}"
 WAIT_TIMEOUT_SECONDS="${WAIT_TIMEOUT_SECONDS:-180}"
 
+source "${REPO_ROOT}/infra/scripts/lib/dotenv.sh"
+
 if [[ -f "$ROOT_ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ROOT_ENV_FILE"
-  set +a
+  dotenv_export_file "$ROOT_ENV_FILE"
 fi
 
 is_truthy() {
