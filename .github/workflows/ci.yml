@@ -67,6 +67,41 @@ jobs:
         if: always()
         run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml down -v
 
+  smoke-voice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: cp infra/env/app.ci-voice-smoke.example.env infra/env/app.env
+      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml build agent-api ollama-fake stt-service tts-service
+      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d postgres ollama-fake
+      - name: Wait for postgres
+        run: |
+          until docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml exec -T postgres pg_isready -U assistant -d assistant; do
+            sleep 2
+          done
+      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml run --rm --no-deps agent-api python -m app.cli migrate
+      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d --no-deps stt-service tts-service agent-api
+      - name: Run voice runtime smoke
+        env:
+          SMOKE_BASE_URL: http://127.0.0.1:18080
+          SMOKE_INTERNAL_OPENAI_API_KEY: ci-smoke-key
+          SMOKE_TIMEOUT_SECONDS: "300"
+          SMOKE_CHECK_VOICE: "true"
+          SMOKE_CHECK_STT: "true"
+          SMOKE_TTS_VOICE: assistant-default
+        run: python infra/scripts/smoke-agent-api.py
+      - name: Dump voice smoke logs on failure
+        if: failure()
+        run: |
+          docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml logs --no-color postgres ollama-fake stt-service tts-service agent-api
+      - name: Tear down voice smoke stack
+        if: always()
+        run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml down -v
+
   validate-compose:
     runs-on: ubuntu-latest
     steps:

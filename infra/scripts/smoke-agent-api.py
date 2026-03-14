@@ -148,6 +148,39 @@ def _wait_for_success(
         time.sleep(2)
 
 
+def _decode_error_payload(body: bytes) -> dict:
+    try:
+        return json.loads(body.decode())
+    except Exception:
+        return {"raw": body.decode(errors="ignore")}
+
+
+def _wait_for_bytes_success(
+    *,
+    request_fn,
+    success_predicate,
+    timeout_seconds: float,
+    error_context: str,
+) -> tuple[int, bytes, str]:
+    deadline = time.monotonic() + timeout_seconds
+    last_result: tuple[int, bytes, str] = (0, b"", "")
+
+    while True:
+        try:
+            last_result = request_fn()
+        except (urllib.error.URLError, OSError) as exc:
+            last_result = (0, str(getattr(exc, "reason", exc)).encode(), "text/plain")
+
+        status, body, content_type = last_result
+        if success_predicate(status, body, content_type):
+            return last_result
+        if time.monotonic() >= deadline:
+            raise SystemExit(
+                f"{error_context}: {status} {_decode_error_payload(body)}"
+            )
+        time.sleep(2)
+
+
 def main() -> int:
     base_url = os.getenv("SMOKE_BASE_URL", "http://127.0.0.1:18080").rstrip("/")
     api_key = _resolve_api_key()
@@ -208,21 +241,20 @@ def main() -> int:
         raise SystemExit(f"Chat response content was empty: {payload}")
 
     if _is_truthy_env("SMOKE_CHECK_VOICE"):
-        status, body, content_type = _request_bytes(
-            f"{base_url}/v1/audio/speech",
-            headers=auth_headers,
-            body={
-                "model": "tts-1",
-                "input": "Скажи привет.",
-                "voice": os.getenv("SMOKE_TTS_VOICE", "assistant-default"),
-            },
+        status, body, content_type = _wait_for_bytes_success(
+            request_fn=lambda: _request_bytes(
+                f"{base_url}/v1/audio/speech",
+                headers=auth_headers,
+                body={
+                    "model": "tts-1",
+                    "input": "Скажи привет.",
+                    "voice": os.getenv("SMOKE_TTS_VOICE", "assistant-default"),
+                },
+            ),
+            success_predicate=lambda status, body, content_type: status == 200,
+            timeout_seconds=45.0,
+            error_context="/v1/audio/speech did not stabilize before timeout",
         )
-        if status != 200:
-            try:
-                payload = json.loads(body.decode())
-            except Exception:
-                payload = {"raw": body.decode(errors="ignore")}
-            raise SystemExit(f"/v1/audio/speech failed: {status} {payload}")
         if not content_type.startswith("audio/wav"):
             raise SystemExit(
                 f"/v1/audio/speech returned unexpected content type: {content_type}"
@@ -232,21 +264,20 @@ def main() -> int:
 
     if _is_truthy_env("SMOKE_CHECK_STT"):
         stt_sample = base64.b64decode("".join(_SMOKE_STT_SAMPLE_WAV_B64.split()))
-        status, body, content_type = _request_multipart_bytes(
-            f"{base_url}/v1/audio/transcriptions",
-            headers=auth_headers,
-            fields={"model": "whisper-1"},
-            file_field_name="file",
-            file_name="smoke-hello.wav",
-            file_content_type="audio/wav",
-            file_bytes=stt_sample,
+        status, body, content_type = _wait_for_bytes_success(
+            request_fn=lambda: _request_multipart_bytes(
+                f"{base_url}/v1/audio/transcriptions",
+                headers=auth_headers,
+                fields={"model": "whisper-1"},
+                file_field_name="file",
+                file_name="smoke-hello.wav",
+                file_content_type="audio/wav",
+                file_bytes=stt_sample,
+            ),
+            success_predicate=lambda status, body, content_type: status == 200,
+            timeout_seconds=90.0,
+            error_context="/v1/audio/transcriptions did not stabilize before timeout",
         )
-        if status != 200:
-            try:
-                payload = json.loads(body.decode())
-            except Exception:
-                payload = {"raw": body.decode(errors="ignore")}
-            raise SystemExit(f"/v1/audio/transcriptions failed: {status} {payload}")
         if not content_type.startswith("application/json"):
             raise SystemExit(
                 "/v1/audio/transcriptions returned unexpected content type: "
