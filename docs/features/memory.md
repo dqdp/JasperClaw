@@ -129,12 +129,22 @@ Do not leave scope implicit.
 
 Memory should have explicit lifecycle state.
 
-Suggested states:
+Longer-term target states:
 
 - `active`
 - `expired`
 - `invalidated`
 - `deleted`
+
+Current schema-constrained contract:
+
+- `active`
+- `invalidated`
+- `deleted`
+
+The current implemented schema does not yet carry an `expires_at` field, so
+automatic `expired` handling is deferred until a follow-on schema slice adds
+explicit TTL state instead of inferring it implicitly.
 
 ## Confidence rule
 
@@ -181,6 +191,19 @@ Key rules:
 - invalidation must be explicit
 - deletion should not erase the fact that transcript originally existed unless a stronger purge flow requires it
 
+Current lifecycle baseline for the next implementation slice:
+
+- newly materialized memory is written as `active`
+- retrieval must consider only `active` memory
+- `invalidated` means the memory is no longer eligible for retrieval because it
+  was contradicted, superseded, or otherwise judged unreliable
+- `deleted` means the memory item is intentionally removed from future retrieval
+  through an explicit forget or operator action, while the source transcript
+  remains canonical unless a stronger purge flow is invoked
+- retention is currently unbounded for `active` memory unless an explicit
+  invalidation or deletion transition occurs
+- automatic expiry is deferred until the schema can store explicit expiry data
+
 ## What I would not hide
 
 - memory extraction will produce mistakes
@@ -203,6 +226,8 @@ Current Memory Slice 1 baseline:
 - retrieval uses the latest `user` turn as the semantic query
 - `memory_items` are currently derived only from conservative `user` transcript turns
 - retrieval and memory writes are fail-open relative to the core chat response path
+- all materialized memory is currently written as `active`; lifecycle
+  transitions beyond that state are not yet implemented
 
 ## Anti-patterns
 

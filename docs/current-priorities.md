@@ -276,7 +276,9 @@ Make lifecycle semantics explicit before adding more extraction breadth.
 
 Primary targets:
 
-- active, expired, invalidated, and deleted states
+- active, invalidated, and deleted states on the current schema
+- explicit deferral of automatic `expired` handling until the schema carries
+  dedicated expiry data
 - retention and provenance invariants
 - explicit non-goals for early forget flows
 
