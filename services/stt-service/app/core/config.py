@@ -12,6 +12,7 @@ class Settings:
     stt_model: str
     stt_device: str
     stt_compute_type: str
+    stt_prewarm_on_startup: bool
     stt_max_file_bytes: int
     stt_max_concurrency: int
 
@@ -33,6 +34,7 @@ def get_settings() -> Settings:
         stt_model="large-v3" if model is None else model.strip(),
         stt_device="cpu" if device is None else device.strip(),
         stt_compute_type="int8" if compute_type is None else compute_type.strip(),
+        stt_prewarm_on_startup=_get_bool_env("STT_PREWARM_ON_STARTUP", default=True),
         stt_max_file_bytes=max(int(os.getenv("STT_MAX_FILE_BYTES", "26214400")), 1),
         stt_max_concurrency=max(int(os.getenv("STT_MAX_CONCURRENCY", "1")), 1),
     )

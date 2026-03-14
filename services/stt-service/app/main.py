@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+import logging
 from time import perf_counter
 
 from fastapi import FastAPI
@@ -62,7 +64,23 @@ def create_app(
         engine=resolved_engine,
     )
 
-    app = FastAPI(title="stt-service", version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if config.stt_prewarm_on_startup and config.voice_enabled:
+            log_event("runtime_prewarm_started", model=config.stt_model)
+            try:
+                readiness.prewarm()
+            except Exception:
+                log_event(
+                    "runtime_prewarm_failed",
+                    level=logging.ERROR,
+                    model=config.stt_model,
+                )
+                raise
+            log_event("runtime_prewarm_completed", model=config.stt_model)
+        yield
+
+    app = FastAPI(title="stt-service", version="0.1.0", lifespan=lifespan)
     app.add_exception_handler(APIError, api_error_handler)
     app.add_exception_handler(RequestValidationError, request_validation_error_handler)
 

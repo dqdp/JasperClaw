@@ -43,6 +43,13 @@ class ReadinessService:
         )
         return ReadinessResult(status=status, checks=checks)
 
+    def prewarm(self) -> None:
+        if not self._settings.voice_enabled or not self._settings.stt_prewarm_on_startup:
+            return
+        if self._check_config() != "ok":
+            raise RuntimeError("STT runtime prewarm configuration is invalid")
+        self._engine.validate_runtime()
+
     def _check_voice_enabled(self) -> str:
         return "ok" if self._settings.voice_enabled else "fail"
 
