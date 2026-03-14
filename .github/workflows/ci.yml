@@ -84,20 +84,22 @@ jobs:
             sleep 2
           done
       - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml run --rm --no-deps agent-api python -m app.cli migrate
-      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d --no-deps stt-service tts-service agent-api
-      - name: Run voice runtime smoke
+      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d --no-deps stt-service tts-service agent-api open-webui
+      - name: Run canonical voice smoke
         env:
-          SMOKE_BASE_URL: http://127.0.0.1:18080
-          SMOKE_INTERNAL_OPENAI_API_KEY: ci-smoke-key
-          SMOKE_TIMEOUT_SECONDS: "300"
+          ROOT_ENV_FILE: infra/env/root.ci-smoke.example.env
+          COMPOSE_BASE_FILE: infra/compose/compose.yml
+          COMPOSE_OVERRIDE_FILE: infra/compose/compose.ci.yml
+          WAIT_TIMEOUT_SECONDS: "300"
+          SMOKE_SKIP_DOMAIN_CHECK: "true"
           SMOKE_CHECK_VOICE: "true"
           SMOKE_CHECK_STT: "true"
           SMOKE_TTS_VOICE: assistant-default
-        run: python infra/scripts/smoke-agent-api.py
+        run: bash infra/scripts/smoke.sh
       - name: Dump voice smoke logs on failure
         if: failure()
         run: |
-          docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml logs --no-color postgres ollama-fake stt-service tts-service agent-api
+          docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml logs --no-color postgres ollama-fake stt-service tts-service agent-api open-webui
       - name: Tear down voice smoke stack
         if: always()
         run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml down -v

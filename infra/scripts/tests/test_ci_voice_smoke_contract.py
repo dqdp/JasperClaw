@@ -53,7 +53,9 @@ def test_ci_declares_mandatory_voice_smoke_job() -> None:
     assert "build agent-api ollama-fake stt-service tts-service" in job_body
     assert "up -d postgres ollama-fake" in job_body
     assert "run --rm --no-deps agent-api python -m app.cli migrate" in job_body
-    assert "up -d --no-deps stt-service tts-service agent-api" in job_body
+    assert "up -d --no-deps stt-service tts-service agent-api open-webui" in job_body
+    assert 'SMOKE_SKIP_DOMAIN_CHECK: "true"' in job_body
     assert 'SMOKE_CHECK_VOICE: "true"' in job_body
     assert 'SMOKE_CHECK_STT: "true"' in job_body
-    assert "logs --no-color postgres ollama-fake stt-service tts-service agent-api" in job_body
+    assert "bash infra/scripts/smoke.sh" in job_body
+    assert "logs --no-color postgres ollama-fake stt-service tts-service agent-api open-webui" in job_body
