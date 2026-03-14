@@ -14,6 +14,7 @@ from app.persistence.model_runs_repo import PostgresModelRunsRepository
 from app.persistence.models import (
     ChatPersistenceResult,
     ConversationContext,
+    MemoryLifecycleTransitionResult,
     MemoryRetrievalRecord,
     MemorySearchHit,
     PersistedMessage,
@@ -107,6 +108,14 @@ class ChatRepository(Protocol):
         embedding_model: str,
         created_at: datetime,
     ) -> None: ...
+
+    def transition_memory_item_status(
+        self,
+        *,
+        memory_item_id: str,
+        target_status: str,
+        updated_at: datetime,
+    ) -> MemoryLifecycleTransitionResult: ...
 
     def record_tool_execution(
         self,
@@ -385,6 +394,19 @@ class PostgresChatRepository:
             embeddings=embeddings,
             embedding_model=embedding_model,
             created_at=created_at,
+        )
+
+    def transition_memory_item_status(
+        self,
+        *,
+        memory_item_id: str,
+        target_status: str,
+        updated_at: datetime,
+    ) -> MemoryLifecycleTransitionResult:
+        return self._memory_repository.transition_memory_item_status(
+            memory_item_id=memory_item_id,
+            target_status=target_status,
+            updated_at=updated_at,
         )
 
     def record_tool_execution(

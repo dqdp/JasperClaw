@@ -194,6 +194,11 @@ class AgentApiMetrics:
             "Memory materialization outcomes.",
             ("outcome",),
         )
+        self._memory_lifecycle_total = _CounterMetric(
+            "agent_api_memory_lifecycle_total",
+            "Memory lifecycle transition outcomes.",
+            ("outcome", "target_status"),
+        )
         self._memory_materialization_duration = _HistogramMetric(
             "agent_api_memory_materialization_duration_seconds",
             "Memory materialization duration in seconds.",
@@ -300,6 +305,12 @@ class AgentApiMetrics:
                 outcome=outcome,
             )
 
+    def record_memory_lifecycle(self, *, outcome: str, target_status: str) -> None:
+        self._memory_lifecycle_total.inc(
+            outcome=outcome,
+            target_status=target_status,
+        )
+
     def reset(self) -> None:
         for metric in (
             self._request_total,
@@ -316,6 +327,7 @@ class AgentApiMetrics:
             self._memory_embedding_total,
             self._memory_audit_total,
             self._memory_materialization_total,
+            self._memory_lifecycle_total,
             self._memory_materialization_duration,
         ):
             metric.reset()
@@ -337,6 +349,7 @@ class AgentApiMetrics:
             self._memory_embedding_total,
             self._memory_audit_total,
             self._memory_materialization_total,
+            self._memory_lifecycle_total,
             self._memory_materialization_duration,
         ):
             lines.extend(metric.render_prometheus())

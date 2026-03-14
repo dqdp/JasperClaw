@@ -31,6 +31,14 @@ class MemoryRetrievalRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryLifecycleTransitionResult:
+    memory_item_id: str
+    previous_status: str
+    current_status: str
+    changed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class ToolExecutionRecord:
     invocation_id: str
     tool_name: str

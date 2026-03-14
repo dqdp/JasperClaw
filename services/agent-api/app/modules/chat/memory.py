@@ -14,6 +14,7 @@ from app.modules.chat.formatters import ChatPromptFormatter
 from app.repositories import (
     ChatPersistenceResult,
     ChatRepository,
+    MemoryLifecycleTransitionResult,
     MemoryRetrievalRecord,
     PersistedMessage,
 )
@@ -326,3 +327,95 @@ class MemoryService:
             if message.role == "user" and content:
                 return content
         return None
+
+
+class MemoryLifecycleService:
+    """Owns explicit, deterministic memory lifecycle transitions."""
+
+    def __init__(self, *, repository: ChatRepository) -> None:
+        self._repository = repository
+
+    def invalidate_item(
+        self,
+        *,
+        request_id: str,
+        memory_item_id: str,
+        updated_at: datetime,
+        reason: str | None = None,
+    ) -> MemoryLifecycleTransitionResult:
+        return self._transition_item(
+            request_id=request_id,
+            memory_item_id=memory_item_id,
+            target_status="invalidated",
+            updated_at=updated_at,
+            reason=reason,
+        )
+
+    def delete_item(
+        self,
+        *,
+        request_id: str,
+        memory_item_id: str,
+        updated_at: datetime,
+        reason: str | None = None,
+    ) -> MemoryLifecycleTransitionResult:
+        return self._transition_item(
+            request_id=request_id,
+            memory_item_id=memory_item_id,
+            target_status="deleted",
+            updated_at=updated_at,
+            reason=reason,
+        )
+
+    def _transition_item(
+        self,
+        *,
+        request_id: str,
+        memory_item_id: str,
+        target_status: str,
+        updated_at: datetime,
+        reason: str | None,
+    ) -> MemoryLifecycleTransitionResult:
+        transition_started = perf_counter()
+        try:
+            result = self._repository.transition_memory_item_status(
+                memory_item_id=memory_item_id,
+                target_status=target_status,
+                updated_at=updated_at,
+            )
+            outcome = "success" if result.changed else "noop"
+            log_event(
+                "chat_memory_lifecycle_completed",
+                request_id=request_id,
+                outcome=outcome,
+                duration_ms=round((perf_counter() - transition_started) * 1000, 2),
+                memory_item_id=memory_item_id,
+                previous_status=result.previous_status,
+                current_status=result.current_status,
+                target_status=target_status,
+                changed=result.changed,
+                reason=reason,
+            )
+            get_agent_metrics().record_memory_lifecycle(
+                outcome=outcome,
+                target_status=target_status,
+            )
+            return result
+        except APIError as exc:
+            log_event(
+                "chat_memory_lifecycle_completed",
+                level=logging.WARNING,
+                request_id=request_id,
+                outcome="error",
+                duration_ms=round((perf_counter() - transition_started) * 1000, 2),
+                memory_item_id=memory_item_id,
+                target_status=target_status,
+                reason=reason,
+                error_type=exc.error_type,
+                error_code=exc.code,
+            )
+            get_agent_metrics().record_memory_lifecycle(
+                outcome="error",
+                target_status=target_status,
+            )
+            raise

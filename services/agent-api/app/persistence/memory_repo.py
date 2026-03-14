@@ -6,7 +6,12 @@ from uuid import uuid4
 import psycopg
 
 from app.core.errors import APIError
-from app.persistence.models import MemoryRetrievalRecord, MemorySearchHit, PersistedMessage
+from app.persistence.models import (
+    MemoryLifecycleTransitionResult,
+    MemoryRetrievalRecord,
+    MemorySearchHit,
+    PersistedMessage,
+)
 
 _T = TypeVar("_T")
 
@@ -14,6 +19,15 @@ _DEFAULT_PRINCIPAL_ID = "prn_local_assistant"
 _MEMORY_KIND_USER_MESSAGE = "user_message"
 _MEMORY_SCOPE_PRINCIPAL = "principal"
 _MEMORY_STATUS_ACTIVE = "active"
+_MEMORY_STATUS_INVALIDATED = "invalidated"
+_MEMORY_STATUS_DELETED = "deleted"
+_SUPPORTED_MEMORY_STATUSES = frozenset(
+    (
+        _MEMORY_STATUS_ACTIVE,
+        _MEMORY_STATUS_INVALIDATED,
+        _MEMORY_STATUS_DELETED,
+    )
+)
 
 
 class PostgresMemoryRepository:
@@ -208,6 +222,79 @@ class PostgresMemoryRepository:
 
         self._execute(write)
 
+    def transition_memory_item_status(
+        self,
+        *,
+        memory_item_id: str,
+        target_status: str,
+        updated_at: datetime,
+    ) -> MemoryLifecycleTransitionResult:
+        if target_status not in _SUPPORTED_MEMORY_STATUSES:
+            raise APIError(
+                status_code=500,
+                error_type="internal_error",
+                code="memory_lifecycle_invalid_target",
+                message="Unsupported memory lifecycle target status",
+            )
+
+        timestamp = updated_at.astimezone(timezone.utc)
+
+        def write(conn: psycopg.Connection) -> MemoryLifecycleTransitionResult:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT status
+                    FROM memory_items
+                    WHERE id = %s
+                    FOR UPDATE
+                    """,
+                    (memory_item_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    raise APIError(
+                        status_code=404,
+                        error_type="not_found",
+                        code="memory_item_not_found",
+                        message="Memory item not found",
+                    )
+
+                current_status = str(row[0])
+                if current_status == target_status:
+                    return MemoryLifecycleTransitionResult(
+                        memory_item_id=memory_item_id,
+                        previous_status=current_status,
+                        current_status=current_status,
+                        changed=False,
+                    )
+                if not self._is_allowed_lifecycle_transition(
+                    current_status=current_status,
+                    target_status=target_status,
+                ):
+                    raise APIError(
+                        status_code=409,
+                        error_type="validation_error",
+                        code="memory_lifecycle_conflict",
+                        message="Memory lifecycle transition not allowed",
+                    )
+
+                cur.execute(
+                    """
+                    UPDATE memory_items
+                    SET status = %s, updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (target_status, timestamp, memory_item_id),
+                )
+                return MemoryLifecycleTransitionResult(
+                    memory_item_id=memory_item_id,
+                    previous_status=current_status,
+                    current_status=target_status,
+                    changed=True,
+                )
+
+        return self._execute(write)
+
     def _execute(self, operation: Callable[[psycopg.Connection], _T]) -> _T:
         try:
             with psycopg.connect(self._database_url) as conn:
@@ -227,3 +314,17 @@ class PostgresMemoryRepository:
 
     def _new_id(self, prefix: str) -> str:
         return f"{prefix}_{uuid4().hex[:12]}"
+
+    def _is_allowed_lifecycle_transition(
+        self,
+        *,
+        current_status: str,
+        target_status: str,
+    ) -> bool:
+        return (
+            current_status == _MEMORY_STATUS_ACTIVE
+            and target_status in (_MEMORY_STATUS_INVALIDATED, _MEMORY_STATUS_DELETED)
+        ) or (
+            current_status == _MEMORY_STATUS_INVALIDATED
+            and target_status == _MEMORY_STATUS_DELETED
+        )

@@ -1,12 +1,21 @@
+import json
+import logging
 from datetime import datetime, timezone
+
+import pytest
 
 from app.clients.ollama import OllamaChatClient
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.metrics import get_agent_metrics
 from app.modules.chat.formatters import ChatPromptFormatter
-from app.modules.chat.memory import MemoryContext, MemoryService
-from app.repositories import ChatPersistenceResult, MemorySearchHit, PersistedMessage
+from app.modules.chat.memory import MemoryContext, MemoryLifecycleService, MemoryService
+from app.repositories import (
+    ChatPersistenceResult,
+    MemoryLifecycleTransitionResult,
+    MemorySearchHit,
+    PersistedMessage,
+)
 from app.schemas.chat import ChatCompletionRequest, ChatMessage
 
 
@@ -34,12 +43,17 @@ class _FakeRepository:
         *,
         hits: list[MemorySearchHit] | None = None,
         retrieval_error: APIError | None = None,
+        transition_result: MemoryLifecycleTransitionResult | None = None,
+        transition_error: APIError | None = None,
     ) -> None:
         self.hits = hits or []
         self.retrieval_error = retrieval_error
+        self.transition_result = transition_result
+        self.transition_error = transition_error
         self.retrieve_calls: list[dict[str, object]] = []
         self.record_retrieval_calls: list[dict[str, object]] = []
         self.store_memory_calls: list[dict[str, object]] = []
+        self.transition_calls: list[dict[str, object]] = []
 
     def retrieve_memory(self, **kwargs):
         self.retrieve_calls.append(kwargs)
@@ -52,6 +66,27 @@ class _FakeRepository:
 
     def store_memory_items(self, **kwargs):
         self.store_memory_calls.append(kwargs)
+
+    def transition_memory_item_status(self, **kwargs):
+        self.transition_calls.append(kwargs)
+        if self.transition_error is not None:
+            raise self.transition_error
+        if self.transition_result is not None:
+            return self.transition_result
+        return MemoryLifecycleTransitionResult(
+            memory_item_id=kwargs["memory_item_id"],
+            previous_status="active",
+            current_status=kwargs["target_status"],
+            changed=True,
+        )
+
+
+def _events(caplog) -> list[dict]:
+    return [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == "agent_api"
+    ]
 
 
 def _settings(**overrides: object) -> Settings:
@@ -288,3 +323,109 @@ def test_memory_service_skips_materialization_without_candidates() -> None:
     assert repository.store_memory_calls == []
     exported = get_agent_metrics().render_prometheus()
     assert 'agent_api_memory_materialization_total{outcome="skipped"} 1' in exported
+
+
+def test_memory_lifecycle_service_records_successful_invalidation(
+    caplog,
+) -> None:
+    repository = _FakeRepository(
+        transition_result=MemoryLifecycleTransitionResult(
+            memory_item_id="mem_1",
+            previous_status="active",
+            current_status="invalidated",
+            changed=True,
+        )
+    )
+    service = MemoryLifecycleService(repository=repository)
+
+    with caplog.at_level(logging.INFO, logger="agent_api"):
+        result = service.invalidate_item(
+            request_id="req_memory_invalidate",
+            memory_item_id="mem_1",
+            updated_at=datetime(2026, 3, 14, 12, 0, tzinfo=timezone.utc),
+            reason="user_forget",
+        )
+
+    assert result.changed is True
+    assert repository.transition_calls == [
+        {
+            "memory_item_id": "mem_1",
+            "target_status": "invalidated",
+            "updated_at": datetime(2026, 3, 14, 12, 0, tzinfo=timezone.utc),
+        }
+    ]
+    event = next(
+        event for event in _events(caplog) if event["event"] == "chat_memory_lifecycle_completed"
+    )
+    assert event["request_id"] == "req_memory_invalidate"
+    assert event["outcome"] == "success"
+    assert event["memory_item_id"] == "mem_1"
+    assert event["target_status"] == "invalidated"
+    assert event["reason"] == "user_forget"
+    exported = get_agent_metrics().render_prometheus()
+    assert (
+        'agent_api_memory_lifecycle_total{outcome="success",target_status="invalidated"} 1'
+        in exported
+    )
+
+
+def test_memory_lifecycle_service_records_noop_transition(caplog) -> None:
+    repository = _FakeRepository(
+        transition_result=MemoryLifecycleTransitionResult(
+            memory_item_id="mem_1",
+            previous_status="invalidated",
+            current_status="invalidated",
+            changed=False,
+        )
+    )
+    service = MemoryLifecycleService(repository=repository)
+
+    with caplog.at_level(logging.INFO, logger="agent_api"):
+        result = service.invalidate_item(
+            request_id="req_memory_noop",
+            memory_item_id="mem_1",
+            updated_at=datetime(2026, 3, 14, 12, 5, tzinfo=timezone.utc),
+        )
+
+    assert result.changed is False
+    event = next(
+        event for event in _events(caplog) if event["event"] == "chat_memory_lifecycle_completed"
+    )
+    assert event["outcome"] == "noop"
+    exported = get_agent_metrics().render_prometheus()
+    assert (
+        'agent_api_memory_lifecycle_total{outcome="noop",target_status="invalidated"} 1'
+        in exported
+    )
+
+
+def test_memory_lifecycle_service_records_errors_and_reraises(caplog) -> None:
+    repository = _FakeRepository(
+        transition_error=APIError(
+            status_code=404,
+            error_type="not_found",
+            code="memory_item_not_found",
+            message="Memory item not found",
+        )
+    )
+    service = MemoryLifecycleService(repository=repository)
+
+    with caplog.at_level(logging.INFO, logger="agent_api"), pytest.raises(APIError) as exc_info:
+        service.delete_item(
+            request_id="req_memory_delete",
+            memory_item_id="mem_missing",
+            updated_at=datetime(2026, 3, 14, 12, 10, tzinfo=timezone.utc),
+        )
+
+    assert exc_info.value.code == "memory_item_not_found"
+    event = next(
+        event for event in _events(caplog) if event["event"] == "chat_memory_lifecycle_completed"
+    )
+    assert event["outcome"] == "error"
+    assert event["target_status"] == "deleted"
+    assert event["error_code"] == "memory_item_not_found"
+    exported = get_agent_metrics().render_prometheus()
+    assert (
+        'agent_api_memory_lifecycle_total{outcome="error",target_status="deleted"} 1'
+        in exported
+    )

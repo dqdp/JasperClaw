@@ -226,8 +226,11 @@ Current Memory Slice 1 baseline:
 - retrieval uses the latest `user` turn as the semantic query
 - `memory_items` are currently derived only from conservative `user` transcript turns
 - retrieval and memory writes are fail-open relative to the core chat response path
-- all materialized memory is currently written as `active`; lifecycle
-  transitions beyond that state are not yet implemented
+- newly materialized memory is written as `active`
+- explicit transitions to `invalidated` and `deleted` are implemented through an
+  internal lifecycle path
+- automatic expiry and contradiction heuristics remain deferred until the schema
+  can represent them explicitly
 
 ## Anti-patterns
 

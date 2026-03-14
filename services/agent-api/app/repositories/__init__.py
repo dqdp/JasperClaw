@@ -1,6 +1,7 @@
 from app.persistence.models import (
     ChatPersistenceResult,
     ConversationContext,
+    MemoryLifecycleTransitionResult,
     MemoryRetrievalRecord,
     MemorySearchHit,
     PersistedMessage,
@@ -13,6 +14,7 @@ __all__ = [
     "ChatPersistenceResult",
     "ChatRepository",
     "ConversationContext",
+    "MemoryLifecycleTransitionResult",
     "MemoryRetrievalRecord",
     "MemorySearchHit",
     "PostgresChatRepository",

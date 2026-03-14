@@ -155,11 +155,12 @@ Implemented:
 - readiness checks that fail when required migrations are still pending
 - conservative memory extraction/materialization from selected `user` turns
 - retrieval query behavior with explicit audit traces
+- explicit `active -> invalidated -> deleted` lifecycle transitions for memory items
 
 Not yet implemented:
 
 - full canonical schema beyond the current text-path subset
-- retention, invalidation, and deletion rules as runtime behavior
+- automatic retention/expiry behavior and richer invalidation heuristics
 - broader memory extraction strategies beyond the current conservative baseline
 
 ## Legacy scaffold note
