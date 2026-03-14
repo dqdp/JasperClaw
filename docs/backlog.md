@@ -164,7 +164,7 @@ Provide a safe Telegram entry point that uses `agent-api` as the only canonical 
 - TGX-6 is implemented as a deny-by-policy path for Telegram-originated tool actions inside `agent-api`
 - TGX-7 baseline request correlation and audit continuity are implemented across `telegram-ingress` and `agent-api`
 - automated smoke/gating now exists for deterministic Telegram ingress validation, including same-chat continuity checks and durable alert-delivery checks
-- the next Telegram-specific priorities are observability/audit continuity closure and security review completion on top of the current durable retry/dedupe plus escalation baseline
+- the Telegram ingress MVP slice is materially closed in the repository; broader incident-management remains an optional follow-up beyond the current durable retry/dedupe plus escalation baseline
 
 ## Execution rules
 

@@ -33,8 +33,8 @@ cross-cutting areas are only partially closed:
 - structured tracing still stops at request IDs and JSON event logs
 - broader memory expiry and contradiction heuristics remain intentionally
   deferred
-- Telegram alert delivery now has a baseline escalation contract, but broader
-  incident-management plus observability/security closure remain open
+- Telegram ingress hardening baseline is materially closed for MVP; broader
+  incident-management remains an optional follow-up rather than a current blocker
 
 ## Recommended Direction
 
@@ -49,8 +49,8 @@ Rationale:
 - the highest-value next work is narrowing the remaining operability gaps
   exposed after restore, rollback, deploy, and smoke proof landed on the now-real
   stack
-- Telegram observability and security closure are now stronger next candidates
-  than another round of generic release-path proof
+- the immediate next step is a short MVP sign-off and metadata truth pass before
+  choosing another expansion block
 
 ## Phase A: Stabilization
 
@@ -439,7 +439,7 @@ Primary targets:
 
 ## Explicit Non-Priorities Right Now
 
-Do not prioritize these ahead of the remaining Telegram and operability follow-up:
+Do not prioritize these ahead of MVP sign-off and any concrete post-MVP follow-up:
 
 - XTTS or other premium GPU voice profiles
 - streaming TTS
@@ -451,9 +451,8 @@ Do not prioritize these ahead of the remaining Telegram and operability follow-u
 
 Execute in this order:
 
-1. choose the next expansion block now that Phase C is complete, with Telegram
-   observability/security closure the most likely candidate before premium
-   voice or broader tool surfacing
+1. close any remaining metadata truth-pass gaps and then choose the next
+   expansion block instead of inventing another hardening slice by default
 
 ## Change Rule
 
