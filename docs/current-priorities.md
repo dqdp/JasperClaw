@@ -27,24 +27,28 @@ Working vertical slices now include:
 The project is still not fully "done" as a platform because several important
 cross-cutting areas are only partially closed:
 
-- docs and metadata still contain stale placeholder language in some files
-- voice exists as endpoints and runtime slices, but is not yet fully converged
-  into the canonical persistence story
-- STT runtime policy is still valid but not yet ideal for production cold-start
-- ops hardening is incomplete around backup, restore, rollback, and version
-  policy
-- memory lifecycle rules are still incomplete
+- some deploy-facing docs and runbooks still need execution proof, not just
+  written procedures
+- rollback and restore policy exist, but are not yet proven as routine drills
+  against immutable image targets and disposable restore environments
+- structured tracing still stops at request IDs and JSON event logs
+- broader memory expiry and contradiction heuristics remain intentionally
+  deferred
+- Telegram escalation and terminal-failure handling are still behind the current
+  durable alert retry baseline
 
 ## Recommended Direction
 
-The recommended path is `stabilize-first`, not `feature-first`.
+The recommended path remains `stabilize-first`, but the center of gravity has
+shifted.
 
 Rationale:
 
 - the system already has several real slices worth protecting
-- a new feature wave now would increase doc drift and operability debt
-- the highest-value next work is making current behavior honest,
-  deterministic, and easier to run
+- the main remaining risk is no longer missing core functionality, but
+  operational confidence
+- the highest-value next work is proving restore, rollback, and release
+  discipline against the now-real stack before another feature wave
 
 ## Phase A: Stabilization
 
@@ -65,6 +69,13 @@ Phase A is complete only when all of the following are true:
 - backup, restore, and rollback procedures are explicit and testable
 - one canonical smoke flow cleanly covers both `text-only` and `voice-enabled`
   deployment modes
+
+Status on current branch:
+
+- `A1` through `A5` are complete in code and docs
+- `A7` is complete for the canonical smoke flow
+- the remaining meaningful gap is `A6`, where procedures exist but proof is
+  still too document-heavy
 
 ### A1. Truth Pass For Docs And Metadata
 
@@ -253,12 +264,17 @@ Done when:
   ingress
 - the deploy-time smoke contract matches the documented deployment profiles
 
-## Phase B: Next Feature Milestone
+## Phase B: Memory Lifecycle Hardening
 
-After Phase A, the recommended next milestone is `memory lifecycle hardening`.
+This phase was the recommended next milestone after early stabilization, and it
+is now complete on the current schema.
 
-This is a better next move than premium voice or broader tool surface because it
-improves the core assistant state model instead of widening the runtime matrix.
+Why it mattered:
+
+- it improves the core assistant state model instead of widening the runtime
+  matrix
+- it makes retrieval, invalidation, and extraction behavior more testable and
+  operable
 
 ### Phase B Exit Criteria
 
@@ -269,6 +285,13 @@ Phase B is complete only when all of the following are true:
 - extraction behavior is broader than the current conservative baseline without
   clearly degrading memory quality
 - memory debugging no longer depends on ad hoc database inspection
+
+Status on current branch:
+
+- `B1` through `B6` are complete for the current schema-constrained memory
+  model
+- automatic expiry, richer contradiction handling, and more ambitious extraction
+  breadth remain intentionally deferred
 
 ### B1. Define Lifecycle Contract
 
@@ -339,6 +362,66 @@ Primary targets:
 - inspection commands or queries
 - expected signals in logs and metrics
 
+## Phase C: Operational Proof And Release Hardening
+
+With the memory-hardening slice complete, the next repo-level priority should
+shift from feature behavior to operator proof.
+
+### Phase C Exit Criteria
+
+Phase C is complete only when all of the following are true:
+
+- restore has been exercised against a disposable database using current backup
+  artifacts
+- rollback has been exercised against real immutable image targets
+- deploy documentation, smoke gates, and rollback expectations describe one
+  coherent release contract
+- the logs and metrics needed to explain release failures are obvious without
+  code inspection
+
+### C1. Prove Disposable Restore Against The Current Stack
+
+Take the existing backup and restore procedures out of the documentation-only
+state.
+
+Primary targets:
+
+- create a real backup artifact from the current stack
+- restore it into a disposable database
+- record the exact validation checklist and any gaps found
+
+### C2. Validate Rollback Against Immutable Image Versions
+
+Treat rollback as an exercised procedure, not just a documented fallback.
+
+Primary targets:
+
+- pick a known-good immutable image version
+- run a rollback drill against that target
+- verify post-rollback smoke through the canonical runner
+
+### C3. Tighten The Deploy Gate Around Those Proofs
+
+Once restore and rollback are proven manually, align the normal rollout flow
+with those assumptions.
+
+Primary targets:
+
+- make deploy documentation reference proven restore and rollback paths
+- ensure smoke expectations match the actual supported profiles
+- remove any gap between “documented safe rollout” and “tested safe rollout”
+
+### C4. Fill Observability Gaps Found During Release Drills
+
+Do not broaden tracing preemptively. Add only the signals needed to explain real
+release-path failures discovered during `C1` through `C3`.
+
+Primary targets:
+
+- missing release-path logs
+- missing dependency timing or status signals
+- any ambiguity exposed by restore or rollback drills
+
 ## Explicit Non-Priorities Right Now
 
 Do not prioritize these before Phase A is complete:
@@ -353,23 +436,12 @@ Do not prioritize these before Phase A is complete:
 
 Execute in this order:
 
-1. truth pass for docs and metadata
-2. define voice persistence contract
-3. implement voice persistence convergence
-4. fix STT runtime acquisition policy
-5. define voice deployment profiles
-6. define backup scope and procedure
-7. prove restore in a disposable environment
-8. validate rollback against immutable image versions
-9. define runtime pinning and upgrade policy
-10. review deploy gate contract
-11. keep one canonical smoke matrix
-12. define lifecycle contract
-13. implement lifecycle state transitions
-14. add retrieval evaluation fixtures
-15. expand extraction policy carefully
-16. improve memory observability
-17. add operator-facing memory inspection guidance
+1. prove disposable restore against the current stack
+2. validate rollback against immutable image versions
+3. tighten the deploy gate around those proofs
+4. fill observability gaps found during release drills
+5. only then choose the next expansion block, with Telegram escalation the most
+   likely candidate before premium voice or broader tool surfacing
 
 ## Change Rule
 
