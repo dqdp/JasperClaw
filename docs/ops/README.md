@@ -12,3 +12,4 @@ Index:
 - `dashboard-and-alert-rollout.md`: open when defining the first Grafana panels or alert rules for implemented service metrics.
 - `error-semantics.md`: open when mapping internal failures to explicit client-facing errors.
 - `observability.md`: open when changing logs, health checks, readiness, or tracing expectations.
+- `version-policy.md`: open when changing pinned runtime versions, image tags, or upgrade expectations.

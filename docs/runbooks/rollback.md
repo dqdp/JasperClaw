@@ -14,6 +14,8 @@ Because the runtime is containerized, the normal rollback path is:
 2. re-run Compose update
 3. verify smoke checks
 
+Rollback targets must be immutable image versions, not floating tags.
+
 ## Preconditions
 
 - previous known-good version is known
@@ -23,11 +25,25 @@ Because the runtime is containerized, the normal rollback path is:
 ## Standard rollback procedure
 
 1. Identify last known-good version
-2. Update deployment environment to that version
-3. Pull matching images
-4. Recreate containers with previous version
-5. Run smoke checks
-6. Confirm service stability
+2. Restore any rollout-time env changes that were coupled to the failed version
+3. Update deployment environment to the previous immutable `APP_VERSION`
+4. Pull matching images
+5. Recreate containers with the previous version
+6. Run smoke checks
+7. Confirm service stability
+
+Example:
+
+```bash
+export APP_VERSION=<known-good-sha-or-release-tag>
+docker compose pull
+docker compose up -d postgres ollama
+docker compose up -d --remove-orphans agent-api open-webui caddy
+COMPOSE_OVERRIDE_FILE=infra/compose/compose.prod.yml bash infra/scripts/smoke.sh
+```
+
+If voice-related config changed in the failed rollout, restore that profile
+configuration as well before rerunning smoke.
 
 ## Important checks during rollback
 
@@ -35,6 +51,18 @@ Because the runtime is containerized, the normal rollback path is:
 - verify database migrations are backward-compatible or handled safely
 - confirm no incompatible environment change was introduced
 - inspect whether failure came from code, config, or external integration
+- never treat `latest` as a valid rollback target
+
+## Rollback drill expectation
+
+Rollback is not considered operationally valid until it has been rehearsed
+against a real immutable image target.
+
+At minimum, the drill should prove:
+
+- the target image tag still exists in GHCR
+- Compose can pull and start the target images
+- the post-rollback smoke flow passes against that specific target
 
 ## When rollback may not be sufficient
 
@@ -44,6 +72,9 @@ Rollback alone may not solve the problem if:
 - persistent data is already corrupted
 - external credentials changed
 - host-level runtime changed unexpectedly
+
+If rollback is not sufficient because data state must be recovered, switch to
+the backup and restore runbooks instead of retrying image rollback blindly.
 
 ## Success criteria
 
