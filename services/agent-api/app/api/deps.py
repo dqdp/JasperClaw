@@ -6,6 +6,7 @@ from fastapi import Depends
 from app.clients.ollama import OllamaChatClient
 from app.clients.search import WebSearchClient
 from app.clients.spotify import SpotifyClient
+from app.clients.stt import SttClient
 from app.clients.tts import TtsClient
 from app.core.config import Settings, get_settings
 from app.migrations import MigrationRunner
@@ -60,6 +61,17 @@ def get_spotify_client() -> SpotifyClient | None:
         client_secret=settings.spotify_client_secret,
         redirect_uri=settings.spotify_redirect_uri,
         timeout_seconds=settings.spotify_timeout_seconds,
+    )
+
+
+@lru_cache
+def get_stt_client() -> SttClient | None:
+    settings = get_settings()
+    if not settings.stt_base_url:
+        return None
+    return SttClient(
+        base_url=settings.stt_base_url,
+        timeout_seconds=settings.stt_timeout_seconds,
     )
 
 

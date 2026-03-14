@@ -34,6 +34,9 @@ class Settings:
     spotify_search_top_k: int = 3
     model_owner: str = "local-assistant"
     voice_enabled: bool = False
+    stt_base_url: str = "http://stt-service:8080"
+    stt_timeout_seconds: float = 60.0
+    stt_max_file_bytes: int = 26214400
     tts_base_url: str = "http://tts-service:8080"
     tts_default_voice: str = "assistant-default"
     tts_timeout_seconds: float = 30.0
@@ -106,6 +109,12 @@ def get_settings() -> Settings:
         spotify_timeout_seconds=float(os.getenv("SPOTIFY_TIMEOUT_SECONDS", "5")),
         spotify_search_top_k=int(os.getenv("SPOTIFY_SEARCH_TOP_K", "3")),
         voice_enabled=_get_bool_env("VOICE_ENABLED", default=False),
+        stt_base_url=(
+            os.getenv("STT_BASE_URL", "http://stt-service:8080").strip()
+            or "http://stt-service:8080"
+        ),
+        stt_timeout_seconds=float(os.getenv("STT_TIMEOUT_SECONDS", "60")),
+        stt_max_file_bytes=max(int(os.getenv("STT_MAX_FILE_BYTES", "26214400")), 1),
         tts_base_url=(
             os.getenv("TTS_BASE_URL", "http://tts-service:8080").strip()
             or "http://tts-service:8080"

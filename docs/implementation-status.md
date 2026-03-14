@@ -69,7 +69,7 @@ Implemented:
 - retrieval and memory audit persistence through `memory_items`, `retrieval_runs`, and `retrieval_hits`
 - forward-only SQL migration runner for the current canonical text-path schema
 - explicit neutral `platform-db` migration command for applying pending schema changes before service traffic
-- stubbed `POST /v1/audio/transcriptions`
+- buffered `POST /v1/audio/transcriptions` proxy path through `stt-service`
 - buffered `POST /v1/audio/speech` proxy path through `tts-service`
 
 Not yet implemented:
@@ -82,13 +82,15 @@ Not yet implemented:
 
 Implemented:
 
-- service placeholder
+- buffered `POST /transcribe` transcription endpoint
 - health endpoint
+- bounded-concurrency transcription facade
+- `faster-whisper` engine boundary with lazy runtime initialization
 
 Not yet implemented:
 
-- real transcription behavior
-- production contract wiring
+- readiness and runtime observability
+- deploy-gated STT smoke coverage
 
 ### `tts-service`
 
