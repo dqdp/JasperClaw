@@ -3,6 +3,21 @@ from app.core.config import get_settings
 from app.core.errors import APIError
 
 
+class _FakeTranscriptionPersistenceResult:
+    def __init__(self, conversation_id: str) -> None:
+        self.conversation_id = conversation_id
+
+
+class _FakeRepository:
+    def __init__(self, *, conversation_id: str = "conv_audio") -> None:
+        self.conversation_id = conversation_id
+        self.transcription_calls: list[dict[str, object]] = []
+
+    def record_transcription(self, **kwargs):
+        self.transcription_calls.append(kwargs)
+        return _FakeTranscriptionPersistenceResult(self.conversation_id)
+
+
 class _FakeTtsClient:
     def __init__(
         self, *, audio: bytes = b"RIFFagentWAVE", exc: Exception | None = None
@@ -67,7 +82,11 @@ def test_audio_transcriptions_proxies_to_stt_service_as_json(
     get_settings.cache_clear()
     deps.get_stt_client.cache_clear()
     fake_client = _FakeSttClient(transcript="privet mir")
+    fake_repository = _FakeRepository(conversation_id="conv_audio")
     client.app.dependency_overrides[deps.get_stt_client] = lambda: fake_client
+    client.app.dependency_overrides[deps.get_chat_repository] = (
+        lambda: fake_repository
+    )
 
     response = client.post(
         "/v1/audio/transcriptions",
@@ -78,6 +97,7 @@ def test_audio_transcriptions_proxies_to_stt_service_as_json(
 
     assert response.status_code == 200
     assert response.json() == {"text": "privet mir"}
+    assert response.headers["x-conversation-id"] == "conv_audio"
     assert fake_client.calls == [
         {
             "audio_bytes": b"RIFFagentWAVE",
@@ -85,6 +105,10 @@ def test_audio_transcriptions_proxies_to_stt_service_as_json(
             "content_type": "audio/wav",
         }
     ]
+    assert len(fake_repository.transcription_calls) == 1
+    assert fake_repository.transcription_calls[0]["public_model"] == "assistant-v1"
+    assert fake_repository.transcription_calls[0]["conversation_id_hint"] is None
+    assert fake_repository.transcription_calls[0]["transcript"] == "privet mir"
 
 
 def test_audio_transcriptions_supports_text_response_format(
@@ -94,7 +118,11 @@ def test_audio_transcriptions_supports_text_response_format(
     get_settings.cache_clear()
     deps.get_stt_client.cache_clear()
     fake_client = _FakeSttClient(transcript="plain text transcript")
+    fake_repository = _FakeRepository(conversation_id="conv_text")
     client.app.dependency_overrides[deps.get_stt_client] = lambda: fake_client
+    client.app.dependency_overrides[deps.get_chat_repository] = (
+        lambda: fake_repository
+    )
 
     response = client.post(
         "/v1/audio/transcriptions",
@@ -105,7 +133,37 @@ def test_audio_transcriptions_supports_text_response_format(
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
+    assert response.headers["x-conversation-id"] == "conv_text"
     assert response.text == "plain text transcript"
+
+
+def test_audio_transcriptions_forwards_conversation_hint_to_persistence(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    get_settings.cache_clear()
+    deps.get_stt_client.cache_clear()
+    fake_client = _FakeSttClient(transcript="continued transcript")
+    fake_repository = _FakeRepository(conversation_id="conv_existing")
+    client.app.dependency_overrides[deps.get_stt_client] = lambda: fake_client
+    client.app.dependency_overrides[deps.get_chat_repository] = (
+        lambda: fake_repository
+    )
+
+    response = client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("clip.wav", b"RIFFagentWAVE", "audio/wav")},
+        data={"model": "whisper-1"},
+        headers={**auth_headers, "X-Conversation-ID": "conv_existing"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["x-conversation-id"] == "conv_existing"
+    assert len(fake_repository.transcription_calls) == 1
+    assert (
+        fake_repository.transcription_calls[0]["conversation_id_hint"]
+        == "conv_existing"
+    )
 
 
 def test_audio_transcriptions_rejects_unsupported_public_model(
@@ -150,6 +208,7 @@ def test_audio_transcriptions_maps_dependency_timeout(
     monkeypatch.setenv("VOICE_ENABLED", "true")
     get_settings.cache_clear()
     deps.get_stt_client.cache_clear()
+    fake_repository = _FakeRepository()
     fake_client = _FakeSttClient(
         exc=APIError(
             status_code=504,
@@ -159,6 +218,9 @@ def test_audio_transcriptions_maps_dependency_timeout(
         )
     )
     client.app.dependency_overrides[deps.get_stt_client] = lambda: fake_client
+    client.app.dependency_overrides[deps.get_chat_repository] = (
+        lambda: fake_repository
+    )
 
     response = client.post(
         "/v1/audio/transcriptions",
@@ -170,6 +232,7 @@ def test_audio_transcriptions_maps_dependency_timeout(
     assert response.status_code == 504
     assert response.json()["error"]["type"] == "dependency_unavailable"
     assert response.json()["error"]["code"] == "dependency_timeout"
+    assert fake_repository.transcription_calls == []
 
 
 def test_audio_speech_returns_voice_not_enabled_by_default(

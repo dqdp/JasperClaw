@@ -4,6 +4,7 @@ from app.persistence.models import (
     MemoryRetrievalRecord,
     MemorySearchHit,
     PersistedMessage,
+    TranscriptionPersistenceResult,
     ToolExecutionRecord,
 )
 from app.repositories.postgres import ChatRepository, PostgresChatRepository
@@ -16,5 +17,6 @@ __all__ = [
     "MemorySearchHit",
     "PostgresChatRepository",
     "PersistedMessage",
+    "TranscriptionPersistenceResult",
     "ToolExecutionRecord",
 ]

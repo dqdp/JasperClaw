@@ -13,6 +13,30 @@ from app.main import app
 from app.repositories import PostgresChatRepository
 
 
+class _TranscribingSttClient:
+    def __init__(self, transcripts: list[str]) -> None:
+        self._transcripts = list(transcripts)
+        self.calls: list[dict[str, object]] = []
+
+    def transcribe(
+        self,
+        *,
+        audio_bytes: bytes,
+        filename: str,
+        content_type: str | None,
+    ) -> str:
+        self.calls.append(
+            {
+                "audio_bytes": audio_bytes,
+                "filename": filename,
+                "content_type": content_type,
+            }
+        )
+        if not self._transcripts:
+            raise AssertionError("Unexpected extra transcription request")
+        return self._transcripts.pop(0)
+
+
 class _InMemoryTransaction:
     def __enter__(self):
         return self
@@ -635,6 +659,92 @@ def test_non_streaming_client_binding_continues_same_conversation(
         "Second message",
     ]
     assert len(connection.model_runs) == 2
+
+
+def test_audio_transcription_flow_persists_canonical_user_message(
+    monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    get_settings.cache_clear()
+    connection = _InMemoryConnection()
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    stt_client = _TranscribingSttClient(["Privet mir"])
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_stt_client] = lambda: stt_client
+
+    response = client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("clip.wav", b"RIFFagentWAVE", "audio/wav")},
+        data={"model": "whisper-1"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"text": "Privet mir"}
+    assert response.headers["x-conversation-id"]
+    assert len(connection.conversations) == 1
+    assert len(connection.messages) == 1
+    assert connection.messages[0]["role"] == "user"
+    assert connection.messages[0]["content"] == "Privet mir"
+    assert connection.messages[0]["source"] == "audio_transcription"
+    assert connection.messages[0]["message_index"] == 0
+
+
+def test_audio_transcription_flow_appends_to_existing_conversation(
+    monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    get_settings.cache_clear()
+    connection = _InMemoryConnection()
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    stt_client = _TranscribingSttClient(["First transcript", "Second transcript"])
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_stt_client] = lambda: stt_client
+
+    first_response = client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("clip.wav", b"RIFFagentWAVE", "audio/wav")},
+        data={"model": "whisper-1"},
+        headers=auth_headers,
+    )
+    second_response = client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("clip.wav", b"RIFFagentWAVE", "audio/wav")},
+        data={"model": "whisper-1"},
+        headers={
+            **auth_headers,
+            "X-Conversation-ID": first_response.headers["x-conversation-id"],
+        },
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert (
+        first_response.headers["x-conversation-id"]
+        == second_response.headers["x-conversation-id"]
+    )
+    assert len(connection.conversations) == 1
+    assert len(connection.messages) == 2
+    assert [message["content"] for message in connection.messages] == [
+        "First transcript",
+        "Second transcript",
+    ]
+    assert [message["message_index"] for message in connection.messages] == [0, 1]
+    assert all(message["source"] == "audio_transcription" for message in connection.messages)
 
 
 def test_streaming_chat_flow_persists_failure_without_done_sentinel(

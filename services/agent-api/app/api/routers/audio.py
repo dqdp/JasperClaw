@@ -1,14 +1,21 @@
+from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from app.api.deps import get_app_settings, get_stt_client, get_tts_client
+from app.api.deps import (
+    get_app_settings,
+    get_chat_repository,
+    get_stt_client,
+    get_tts_client,
+)
 from app.clients.stt import SttClient
 from app.clients.tts import TtsClient
 from app.core.config import Settings
 from app.core.errors import APIError
+from app.repositories import ChatRepository
 
 router = APIRouter()
 _SUPPORTED_TRANSCRIPTION_RESPONSE_FORMATS = frozenset({"json", "text"})
@@ -23,11 +30,13 @@ class SpeechRequest(BaseModel):
 
 @router.post("/v1/audio/transcriptions")
 async def audio_transcriptions(
+    request: Request,
     file: UploadFile = File(...),
     model: str = Form(_SUPPORTED_TRANSCRIPTION_MODEL),
     response_format: str = Form("json"),
     settings: Annotated[Settings, Depends(get_app_settings)] = None,
     stt_client: Annotated[SttClient | None, Depends(get_stt_client)] = None,
+    repository: Annotated[ChatRepository, Depends(get_chat_repository)] = None,
 ):
     if not settings.voice_enabled:
         raise APIError(
@@ -83,9 +92,16 @@ async def audio_transcriptions(
         filename=file.filename or "upload.bin",
         content_type=file.content_type,
     )
+    persistence = repository.record_transcription(
+        public_model=settings.default_public_profile,
+        conversation_id_hint=request.headers.get("X-Conversation-ID"),
+        transcript=transcript,
+        created_at=datetime.now(timezone.utc),
+    )
+    headers = {"X-Conversation-ID": persistence.conversation_id}
     if normalized_response_format == "text":
-        return Response(content=transcript, media_type="text/plain")
-    return {"text": transcript}
+        return Response(content=transcript, media_type="text/plain", headers=headers)
+    return JSONResponse(content={"text": transcript}, headers=headers)
 
 
 @router.post("/v1/audio/speech")

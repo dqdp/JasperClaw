@@ -56,6 +56,12 @@ class ChatPersistenceResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TranscriptionPersistenceResult:
+    conversation_id: str
+    persisted_message: PersistedMessage
+
+
+@dataclass(frozen=True, slots=True)
 class TranscriptMessage:
     role: str
     content: str

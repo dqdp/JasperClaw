@@ -100,6 +100,76 @@ class PostgresConversationRepository:
             conversation_created=True,
         )
 
+    def resolve_append_target(
+        self,
+        conn: psycopg.Connection,
+        *,
+        public_model: str,
+        conversation_id_hint: str | None,
+        client_source: str | None,
+        client_conversation_id: str | None,
+        created_at: datetime,
+    ) -> ConversationContext:
+        bound_context = None
+        if client_source and client_conversation_id:
+            bound_context = self._resolve_client_conversation_binding(
+                conn,
+                client_source=client_source,
+                client_conversation_id=client_conversation_id,
+                public_model=public_model,
+            )
+
+        if bound_context is not None:
+            if (
+                conversation_id_hint is not None
+                and bound_context.conversation_id != conversation_id_hint
+            ):
+                raise APIError(
+                    status_code=409,
+                    error_type="validation_error",
+                    code="conversation_mismatch",
+                    message="Client conversation binding conflicts with canonical hint",
+                )
+            return bound_context
+
+        if conversation_id_hint:
+            context = self._resolve_explicit_append_conversation(
+                conn,
+                conversation_id_hint=conversation_id_hint,
+                public_model=public_model,
+            )
+            if context is not None:
+                return context
+            raise APIError(
+                status_code=409,
+                error_type="validation_error",
+                code="conversation_mismatch",
+                message="Conversation hint does not match the persisted conversation",
+            )
+
+        if client_source and client_conversation_id:
+            return self._create_client_bound_conversation(
+                conn,
+                client_source=client_source,
+                client_conversation_id=client_conversation_id,
+                public_model=public_model,
+                created_at=created_at,
+            )
+
+        conversation_id = self._new_id("conv")
+        self._insert_conversation(
+            conn,
+            conversation_id=conversation_id,
+            public_model=public_model,
+            created_at=created_at,
+        )
+        return ConversationContext(
+            conversation_id=conversation_id,
+            existing_message_count=0,
+            matched_request_message_count=0,
+            conversation_created=True,
+        )
+
     def touch_conversation(
         self,
         conn: psycopg.Connection,
@@ -147,6 +217,34 @@ class PostgresConversationRepository:
             conversation_id=row[0],
             existing_message_count=prefix_length,
             matched_request_message_count=prefix_length,
+            conversation_created=False,
+        )
+
+    def _resolve_explicit_append_conversation(
+        self,
+        conn: psycopg.Connection,
+        *,
+        conversation_id_hint: str,
+        public_model: str,
+    ) -> ConversationContext | None:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM conversations
+                WHERE id = %s AND public_profile = %s
+                """,
+                (conversation_id_hint, public_model),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+
+        transcript = self._transcript_repository.load_transcript(conn, row[0])
+        return ConversationContext(
+            conversation_id=row[0],
+            existing_message_count=len(transcript),
+            matched_request_message_count=0,
             conversation_created=False,
         )
 

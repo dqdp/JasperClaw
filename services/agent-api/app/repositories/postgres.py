@@ -17,6 +17,7 @@ from app.persistence.models import (
     MemoryRetrievalRecord,
     MemorySearchHit,
     PersistedMessage,
+    TranscriptionPersistenceResult,
     ToolExecutionRecord,
     TranscriptMessage,
 )
@@ -69,6 +70,15 @@ class ChatRepository(Protocol):
         started_at: datetime,
         completed_at: datetime,
     ) -> ChatPersistenceResult: ...
+
+    def record_transcription(
+        self,
+        *,
+        public_model: str,
+        conversation_id_hint: str | None,
+        transcript: str,
+        created_at: datetime,
+    ) -> TranscriptionPersistenceResult: ...
 
     def retrieve_memory(
         self,
@@ -285,6 +295,47 @@ class PostgresChatRepository:
                 assistant_message_id=None,
                 model_run_id=model_run_id,
                 persisted_messages=tuple(request_persisted_messages),
+            )
+
+        return self._execute(write)
+
+    def record_transcription(
+        self,
+        *,
+        public_model: str,
+        conversation_id_hint: str | None,
+        transcript: str,
+        created_at: datetime,
+    ) -> TranscriptionPersistenceResult:
+        persisted_at = created_at.astimezone(timezone.utc)
+
+        def write(conn: psycopg.Connection) -> TranscriptionPersistenceResult:
+            context = self._conversation_repository.resolve_append_target(
+                conn,
+                public_model=public_model,
+                conversation_id_hint=conversation_id_hint,
+                client_source=None,
+                client_conversation_id=None,
+                created_at=persisted_at,
+            )
+            persisted_message = self._transcript_repository.insert_message(
+                conn,
+                message_id=self._new_id("msg"),
+                conversation_id=context.conversation_id,
+                message_index=context.existing_message_count,
+                role="user",
+                content=transcript,
+                source="audio_transcription",
+                created_at=persisted_at,
+            )
+            self._conversation_repository.touch_conversation(
+                conn,
+                conversation_id=context.conversation_id,
+                updated_at=persisted_at,
+            )
+            return TranscriptionPersistenceResult(
+                conversation_id=context.conversation_id,
+                persisted_message=persisted_message,
             )
 
         return self._execute(write)

@@ -45,6 +45,10 @@ class Settings:
     def public_profiles(self) -> tuple[str, str]:
         return ("assistant-v1", "assistant-fast")
 
+    @property
+    def default_public_profile(self) -> str:
+        return self.public_profiles[0]
+
     def is_spotify_client_configured(self) -> bool:
         return bool(
             self.spotify_access_token
