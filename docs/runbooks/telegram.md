@@ -227,6 +227,13 @@ curl -s -X POST \
 - automated CI/local deterministic smoke:
   - `python infra/scripts/smoke-telegram-ingress.py`
   - expected environment: `telegram-ingress` + `agent-api` + fake model runtime + stubbed Telegram API
+- canonical deploy integration:
+  - `bash infra/scripts/smoke.sh` runs the Telegram smoke runner only when
+    `TELEGRAM_SMOKE_*` inputs are configured for that environment
+  - this is intended for deterministic smoke stacks, not for the default
+    production rollout against the live Telegram network
+  - without those deterministic inputs, production deploys rely on CI smoke plus
+    the manual checks below
 - `telegram-ingress` `GET /healthz` -> 200.
 - отправить сообщение боту в пользовательском чате -> ответный message от бота.
 - отправить второе сообщение в том же чате -> успешное продолжение того же backend conversation path.

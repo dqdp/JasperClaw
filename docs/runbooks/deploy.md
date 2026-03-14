@@ -85,6 +85,19 @@ Minimum checks after rollout:
 - voice path succeeds if enabled
 - tool path succeeds for at least one safe tool
 
+Telegram ingress gating contract:
+
+- deterministic Telegram smoke is mandatory in CI and in dedicated smoke stacks
+  that provide `telegram-fake` or equivalent stubbed downstreams
+- the canonical deploy smoke runner invokes `infra/scripts/smoke-telegram-ingress.py`
+  only when the `TELEGRAM_SMOKE_*` inputs are explicitly configured in that
+  environment
+- the default production rollout does not block on a live Telegram round-trip
+  unless the operator deliberately provisions those deterministic smoke inputs
+- for ordinary production rollouts without deterministic Telegram smoke inputs,
+  rely on the CI gate plus the higher-fidelity manual checks in
+  `docs/runbooks/telegram.md`
+
 ## Failure handling
 
 If smoke tests fail:

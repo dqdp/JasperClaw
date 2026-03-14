@@ -58,6 +58,16 @@ When Telegram smoke inputs are configured, the automated baseline may also run:
 That check is intended for deterministic environments with stubbed downstream dependencies, such as CI or dedicated smoke stacks.
 The CI smoke stack uses `ollama-fake` for model runtime calls and `telegram-fake` for Telegram delivery.
 
+Telegram gating contract:
+
+- deterministic Telegram smoke is part of the mandatory CI baseline
+- the canonical deploy smoke runner executes Telegram smoke only when
+  `TELEGRAM_SMOKE_*` inputs are explicitly configured for that environment
+- the default production deploy path does not assume a stubbed Telegram backend
+  and therefore does not require Telegram smoke by default
+- manual production Telegram checks remain the higher-fidelity follow-up when
+  deterministic smoke inputs are absent
+
 Current CI baseline:
 
 - `smoke-model` validates the text path and deterministic Telegram smoke
