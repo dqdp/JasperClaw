@@ -2,6 +2,8 @@ from typing import Protocol
 
 
 class SttEngine(Protocol):
+    def validate_runtime(self) -> None: ...
+
     def transcribe(
         self,
         *,

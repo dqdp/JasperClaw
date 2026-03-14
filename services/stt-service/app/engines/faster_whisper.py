@@ -50,6 +50,9 @@ class FasterWhisperEngine(SttEngine):
 
             return self._model
 
+    def validate_runtime(self) -> None:
+        _ = self._load_model()
+
     def transcribe(
         self,
         *,

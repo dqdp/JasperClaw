@@ -1057,6 +1057,67 @@ Purpose:
 
 - default speech-to-text model selection
 
+### `STT_DEVICE`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `stt-service`
+
+Purpose:
+
+- `faster-whisper` device selection, for example `cpu` or `cuda`
+
+### `STT_COMPUTE_TYPE`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `stt-service`
+
+Purpose:
+
+- `faster-whisper` compute profile, for example `int8` or `float16`
+
+### `STT_TIMEOUT_SECONDS`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `agent-api`
+
+Purpose:
+
+- request timeout for downstream `stt-service` calls
+
+### `STT_MAX_FILE_BYTES`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `agent-api`
+- `stt-service`
+
+Purpose:
+
+- maximum accepted audio upload size for the transcription path
+
+### `STT_MAX_CONCURRENCY`
+
+Required: no until voice is enabled
+
+Used by:
+
+- `stt-service`
+
+Purpose:
+
+- bounded number of in-flight transcription jobs per service instance
+
 ### `TTS_BASE_URL`
 
 Required: no until voice is enabled
@@ -1076,11 +1137,12 @@ Required: no
 Used by:
 
 - `agent-api`
+- `stt-service`
 - `tts-service`
 
 Purpose:
 
-- explicit gate for the voice path in both the public ingress and internal TTS runtime
+- explicit gate for the voice path in the public ingress and internal voice runtimes
 
 ### `TTS_DEFAULT_VOICE`
 

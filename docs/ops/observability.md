@@ -122,12 +122,18 @@ If metrics are added in v1, start with:
 Current implemented baseline:
 
 - `agent-api` exposes `GET /metrics` with Prometheus-compatible text output
+- `stt-service` exposes `GET /metrics` with first-wave request, transcription, and readiness series
 - `tts-service` exposes `GET /metrics` with first-wave request, synthesis, and readiness series
 - implemented first-wave series currently cover:
   - `agent_api_http_request_total`
   - `agent_api_http_request_duration_seconds`
   - `agent_api_chat_runtime_total`
   - `agent_api_chat_runtime_duration_seconds`
+  - `stt_service_http_request_total`
+  - `stt_service_http_request_duration_seconds`
+  - `stt_service_transcription_total`
+  - `stt_service_transcription_duration_seconds`
+  - `stt_service_readiness_total`
   - `agent_api_chat_storage_total`
   - `agent_api_tool_execution_total`
   - `agent_api_tool_audit_total`

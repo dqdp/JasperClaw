@@ -21,6 +21,7 @@ def test_main_passes_without_voice_check(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("SMOKE_BASE_URL", "http://127.0.0.1:18080")
     monkeypatch.setenv("SMOKE_INTERNAL_OPENAI_API_KEY", "smoke-key")
     monkeypatch.delenv("SMOKE_CHECK_VOICE", raising=False)
+    monkeypatch.delenv("SMOKE_CHECK_STT", raising=False)
 
     wait_payloads = iter(
         [
@@ -62,9 +63,16 @@ def test_main_passes_without_voice_check(monkeypatch: pytest.MonkeyPatch) -> Non
         _ = (args, kwargs)
         raise AssertionError("voice check should not run in text-only smoke")
 
+    def unexpected_request_multipart_bytes(*args, **kwargs):
+        _ = (args, kwargs)
+        raise AssertionError("stt check should not run in text-only smoke")
+
     monkeypatch.setattr(module, "_request_json", fake_request_json)
     monkeypatch.setattr(module, "_wait_for_success", fake_wait_for_success)
     monkeypatch.setattr(module, "_request_bytes", unexpected_request_bytes)
+    monkeypatch.setattr(
+        module, "_request_multipart_bytes", unexpected_request_multipart_bytes
+    )
 
     assert module.main() == 0
 
@@ -74,6 +82,7 @@ def test_main_checks_voice_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("SMOKE_BASE_URL", "http://127.0.0.1:18080")
     monkeypatch.setenv("SMOKE_INTERNAL_OPENAI_API_KEY", "smoke-key")
     monkeypatch.setenv("SMOKE_CHECK_VOICE", "true")
+    monkeypatch.delenv("SMOKE_CHECK_STT", raising=False)
     monkeypatch.setenv("SMOKE_TTS_VOICE", "assistant-fast")
 
     wait_payloads = iter(
@@ -135,6 +144,80 @@ def test_main_checks_voice_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None
             },
         }
     ]
+
+
+def test_main_checks_stt_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _load_smoke_module()
+    monkeypatch.setenv("SMOKE_BASE_URL", "http://127.0.0.1:18080")
+    monkeypatch.setenv("SMOKE_INTERNAL_OPENAI_API_KEY", "smoke-key")
+    monkeypatch.delenv("SMOKE_CHECK_VOICE", raising=False)
+    monkeypatch.setenv("SMOKE_CHECK_STT", "true")
+
+    wait_payloads = iter(
+        [
+            (
+                200,
+                {
+                    "data": [
+                        {"id": "assistant-v1"},
+                        {"id": "assistant-fast"},
+                    ]
+                },
+            ),
+            (
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "ok",
+                            }
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+    multipart_calls: list[dict[str, object]] = []
+
+    def fake_request_json(url: str, **kwargs):
+        _ = kwargs
+        if url.endswith("/readyz"):
+            return 200, {"status": "ready"}
+        raise AssertionError(f"unexpected direct JSON request: {url}")
+
+    def fake_wait_for_success(**kwargs):
+        _ = kwargs
+        return next(wait_payloads)
+
+    def unexpected_request_bytes(*args, **kwargs):
+        _ = (args, kwargs)
+        raise AssertionError("voice synthesis check should not run")
+
+    def fake_request_multipart_bytes(url: str, **kwargs):
+        multipart_calls.append({"url": url, "kwargs": kwargs})
+        return 200, b'{"text":"Hello."}', "application/json"
+
+    monkeypatch.setattr(module, "_request_json", fake_request_json)
+    monkeypatch.setattr(module, "_wait_for_success", fake_wait_for_success)
+    monkeypatch.setattr(module, "_request_bytes", unexpected_request_bytes)
+    monkeypatch.setattr(
+        module, "_request_multipart_bytes", fake_request_multipart_bytes
+    )
+
+    assert module.main() == 0
+    assert len(multipart_calls) == 1
+    call = multipart_calls[0]
+    assert call["url"] == "http://127.0.0.1:18080/v1/audio/transcriptions"
+    assert call["kwargs"]["headers"] == {"Authorization": "Bearer smoke-key"}
+    assert call["kwargs"]["fields"] == {"model": "whisper-1"}
+    assert call["kwargs"]["file_field_name"] == "file"
+    assert call["kwargs"]["file_name"] == "smoke-hello.wav"
+    assert call["kwargs"]["file_content_type"] == "audio/wav"
+    file_bytes = call["kwargs"]["file_bytes"]
+    assert isinstance(file_bytes, bytes)
+    assert file_bytes.startswith(b"RIFF")
+    assert len(file_bytes) > 16000
 
 
 def test_main_rejects_missing_public_profiles(

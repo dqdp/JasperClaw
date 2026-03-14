@@ -25,11 +25,14 @@ def _get_bool_env(name: str, default: bool = False) -> bool:
 
 @lru_cache
 def get_settings() -> Settings:
+    model = os.getenv("STT_MODEL")
+    device = os.getenv("STT_DEVICE")
+    compute_type = os.getenv("STT_COMPUTE_TYPE")
     return Settings(
         voice_enabled=_get_bool_env("VOICE_ENABLED", default=False),
-        stt_model=(os.getenv("STT_MODEL", "large-v3") or "large-v3").strip(),
-        stt_device=(os.getenv("STT_DEVICE", "cpu") or "cpu").strip(),
-        stt_compute_type=(os.getenv("STT_COMPUTE_TYPE", "int8") or "int8").strip(),
+        stt_model="large-v3" if model is None else model.strip(),
+        stt_device="cpu" if device is None else device.strip(),
+        stt_compute_type="int8" if compute_type is None else compute_type.strip(),
         stt_max_file_bytes=max(int(os.getenv("STT_MAX_FILE_BYTES", "26214400")), 1),
         stt_max_concurrency=max(int(os.getenv("STT_MAX_CONCURRENCY", "1")), 1),
     )

@@ -13,3 +13,9 @@ Index:
 - `requirements.txt`: open when changing runtime Python dependencies.
 - `app/`: open when changing the FastAPI service, engine boundary, or settings.
 - `tests/`: open when changing the transcription contract or liveness coverage.
+
+Current baseline:
+- `POST /transcribe`
+- `GET /healthz`
+- `GET /readyz`
+- `GET /metrics`

@@ -83,14 +83,15 @@ Not yet implemented:
 Implemented:
 
 - buffered `POST /transcribe` transcription endpoint
-- health endpoint
+- `GET /healthz`, `GET /readyz`, and `GET /metrics`
 - bounded-concurrency transcription facade
 - `faster-whisper` engine boundary with lazy runtime initialization
+- readiness that preloads the active STT runtime before serving traffic
+- structured request logging and first-wave transcription/readiness metrics
 
 Not yet implemented:
 
-- readiness and runtime observability
-- deploy-gated STT smoke coverage
+- premium GPU-backed STT profile
 
 ### `tts-service`
 

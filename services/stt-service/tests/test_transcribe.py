@@ -11,6 +11,9 @@ class _FakeEngine:
         self.exc = exc
         self.calls: list[dict[str, object]] = []
 
+    def validate_runtime(self) -> None:
+        return None
+
     def transcribe(
         self,
         *,
