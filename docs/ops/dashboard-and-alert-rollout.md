@@ -123,11 +123,13 @@ Panels:
 - `telegram_alert_delivery_target_attempt_persist_failed_total`
 - `telegram_alert_delivery_finalize_total` by `status`
 - `telegram_alert_delivery_finalize_failed_total`
+- `telegram_alert_delivery_escalated_total` by `reason`
 
 Interpretation:
 
 - `claim_total{origin="stale_reclaim"}` reflects recovery pressure after claim expiry
 - `target_attempt_total{status="pending",error_class="http_429"}` reflects Telegram backpressure
+- `escalated_total{reason="terminal_target_failure|retry_exhausted|delivery_failed"}` reflects deliveries that have crossed the bounded retry baseline and now require operator attention
 - finalize or persist failures point to durability-boundary problems rather than pure transport issues
 
 ## Alert rules
@@ -146,6 +148,7 @@ Enable alerts in two stages.
 
 - sustained increase of `telegram_alert_delivery_finalize_failed_total`
 - sustained increase of `telegram_alert_delivery_target_attempt_persist_failed_total`
+- sustained increase of `telegram_alert_delivery_escalated_total` via `TelegramAlertDeliveryEscalated`
 
 ### Stage 2: warning alerts
 

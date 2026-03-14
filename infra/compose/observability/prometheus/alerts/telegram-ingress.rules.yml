@@ -21,6 +21,16 @@ groups:
           summary: telegram alert delivery target persistence is failing
           description: alert delivery target attempt persistence failures have occurred in the last 10 minutes.
 
+      - alert: TelegramAlertDeliveryEscalated
+        expr: sum by (reason) (increase(telegram_alert_delivery_escalated_total[10m])) > 0
+        for: 10m
+        labels:
+          severity: critical
+          service: telegram-ingress
+        annotations:
+          summary: telegram alert delivery has escalated
+          description: alert delivery escalations have occurred in the last 10 minutes for reason={{ $labels.reason }}.
+
   - name: telegram-ingress-warning
     rules:
       - alert: TelegramAlertDeliveryStaleReclaimRatioHigh
