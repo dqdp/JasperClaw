@@ -106,7 +106,7 @@ def _settings(**overrides: object) -> Settings:
     return Settings(**base)
 
 
-def test_memory_service_augments_prompt_with_retrieved_memory() -> None:
+def test_memory_service_augments_prompt_with_retrieved_memory(caplog) -> None:
     repository = _FakeRepository(
         hits=[
             MemorySearchHit(
@@ -128,13 +128,19 @@ def test_memory_service_augments_prompt_with_retrieved_memory() -> None:
         messages=[ChatMessage(role="user", content="Tell me about my preferences")],
     )
 
-    context = service.prepare_context(request_id="req_1", request=request)
+    with caplog.at_level(logging.INFO, logger="agent_api"):
+        context = service.prepare_context(request_id="req_1", request=request)
 
     assert isinstance(context, MemoryContext)
     assert context.retrieval is not None
     assert context.retrieval.status == "completed"
     assert "Relevant memory from prior conversations" in context.runtime_messages[0].content
     assert repository.retrieve_calls[0]["limit"] == 3
+    event = next(
+        event for event in _events(caplog) if event["event"] == "chat_memory_retrieval_completed"
+    )
+    assert event["retrieval_hit_ids"] == ["mem_1"]
+    assert event["retrieval_hit_scores"] == [0.92]
     exported = get_agent_metrics().render_prometheus()
     assert 'agent_api_memory_retrieval_total{outcome="success"} 1' in exported
     assert "agent_api_memory_retrieval_hits_total 1" in exported
@@ -195,7 +201,7 @@ def test_memory_service_marks_retrieval_as_skipped_when_memory_is_disabled() -> 
     assert 'agent_api_memory_retrieval_total{outcome="skipped"} 1' in exported
 
 
-def test_memory_service_stores_only_candidate_messages() -> None:
+def test_memory_service_stores_only_candidate_messages(caplog) -> None:
     repository = _FakeRepository()
     service = MemoryService(
         settings=_settings(),
@@ -232,17 +238,40 @@ def test_memory_service_stores_only_candidate_messages() -> None:
         ),
     )
 
-    service.store_items(
-        request_id="req_3",
-        conversation_id="conv_1",
-        persistence=persistence,
-        created_at=datetime.now(timezone.utc),
-    )
+    with caplog.at_level(logging.INFO, logger="agent_api"):
+        service.store_items(
+            request_id="req_3",
+            conversation_id="conv_1",
+            persistence=persistence,
+            created_at=datetime.now(timezone.utc),
+        )
 
     assert len(repository.store_memory_calls) == 1
     stored_messages = repository.store_memory_calls[0]["messages"]
     assert tuple(message.message_id for message in stored_messages) == ("msg_long",)
+    candidate_event = next(
+        event
+        for event in _events(caplog)
+        if event["event"] == "chat_memory_candidate_evaluation_completed"
+    )
+    assert candidate_event["accepted_message_ids"] == ["msg_long"]
+    assert candidate_event["skip_reason_counts"] == {
+        "no_durable_signal": 1,
+        "question": 1,
+    }
     exported = get_agent_metrics().render_prometheus()
+    assert (
+        'agent_api_memory_candidate_total{decision="accepted",reason="durable_signal"} 1'
+        in exported
+    )
+    assert (
+        'agent_api_memory_candidate_total{decision="skipped",reason="no_durable_signal"} 1'
+        in exported
+    )
+    assert (
+        'agent_api_memory_candidate_total{decision="skipped",reason="question"} 1'
+        in exported
+    )
     assert 'agent_api_memory_materialization_total{outcome="success"} 1' in exported
     assert (
         'agent_api_memory_embedding_total{outcome="success",phase="store"} 1'
@@ -283,7 +312,7 @@ def test_memory_service_records_retrieval_when_conversation_is_present() -> None
     assert 'agent_api_memory_audit_total{outcome="success"} 1' in exported
 
 
-def test_memory_service_skips_materialization_without_candidates() -> None:
+def test_memory_service_skips_materialization_without_candidates(caplog) -> None:
     repository = _FakeRepository()
     service = MemoryService(
         settings=_settings(),
@@ -313,15 +342,42 @@ def test_memory_service_skips_materialization_without_candidates() -> None:
         ),
     )
 
-    service.store_items(
-        request_id="req_skip_store",
-        conversation_id="conv_1",
-        persistence=persistence,
-        created_at=datetime.now(timezone.utc),
-    )
+    with caplog.at_level(logging.INFO, logger="agent_api"):
+        service.store_items(
+            request_id="req_skip_store",
+            conversation_id="conv_1",
+            persistence=persistence,
+            created_at=datetime.now(timezone.utc),
+        )
 
     assert repository.store_memory_calls == []
+    events = _events(caplog)
+    candidate_event = next(
+        event
+        for event in events
+        if event["event"] == "chat_memory_candidate_evaluation_completed"
+    )
+    assert candidate_event["accepted_message_ids"] == []
+    assert candidate_event["skip_reason_counts"] == {
+        "no_durable_signal": 1,
+        "question": 1,
+    }
+    materialization_event = next(
+        event
+        for event in events
+        if event["event"] == "chat_memory_materialization_completed"
+    )
+    assert materialization_event["outcome"] == "skipped"
+    assert materialization_event["skip_reason"] == "no_candidates"
     exported = get_agent_metrics().render_prometheus()
+    assert (
+        'agent_api_memory_candidate_total{decision="skipped",reason="no_durable_signal"} 1'
+        in exported
+    )
+    assert (
+        'agent_api_memory_candidate_total{decision="skipped",reason="question"} 1'
+        in exported
+    )
     assert 'agent_api_memory_materialization_total{outcome="skipped"} 1' in exported
 
 

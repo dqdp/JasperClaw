@@ -44,6 +44,13 @@ class MemoryContext:
     retrieval: MemoryRetrievalRecord | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _MemoryCandidateDecision:
+    message: PersistedMessage
+    accepted: bool
+    reason: str
+
+
 class MemoryService:
     """Owns memory retrieval, audit recording, and materialization."""
 
@@ -209,15 +216,38 @@ class MemoryService:
         created_at: datetime,
     ) -> None:
         if not self._settings.memory_enabled or not self._settings.ollama_embed_model:
+            log_event(
+                "chat_memory_materialization_completed",
+                request_id=request_id,
+                outcome="skipped",
+                conversation_id=conversation_id,
+                skip_reason="memory_disabled",
+            )
             get_agent_metrics().record_memory_materialization(outcome="skipped")
             return
 
-        candidate_messages = tuple(
-            message
+        candidate_decisions = tuple(
+            self._evaluate_memory_candidate(message)
             for message in persistence.persisted_messages
-            if self._is_memory_candidate(message)
+        )
+        candidate_messages = tuple(
+            decision.message
+            for decision in candidate_decisions
+            if decision.accepted
+        )
+        self._log_candidate_evaluation(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            candidate_decisions=candidate_decisions,
         )
         if not candidate_messages:
+            log_event(
+                "chat_memory_materialization_completed",
+                request_id=request_id,
+                outcome="skipped",
+                conversation_id=conversation_id,
+                skip_reason="no_candidates",
+            )
             get_agent_metrics().record_memory_materialization(outcome="skipped")
             return
 
@@ -311,6 +341,8 @@ class MemoryService:
             retrieval_status=retrieval.status,
             duration_ms=retrieval.latency_ms,
             retrieval_hit_count=len(retrieval.hits),
+            retrieval_hit_ids=[hit.memory_item_id for hit in retrieval.hits],
+            retrieval_hit_scores=[round(hit.score, 4) for hit in retrieval.hits],
             error_type=retrieval.error_type,
             error_code=retrieval.error_code,
         )
@@ -328,14 +360,66 @@ class MemoryService:
             )
         return embeddings[0]
 
-    def _is_memory_candidate(self, message: PersistedMessage) -> bool:
+    def _evaluate_memory_candidate(
+        self,
+        message: PersistedMessage,
+    ) -> _MemoryCandidateDecision:
         content = " ".join(message.content.strip().split())
         if message.role != "user" or message.source != "request_transcript":
-            return False
+            reason = (
+                "non_user_role"
+                if message.role != "user"
+                else "non_request_transcript_source"
+            )
+            return _MemoryCandidateDecision(
+                message=message,
+                accepted=False,
+                reason=reason,
+            )
         if not content or content.endswith("?"):
-            return False
+            reason = "question" if content.endswith("?") else "empty_content"
+            return _MemoryCandidateDecision(
+                message=message,
+                accepted=False,
+                reason=reason,
+            )
         normalized = content.lower()
-        return any(pattern.search(normalized) for pattern in _DURABLE_MEMORY_PATTERNS)
+        accepted = any(pattern.search(normalized) for pattern in _DURABLE_MEMORY_PATTERNS)
+        return _MemoryCandidateDecision(
+            message=message,
+            accepted=accepted,
+            reason="durable_signal" if accepted else "no_durable_signal",
+        )
+
+    def _log_candidate_evaluation(
+        self,
+        *,
+        request_id: str,
+        conversation_id: str,
+        candidate_decisions: tuple[_MemoryCandidateDecision, ...],
+    ) -> None:
+        skip_reason_counts: dict[str, int] = {}
+        accepted_message_ids: list[str] = []
+        for decision in candidate_decisions:
+            metric_decision = "accepted" if decision.accepted else "skipped"
+            get_agent_metrics().record_memory_candidate(
+                decision=metric_decision,
+                reason=decision.reason,
+            )
+            if decision.accepted:
+                accepted_message_ids.append(decision.message.message_id)
+                continue
+            skip_reason_counts[decision.reason] = skip_reason_counts.get(decision.reason, 0) + 1
+
+        log_event(
+            "chat_memory_candidate_evaluation_completed",
+            request_id=request_id,
+            conversation_id=conversation_id,
+            accepted_message_ids=accepted_message_ids,
+            accepted_count=len(accepted_message_ids),
+            evaluated_count=len(candidate_decisions),
+            skip_reason_counts=skip_reason_counts,
+        )
 
     def _latest_user_message(self, messages: list[ChatMessage]) -> str | None:
         for message in reversed(messages):

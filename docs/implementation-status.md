@@ -158,6 +158,7 @@ Implemented:
 - retrieval query behavior with explicit audit traces
 - fixed retrieval fixtures for positive, false-positive, and stale-memory cases
 - explicit `active -> invalidated -> deleted` lifecycle transitions for memory items
+- candidate-decision and skip-reason observability for the memory path
 
 Not yet implemented:
 

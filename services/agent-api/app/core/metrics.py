@@ -184,6 +184,11 @@ class AgentApiMetrics:
             "Memory embedding outcomes by phase.",
             ("outcome", "phase"),
         )
+        self._memory_candidate_total = _CounterMetric(
+            "agent_api_memory_candidate_total",
+            "Memory candidate evaluation outcomes.",
+            ("decision", "reason"),
+        )
         self._memory_audit_total = _CounterMetric(
             "agent_api_memory_audit_total",
             "Memory retrieval audit persistence outcomes.",
@@ -289,6 +294,9 @@ class AgentApiMetrics:
     ) -> None:
         self._memory_embedding_total.inc(outcome=outcome, phase=phase)
 
+    def record_memory_candidate(self, *, decision: str, reason: str) -> None:
+        self._memory_candidate_total.inc(decision=decision, reason=reason)
+
     def record_memory_audit(self, *, outcome: str) -> None:
         self._memory_audit_total.inc(outcome=outcome)
 
@@ -325,6 +333,7 @@ class AgentApiMetrics:
             self._memory_retrieval_duration,
             self._memory_retrieval_hits_total,
             self._memory_embedding_total,
+            self._memory_candidate_total,
             self._memory_audit_total,
             self._memory_materialization_total,
             self._memory_lifecycle_total,
@@ -347,6 +356,7 @@ class AgentApiMetrics:
             self._memory_retrieval_duration,
             self._memory_retrieval_hits_total,
             self._memory_embedding_total,
+            self._memory_candidate_total,
             self._memory_audit_total,
             self._memory_materialization_total,
             self._memory_lifecycle_total,

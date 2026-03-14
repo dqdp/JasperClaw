@@ -214,6 +214,10 @@ def test_metrics_endpoint_exports_memory_retrieval_and_materialization_metrics(
     assert 'agent_api_memory_retrieval_total{outcome="success"} 1' in metrics_response.text
     assert "agent_api_memory_retrieval_hits_total 1" in metrics_response.text
     assert 'agent_api_memory_audit_total{outcome="success"} 1' in metrics_response.text
+    assert (
+        'agent_api_memory_candidate_total{decision="skipped",reason="no_durable_signal"} 1'
+        in metrics_response.text
+    )
     assert 'agent_api_memory_materialization_total{outcome="skipped"} 1' in metrics_response.text
 
 
