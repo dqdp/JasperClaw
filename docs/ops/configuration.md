@@ -152,6 +152,23 @@ Example:
 APP_VERSION=dev
 ```
 
+### `COMPOSE_PROFILES`
+
+Required: no
+
+Used by:
+
+- `docker compose`
+
+Purpose:
+
+- enable optional Compose service groups such as the `voice` profile
+
+Notes:
+
+- leave empty for the supported `text-only` profile
+- set `COMPOSE_PROFILES=voice` for the supported `voice-enabled-cpu` profile
+
 ### `DOMAIN`
 
 Required: yes for proxied deployments
@@ -1283,9 +1300,11 @@ Recommended supported profiles:
 
 - `text-only`
   - `VOICE_ENABLED=false`
+  - `COMPOSE_PROFILES=`
   - `stt-service` and `tts-service` may remain absent from the runtime graph
   - smoke checks cover chat but skip STT and TTS
 - `voice-enabled-cpu`
+  - `COMPOSE_PROFILES=voice`
   - `VOICE_ENABLED=true`
   - `STT_MODEL=base`
   - `STT_DEVICE=cpu`

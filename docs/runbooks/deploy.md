@@ -19,6 +19,8 @@ Describe the normal production deployment flow.
 - production environment approval granted
 - host is reachable over SSH
 - production secrets are present
+- backup is taken first when the rollout includes schema risk or another
+  elevated-risk change
 
 ## Standard deployment steps
 
@@ -53,7 +55,11 @@ Preferred rollout pattern:
 - `COMPOSE_OVERRIDE_FILE=infra/compose/compose.prod.yml bash infra/scripts/ensure-ollama-models.sh`
 - `docker compose build platform-db`
 - `docker compose run --rm --no-deps platform-db python -m platform_db.cli migrate`
-- `docker compose up -d --remove-orphans agent-api open-webui caddy`
+- `docker compose up -d --remove-orphans agent-api open-webui caddy` for `text-only`
+- `COMPOSE_PROFILES=voice docker compose up -d --remove-orphans agent-api stt-service tts-service open-webui caddy` for `voice-enabled-cpu`
+
+Keep `COMPOSE_PROFILES` and `VOICE_ENABLED` aligned. A `voice-enabled` env with a
+text-only Compose profile is considered an invalid rollout contract.
 
 ### Health validation
 

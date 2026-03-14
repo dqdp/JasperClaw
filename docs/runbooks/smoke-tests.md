@@ -32,13 +32,18 @@ The rest of this document is still the broader manual checklist to use after the
 Supported profile expectations:
 
 - `text-only`
+  - `COMPOSE_PROFILES=`
   - `VOICE_ENABLED=false`
   - smoke must validate chat and model listing, but must not require STT or TTS
 - `voice-enabled-cpu`
+  - `COMPOSE_PROFILES=voice`
   - `VOICE_ENABLED=true`
   - smoke must validate chat, STT, and TTS through `agent-api`
   - `stt-service` is expected to prewarm its configured runtime during startup
     instead of acquiring it lazily on the first readiness call
+
+If `VOICE_ENABLED=true` but the Compose `voice` profile is not enabled, treat
+that as a deployment contract failure rather than a valid degraded mode.
 
 When Telegram smoke inputs are configured, the automated baseline may also run:
 
