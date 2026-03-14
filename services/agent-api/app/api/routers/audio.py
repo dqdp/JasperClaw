@@ -22,6 +22,7 @@ from app.repositories import ChatRepository
 router = APIRouter()
 _SUPPORTED_TRANSCRIPTION_RESPONSE_FORMATS = frozenset({"json", "text"})
 _SUPPORTED_TRANSCRIPTION_MODEL = "whisper-1"
+_SUPPORTED_SPEECH_MODEL = "tts-1"
 
 
 class SpeechRequest(BaseModel):
@@ -149,6 +150,13 @@ def audio_speech(
             error_type="dependency_unavailable",
             code="speech_service_unavailable",
             message="Speech service unavailable",
+        )
+    if payload.model.strip() != _SUPPORTED_SPEECH_MODEL:
+        raise APIError(
+            status_code=422,
+            error_type="validation_error",
+            code="unsupported_model",
+            message="Requested speech model is not supported",
         )
 
     audio = tts_client.synthesize(

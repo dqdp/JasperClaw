@@ -390,6 +390,23 @@ def test_audio_speech_uses_default_voice_when_omitted(
     assert fake_client.calls == [{"text": "hello", "voice": "assistant-default"}]
 
 
+def test_audio_speech_rejects_unsupported_model(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    get_settings.cache_clear()
+
+    response = client.post(
+        "/v1/audio/speech",
+        json={"input": "hello", "model": "gpt-4o-mini-tts"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["type"] == "validation_error"
+    assert response.json()["error"]["code"] == "unsupported_model"
+
+
 def test_audio_speech_maps_unsupported_voice_error(
     client, monkeypatch, auth_headers
 ) -> None:
