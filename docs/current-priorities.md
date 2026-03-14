@@ -379,6 +379,12 @@ Phase C is complete only when all of the following are true:
 - the logs and metrics needed to explain release failures are obvious without
   code inspection
 
+Status on current branch:
+
+- `C1` is complete through a reproducible backup/restore drill helper and a
+  successful disposable restore proof against the Compose-backed Postgres stack
+- `C2` through `C4` remain open
+
 ### C1. Prove Disposable Restore Against The Current Stack
 
 Take the existing backup and restore procedures out of the documentation-only

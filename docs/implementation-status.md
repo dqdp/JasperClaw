@@ -37,6 +37,7 @@ Implemented:
 - image-build workflow
 - deploy script baseline
 - smoke script baseline with chat and optional voice coverage
+- reproducible backup/restore drill helper for disposable Postgres validation
 - Compose topology for the accepted v1 core services
 
 ### Documentation and architecture

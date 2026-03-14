@@ -13,6 +13,9 @@ any production restore decision is made.
 - the operator has access to a running `postgres` container or another
   disposable Postgres instance
 - the operator has credentials that can create and drop a temporary database
+- the root Compose env used by the stack is loaded, or commands are prefixed
+  with the required root variables such as `APP_VERSION`, `GHCR_OWNER`, and
+  `POSTGRES_PASSWORD`
 
 ## Disposable restore target
 
@@ -87,3 +90,11 @@ docker compose exec -T postgres \
   drill and then use the validated artifact and procedure for the real restore
 - this runbook validates database recoverability only; it does not replace the
   rollback runbook for container image regressions
+
+## Reproducible drill helper
+
+For a local end-to-end proof of the backup and disposable restore path, prefer:
+
+```bash
+bash infra/scripts/drill-backup-restore.sh
+```

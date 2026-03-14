@@ -38,6 +38,9 @@ procedure instead of pretending they are part of the database backup.
 - the target environment is running `postgres`
 - the operator has database credentials with dump access
 - enough local or remote storage exists for the dump artifact
+- the root Compose env used by the stack is loaded, or commands are prefixed
+  with the required root variables such as `APP_VERSION`, `GHCR_OWNER`, and
+  `POSTGRES_PASSWORD`
 
 ## Recommended artifact format
 
@@ -75,11 +78,27 @@ After creating the dump:
 - confirm the checksum file exists
 - run `pg_restore -l` against the dump to verify it is readable
 
+If the host does not have PostgreSQL client tools installed, use a one-shot
+container for the validation step instead of assuming `pg_restore` exists on the
+operator machine.
+
 Example:
 
 ```bash
 test -s "${BACKUP_PATH}"
-pg_restore -l "${BACKUP_PATH}" >/dev/null
+docker run --rm \
+  -v "$(dirname "${BACKUP_PATH}"):/backup" \
+  pgvector/pgvector:pg17 \
+  pg_restore -l "/backup/$(basename "${BACKUP_PATH}")" >/dev/null
+```
+
+## Reproducible drill helper
+
+For a local disposable proof against the current Compose stack, prefer the
+helper script:
+
+```bash
+bash infra/scripts/drill-backup-restore.sh
 ```
 
 ## Success criteria
