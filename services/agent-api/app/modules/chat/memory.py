@@ -215,6 +215,22 @@ class MemoryService:
         persistence: ChatPersistenceResult,
         created_at: datetime,
     ) -> None:
+        self.store_persisted_messages(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            persisted_messages=persistence.persisted_messages,
+            created_at=created_at,
+        )
+
+    def store_persisted_messages(
+        self,
+        *,
+        request_id: str,
+        conversation_id: str,
+        persisted_messages: tuple[PersistedMessage, ...]
+        | list[PersistedMessage],
+        created_at: datetime,
+    ) -> None:
         if not self._settings.memory_enabled or not self._settings.ollama_embed_model:
             log_event(
                 "chat_memory_materialization_completed",
@@ -228,7 +244,7 @@ class MemoryService:
 
         candidate_decisions = tuple(
             self._evaluate_memory_candidate(message)
-            for message in persistence.persisted_messages
+            for message in persisted_messages
         )
         candidate_messages = tuple(
             decision.message
@@ -365,11 +381,14 @@ class MemoryService:
         message: PersistedMessage,
     ) -> _MemoryCandidateDecision:
         content = " ".join(message.content.strip().split())
-        if message.role != "user" or message.source != "request_transcript":
+        if message.role != "user" or message.source not in {
+            "request_transcript",
+            "audio_transcription",
+        }:
             reason = (
                 "non_user_role"
                 if message.role != "user"
-                else "non_request_transcript_source"
+                else "non_memory_source"
             )
             return _MemoryCandidateDecision(
                 message=message,

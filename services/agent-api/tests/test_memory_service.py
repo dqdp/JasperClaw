@@ -279,6 +279,46 @@ def test_memory_service_stores_only_candidate_messages(caplog) -> None:
     )
 
 
+def test_memory_service_materializes_audio_transcription_messages(caplog) -> None:
+    repository = _FakeRepository()
+    service = MemoryService(
+        settings=_settings(),
+        ollama_client=_FakeOllamaClient(embeddings=[[1.0, 0.0]]),
+        repository=repository,
+        prompt_formatter=ChatPromptFormatter(),
+    )
+    persisted_message = PersistedMessage(
+        message_id="msg_audio",
+        message_index=0,
+        role="user",
+        content="I live in Berlin and prefer concise answers.",
+        source="audio_transcription",
+    )
+
+    with caplog.at_level(logging.INFO, logger="agent_api"):
+        service.store_persisted_messages(
+            request_id="req_audio_memory",
+            conversation_id="conv_audio",
+            persisted_messages=(persisted_message,),
+            created_at=datetime.now(timezone.utc),
+        )
+
+    assert len(repository.store_memory_calls) == 1
+    stored_messages = repository.store_memory_calls[0]["messages"]
+    assert tuple(message.message_id for message in stored_messages) == ("msg_audio",)
+    candidate_event = next(
+        event
+        for event in _events(caplog)
+        if event["event"] == "chat_memory_candidate_evaluation_completed"
+    )
+    assert candidate_event["accepted_message_ids"] == ["msg_audio"]
+    exported = get_agent_metrics().render_prometheus()
+    assert (
+        'agent_api_memory_candidate_total{decision="accepted",reason="durable_signal"} 1'
+        in exported
+    )
+    assert 'agent_api_memory_materialization_total{outcome="success"} 1' in exported
+
 def test_memory_service_records_retrieval_when_conversation_is_present() -> None:
     repository = _FakeRepository()
     service = MemoryService(

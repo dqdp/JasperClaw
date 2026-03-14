@@ -75,7 +75,7 @@ class ChatRepository(Protocol):
     def record_transcription(
         self,
         *,
-        public_model: str,
+        public_model_hint: str | None,
         conversation_id_hint: str | None,
         transcript: str,
         created_at: datetime,
@@ -128,8 +128,14 @@ class ChatRepository(Protocol):
 
 
 class PostgresChatRepository:
-    def __init__(self, database_url: str) -> None:
+    def __init__(
+        self,
+        database_url: str,
+        *,
+        default_public_profile: str = "assistant-v1",
+    ) -> None:
         self._database_url = database_url
+        self._default_public_profile = default_public_profile
         self._transcript_repository = PostgresTranscriptRepository()
         self._conversation_repository = PostgresConversationRepository(
             transcript_repository=self._transcript_repository
@@ -311,7 +317,7 @@ class PostgresChatRepository:
     def record_transcription(
         self,
         *,
-        public_model: str,
+        public_model_hint: str | None,
         conversation_id_hint: str | None,
         transcript: str,
         created_at: datetime,
@@ -319,6 +325,11 @@ class PostgresChatRepository:
         persisted_at = created_at.astimezone(timezone.utc)
 
         def write(conn: psycopg.Connection) -> TranscriptionPersistenceResult:
+            public_model = self._resolve_transcription_public_model(
+                conn,
+                public_model_hint=public_model_hint,
+                conversation_id_hint=conversation_id_hint,
+            )
             context = self._conversation_repository.resolve_append_target(
                 conn,
                 public_model=public_model,
@@ -348,6 +359,43 @@ class PostgresChatRepository:
             )
 
         return self._execute(write)
+
+    def _resolve_transcription_public_model(
+        self,
+        conn: psycopg.Connection,
+        *,
+        public_model_hint: str | None,
+        conversation_id_hint: str | None,
+    ) -> str:
+        if conversation_id_hint is None:
+            return public_model_hint or self._default_public_profile
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT public_profile
+                FROM conversations
+                WHERE id = %s
+                """,
+                (conversation_id_hint,),
+            )
+            row = cur.fetchone()
+
+        if row is None:
+            return public_model_hint or self._default_public_profile
+
+        persisted_public_model = row[0]
+        if (
+            public_model_hint is not None
+            and public_model_hint != persisted_public_model
+        ):
+            raise APIError(
+                status_code=409,
+                error_type="validation_error",
+                code="conversation_mismatch",
+                message="Conversation hint conflicts with requested public model",
+            )
+        return persisted_public_model
 
     def retrieve_memory(
         self,

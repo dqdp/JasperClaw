@@ -11,6 +11,8 @@ from app.clients.tts import TtsClient
 from app.core.config import Settings, get_settings
 from app.migrations import MigrationRunner
 from app.modules.chat.facade import ChatFacade
+from app.modules.chat.formatters import ChatPromptFormatter
+from app.modules.chat.memory import MemoryService
 from app.repositories import ChatRepository, PostgresChatRepository
 from app.services.chat import ChatService
 from app.services.readiness import ReadinessService
@@ -34,7 +36,10 @@ def get_migration_runner() -> MigrationRunner:
 @lru_cache
 def get_chat_repository() -> ChatRepository:
     settings = get_settings()
-    return PostgresChatRepository(database_url=settings.database_url)
+    return PostgresChatRepository(
+        database_url=settings.database_url,
+        default_public_profile=settings.default_public_profile,
+    )
 
 
 @lru_cache
@@ -83,6 +88,19 @@ def get_tts_client() -> TtsClient | None:
     return TtsClient(
         base_url=settings.tts_base_url,
         timeout_seconds=settings.tts_timeout_seconds,
+    )
+
+
+def get_memory_service(
+    settings: Annotated[Settings, Depends(get_app_settings)],
+    ollama_client: Annotated[OllamaChatClient, Depends(get_ollama_client)],
+    repository: Annotated[ChatRepository, Depends(get_chat_repository)],
+) -> MemoryService:
+    return MemoryService(
+        settings=settings,
+        ollama_client=ollama_client,
+        repository=repository,
+        prompt_formatter=ChatPromptFormatter(),
     )
 
 

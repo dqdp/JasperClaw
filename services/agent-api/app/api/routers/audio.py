@@ -8,13 +8,15 @@ from pydantic import BaseModel
 from app.api.deps import (
     get_app_settings,
     get_chat_repository,
+    get_memory_service,
     get_stt_client,
     get_tts_client,
 )
 from app.clients.stt import SttClient
 from app.clients.tts import TtsClient
 from app.core.config import Settings
-from app.core.errors import APIError
+from app.core.errors import APIError, get_request_id
+from app.modules.chat.memory import MemoryService
 from app.repositories import ChatRepository
 
 router = APIRouter()
@@ -29,7 +31,7 @@ class SpeechRequest(BaseModel):
 
 
 @router.post("/v1/audio/transcriptions")
-async def audio_transcriptions(
+def audio_transcriptions(
     request: Request,
     file: UploadFile = File(...),
     model: str = Form(_SUPPORTED_TRANSCRIPTION_MODEL),
@@ -37,6 +39,7 @@ async def audio_transcriptions(
     settings: Annotated[Settings, Depends(get_app_settings)] = None,
     stt_client: Annotated[SttClient | None, Depends(get_stt_client)] = None,
     repository: Annotated[ChatRepository, Depends(get_chat_repository)] = None,
+    memory_service: Annotated[MemoryService, Depends(get_memory_service)] = None,
 ):
     if not settings.voice_enabled:
         raise APIError(
@@ -71,7 +74,23 @@ async def audio_transcriptions(
             message="Requested transcription response format is not supported",
         )
 
-    audio_bytes = await file.read(settings.stt_max_file_bytes + 1)
+    public_model_hint = None
+    public_model_header = request.headers.get("X-Public-Model")
+    if public_model_header is not None:
+        normalized_public_model = public_model_header.strip()
+        if normalized_public_model:
+            if normalized_public_model not in settings.public_profiles:
+                raise APIError(
+                    status_code=422,
+                    error_type="validation_error",
+                    code="unsupported_public_model",
+                    message="Requested public model is not supported",
+                )
+            public_model_hint = normalized_public_model
+
+    # Keep the whole voice path on FastAPI's sync threadpool until the collaborators
+    # move off their current blocking HTTP/Postgres implementations.
+    audio_bytes = file.file.read(settings.stt_max_file_bytes + 1)
     if not audio_bytes:
         raise APIError(
             status_code=422,
@@ -87,16 +106,23 @@ async def audio_transcriptions(
             message="Audio upload exceeds the configured limit",
         )
 
+    created_at = datetime.now(timezone.utc)
     transcript = stt_client.transcribe(
         audio_bytes=audio_bytes,
         filename=file.filename or "upload.bin",
         content_type=file.content_type,
     )
     persistence = repository.record_transcription(
-        public_model=settings.default_public_profile,
+        public_model_hint=public_model_hint,
         conversation_id_hint=request.headers.get("X-Conversation-ID"),
         transcript=transcript,
-        created_at=datetime.now(timezone.utc),
+        created_at=created_at,
+    )
+    memory_service.store_persisted_messages(
+        request_id=get_request_id(request),
+        conversation_id=persistence.conversation_id,
+        persisted_messages=(persistence.persisted_message,),
+        created_at=created_at,
     )
     headers = {"X-Conversation-ID": persistence.conversation_id}
     if normalized_response_format == "text":

@@ -28,14 +28,16 @@ fi
 : "${INTERNAL_OPENAI_API_KEY:=test-internal-key}"
 : "${WEBUI_SECRET_KEY:=test-webui-secret}"
 : "${DOMAIN:=localhost}"
+: "${TTS_DEFAULT_VOICE:=assistant-default}"
 
+ROOT_ENV_EFFECTIVE_FILE="$(mktemp /tmp/jasperclaw-backup-drill-root.XXXXXX)"
 ARTIFACT_DIR_CREATED=0
 ARTIFACT_DIR="${ARTIFACT_DIR:-}"
 SCRIPT_SUCCEEDED=0
 POSTGRES_WAS_RUNNING=0
 
 compose() {
-  local -a cmd=(docker compose --env-file "$ROOT_ENV_FILE" -f "$COMPOSE_BASE_FILE")
+  local -a cmd=(docker compose --env-file "$ROOT_ENV_EFFECTIVE_FILE" -f "$COMPOSE_BASE_FILE")
   if [[ -n "$COMPOSE_OVERRIDE_FILE" ]]; then
     cmd+=(-f "$COMPOSE_OVERRIDE_FILE")
   fi
@@ -52,6 +54,38 @@ is_truthy() {
       return 1
       ;;
   esac
+}
+
+write_effective_root_env() {
+  local -a env_keys=(
+    APP_VERSION
+    GHCR_OWNER
+    POSTGRES_PASSWORD
+    INTERNAL_OPENAI_API_KEY
+    WEBUI_SECRET_KEY
+    DOMAIN
+    TTS_DEFAULT_VOICE
+  )
+  local line=""
+  local key=""
+  local seen_keys=" "
+
+  if [[ -f "$ROOT_ENV_FILE" ]]; then
+    while IFS= read -r line; do
+      if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)= ]]; then
+        env_keys+=("${BASH_REMATCH[2]}")
+      fi
+    done < "$ROOT_ENV_FILE"
+  fi
+
+  : > "$ROOT_ENV_EFFECTIVE_FILE"
+  for key in "${env_keys[@]}"; do
+    if [[ "$seen_keys" == *" $key "* || -z "${!key+x}" ]]; then
+      continue
+    fi
+    seen_keys="${seen_keys}${key} "
+    printf '%s=%s\n' "$key" "${!key}" >> "$ROOT_ENV_EFFECTIVE_FILE"
+  done
 }
 
 checksum_file() {
@@ -119,6 +153,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
+write_effective_root_env
+
 mkdir -p "$REPO_ROOT"
 if [[ -z "$ARTIFACT_DIR" ]]; then
   ARTIFACT_DIR="$(mktemp -d /tmp/jasperclaw-backup-drill.XXXXXX)"
@@ -132,6 +168,7 @@ if [[ -n "$(compose ps -q "$POSTGRES_SERVICE_NAME")" ]]; then
 fi
 
 log_info "Backup/restore env file: ${ROOT_ENV_FILE}"
+log_info "Effective compose env file: ${ROOT_ENV_EFFECTIVE_FILE}"
 log_info "Backup artifact prefix: ${BACKUP_BASENAME_PREFIX}"
 log_info "Disposable restore database: ${RESTORE_DATABASE_NAME}"
 

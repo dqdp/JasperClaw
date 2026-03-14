@@ -98,6 +98,14 @@ class _InMemoryCursor:
                 self._rows = []
             return
 
+        if normalized.startswith("SELECT public_profile FROM conversations WHERE id = %s"):
+            conversation_id = params[0]
+            conversation = self._connection.conversations.get(conversation_id)
+            self._rows = (
+                [(conversation["public_profile"],)] if conversation is not None else []
+            )
+            return
+
         if normalized.startswith("SELECT role, content FROM messages WHERE conversation_id = %s"):
             conversation_id = params[0]
             rows = [
@@ -745,6 +753,188 @@ def test_audio_transcription_flow_appends_to_existing_conversation(
     ]
     assert [message["message_index"] for message in connection.messages] == [0, 1]
     assert all(message["source"] == "audio_transcription" for message in connection.messages)
+
+
+def test_audio_transcription_flow_supports_audio_first_assistant_fast_conversation(
+    monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    get_settings.cache_clear()
+    connection = _InMemoryConnection()
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    stt_client = _TranscribingSttClient(["Privet mir"])
+    runtime_client = _MemoryAwareClient()
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_stt_client] = lambda: stt_client
+    client.app.dependency_overrides[deps.get_ollama_client] = lambda: runtime_client
+
+    transcription_response = client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("clip.wav", b"RIFFagentWAVE", "audio/wav")},
+        data={"model": "whisper-1"},
+        headers={**auth_headers, "X-Public-Model": "assistant-fast"},
+    )
+
+    conversation_id = transcription_response.headers["x-conversation-id"]
+    completion_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-fast",
+            "messages": [{"role": "user", "content": "Privet mir"}],
+            "stream": False,
+        },
+        headers={**auth_headers, "X-Conversation-ID": conversation_id},
+    )
+
+    assert transcription_response.status_code == 200
+    assert completion_response.status_code == 200
+    assert len(connection.conversations) == 1
+    assert connection.conversations[conversation_id]["public_profile"] == "assistant-fast"
+    assert [message["role"] for message in connection.messages] == ["user", "assistant"]
+    assert connection.messages[0]["source"] == "audio_transcription"
+    assert connection.messages[0]["content"] == "Privet mir"
+    assert completion_response.headers["x-conversation-id"] == conversation_id
+
+
+def test_audio_transcription_flow_derives_profile_from_existing_conversation_hint(
+    monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    get_settings.cache_clear()
+    connection = _InMemoryConnection()
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    runtime_client = _MemoryAwareClient()
+    stt_client = _TranscribingSttClient(["Follow-up transcript"])
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_ollama_client] = lambda: runtime_client
+    client.app.dependency_overrides[deps.get_stt_client] = lambda: stt_client
+
+    completion_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-fast",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "stream": False,
+        },
+        headers=auth_headers,
+    )
+    conversation_id = completion_response.headers["x-conversation-id"]
+
+    transcription_response = client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("clip.wav", b"RIFFagentWAVE", "audio/wav")},
+        data={"model": "whisper-1"},
+        headers={**auth_headers, "X-Conversation-ID": conversation_id},
+    )
+
+    assert completion_response.status_code == 200
+    assert transcription_response.status_code == 200
+    assert transcription_response.headers["x-conversation-id"] == conversation_id
+    assert len(connection.conversations) == 1
+    assert connection.conversations[conversation_id]["public_profile"] == "assistant-fast"
+    assert [message["content"] for message in connection.messages] == [
+        "Hello",
+        "Runtime response",
+        "Follow-up transcript",
+    ]
+    assert connection.messages[-1]["source"] == "audio_transcription"
+
+
+def test_audio_transcription_flow_supports_assistant_fast_profile(
+    monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    get_settings.cache_clear()
+    connection = _InMemoryConnection()
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    stt_client = _TranscribingSttClient(["Fast transcript"])
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_stt_client] = lambda: stt_client
+    client.app.dependency_overrides[deps.get_ollama_client] = lambda: _MemoryAwareClient()
+
+    transcription_response = client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("clip.wav", b"RIFFagentWAVE", "audio/wav")},
+        data={"model": "whisper-1"},
+        headers={**auth_headers, "X-Public-Model": "assistant-fast"},
+    )
+    chat_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-fast",
+            "messages": [{"role": "user", "content": "Fast transcript"}],
+            "stream": False,
+        },
+        headers={
+            **auth_headers,
+            "X-Conversation-ID": transcription_response.headers["x-conversation-id"],
+        },
+    )
+
+    assert transcription_response.status_code == 200
+    assert chat_response.status_code == 200
+    conversation_id = transcription_response.headers["x-conversation-id"]
+    assert connection.conversations[conversation_id]["public_profile"] == (
+        "assistant-fast"
+    )
+    assert [message["role"] for message in connection.messages] == ["user", "assistant"]
+    assert connection.messages[0]["source"] == "audio_transcription"
+    assert connection.messages[1]["content"] == "Runtime response"
+
+
+def test_audio_transcription_flow_materializes_durable_memory(
+    monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("VOICE_ENABLED", "true")
+    monkeypatch.setenv("MEMORY_ENABLED", "true")
+    monkeypatch.setenv("OLLAMA_EMBED_MODEL", "all-minilm")
+    get_settings.cache_clear()
+    connection = _InMemoryConnection()
+    monkeypatch.setattr(
+        "app.repositories.postgres.psycopg.connect",
+        lambda database_url: connection,
+    )
+    repository = PostgresChatRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+    stt_client = _TranscribingSttClient(["My favorite color is blue."])
+    client = TestClient(app)
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_stt_client] = lambda: stt_client
+    client.app.dependency_overrides[deps.get_ollama_client] = lambda: _MemoryAwareClient()
+
+    response = client.post(
+        "/v1/audio/transcriptions",
+        files={"file": ("clip.wav", b"RIFFagentWAVE", "audio/wav")},
+        data={"model": "whisper-1"},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert len(connection.memory_items) == 1
+    assert connection.memory_items[0]["content"] == "My favorite color is blue."
+    assert connection.memory_items[0]["source_message_id"] == connection.messages[0]["id"]
 
 
 def test_streaming_chat_flow_persists_failure_without_done_sentinel(
