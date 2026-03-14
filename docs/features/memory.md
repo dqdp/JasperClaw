@@ -224,7 +224,9 @@ Current Memory Slice 1 baseline:
 - retrieval is optional and deployment-gated
 - one shared backend principal is used until request identity grows beyond the current trusted-client model
 - retrieval uses the latest `user` turn as the semantic query
-- `memory_items` are currently derived only from conservative `user` transcript turns
+- `memory_items` are currently derived only from conservative `user`
+  transcript turns that carry explicit durable-signal phrases such as
+  preferences, name, location, or work facts
 - retrieval and memory writes are fail-open relative to the core chat response path
 - newly materialized memory is written as `active`
 - explicit transitions to `invalidated` and `deleted` are implemented through an

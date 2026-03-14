@@ -153,7 +153,8 @@ Implemented:
 - accepted schema design and documentation
 - forward-only SQL migrations for the current text-path and memory-foundation tables
 - readiness checks that fail when required migrations are still pending
-- conservative memory extraction/materialization from selected `user` turns
+- conservative memory extraction/materialization from selected `user` turns with
+  explicit durable-signal phrases
 - retrieval query behavior with explicit audit traces
 - fixed retrieval fixtures for positive, false-positive, and stale-memory cases
 - explicit `active -> invalidated -> deleted` lifecycle transitions for memory items

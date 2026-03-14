@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from time import perf_counter
@@ -19,6 +20,22 @@ from app.repositories import (
     PersistedMessage,
 )
 from app.schemas.chat import ChatCompletionRequest, ChatMessage
+
+_DURABLE_MEMORY_PATTERNS = (
+    # Bias toward explicit first-person durable facts and preferences. This slice
+    # prefers false negatives over noisy memory writes from generic chatter.
+    re.compile(r"\bi prefer\b"),
+    re.compile(r"\bmy favorite\b"),
+    re.compile(r"\bi live in\b"),
+    re.compile(r"\bi am based in\b"),
+    re.compile(r"\bi'm based in\b"),
+    re.compile(r"\bmy name is\b"),
+    re.compile(r"\bcall me\b"),
+    re.compile(r"\bi work at\b"),
+    re.compile(r"\bi work as\b"),
+    re.compile(r"\bi am allergic to\b"),
+    re.compile(r"\bi'm allergic to\b"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,14 +329,13 @@ class MemoryService:
         return embeddings[0]
 
     def _is_memory_candidate(self, message: PersistedMessage) -> bool:
-        content = message.content.strip()
+        content = " ".join(message.content.strip().split())
         if message.role != "user" or message.source != "request_transcript":
             return False
-        if len(content) < 15:
+        if not content or content.endswith("?"):
             return False
-        if content.endswith("?"):
-            return False
-        return True
+        normalized = content.lower()
+        return any(pattern.search(normalized) for pattern in _DURABLE_MEMORY_PATTERNS)
 
     def _latest_user_message(self, messages: list[ChatMessage]) -> str | None:
         for message in reversed(messages):
