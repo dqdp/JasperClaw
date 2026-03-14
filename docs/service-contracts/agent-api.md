@@ -238,6 +238,11 @@ Minimum multipart fields:
 - `file`
 - `model`
 
+Current supported values:
+
+- `model=whisper-1`
+- `response_format=json|text` when provided
+
 Behavior:
 
 - accepts uploaded audio
@@ -247,6 +252,9 @@ Behavior:
 - returns the canonical conversation identity in the `X-Conversation-ID` header
 - currently uses explicit canonical conversation hints for continuity via the
   `X-Conversation-ID` header
+- returns `422` for unsupported transcription models, unsupported response
+  formats, oversized uploads, empty uploads, and request-local decode failures
+- returns `503` when the transcription service is unavailable
 
 ### `POST /v1/audio/speech`
 
@@ -262,13 +270,20 @@ Minimum request fields:
 - `input`
 - `voice`
 
+Current supported values:
+
+- `model=tts-1`
+- `voice` may be omitted and will fall back to the configured default voice
+
 Behavior:
 
-- validates requested voice or profile
+- validates the requested speech model and voice selection
 - forwards synthesis request to `tts-service`
 - returns audio bytes with correct content type
 - remains optional behind `VOICE_ENABLED`
 - does not create canonical transcript rows in the current slice
+- returns `422` for unsupported speech models
+- returns `503` when the speech service is unavailable
 
 ## Error contract
 
@@ -306,6 +321,8 @@ Examples of stable `code` values:
 - `missing_required_field`
 - `unknown_profile`
 - `unsupported_feature`
+- `unsupported_model`
+- `invalid_response_format`
 - `missing_api_key`
 - `invalid_api_key`
 - `auth_not_configured`
@@ -313,6 +330,8 @@ Examples of stable `code` values:
 - `tool_not_allowed`
 - `voice_not_enabled`
 - `database_unavailable`
+- `transcription_service_unavailable`
+- `speech_service_unavailable`
 - `runtime_unavailable`
 - `dependency_timeout`
 - `dependency_bad_response`

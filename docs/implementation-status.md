@@ -33,10 +33,11 @@ The repository does **not** yet contain a fully hardened production platform.
 Implemented:
 
 - monorepo layout
-- GitHub Actions CI
+- layered GitHub Actions CI with mandatory text, voice, and deterministic Telegram smoke coverage
 - image-build workflow
-- deploy script baseline
-- smoke script baseline with chat and optional voice coverage
+- deploy script with explicit rollout profile contract checks and canonical smoke gating
+- canonical smoke flow covering `text-only` and `voice-enabled-cpu` profiles
+- automated Open WebUI voice wiring validation in the canonical voice smoke flow
 - reproducible backup/restore drill helper for disposable Postgres validation
 - reproducible rollback drill helper for deterministic immutable-tag validation
 - shared step/timing logs across deploy and release-drill scripts
@@ -110,7 +111,8 @@ Implemented:
 - Piper-compatible first local backend path
 - Docker packaging that installs the Piper runtime and preloads the bundled default voice models
 - manual Docker smoke coverage for `agent-api -> tts-service -> Piper-compatible backend`
-- deploy-gated automated voice smoke coverage when `VOICE_ENABLED=true`
+- mandatory CI and deploy-time automated voice smoke coverage through `agent-api` for the supported `voice-enabled-cpu` profile
+- automated Open WebUI voice wiring validation in the canonical voice smoke flow
 
 Not yet implemented:
 
@@ -143,6 +145,7 @@ Implemented:
 - minimal command routing for `/help`, `/status`, and `/ask`
 - slash-command allowlist and request ID continuity across ingress handling
 - Telegram-originated tool actions are tagged at ingress and denied inside `agent-api`
+- deterministic CI smoke coverage for ingress, continuity, negative auth paths, and durable alert-delivery behavior
 
 Not yet implemented:
 

@@ -22,15 +22,14 @@ Working vertical slices now include:
 - in-process tools boundary with policy and audit
 - working Telegram ingress
 - working buffered STT and TTS slices behind `agent-api`
-- deploy-gated smoke coverage for chat, STT, and TTS when voice is enabled
+- mandatory CI and deploy-gated smoke coverage for chat, STT, and TTS when voice is enabled
+- deterministic Telegram smoke coverage in CI and reusable canonical smoke entrypoints for deploy flows
 
 The project is still not fully "done" as a platform because several important
 cross-cutting areas are only partially closed:
 
-- some deploy-facing docs and runbooks still need execution proof, not just
-  written procedures
-- rollback and restore policy exist, but are not yet proven as routine drills
-  against immutable image targets and disposable restore environments
+- deploy-facing docs and runbooks still need occasional truth-pass maintenance
+  as release hardening and smoke gates evolve
 - structured tracing still stops at request IDs and JSON event logs
 - broader memory expiry and contradiction heuristics remain intentionally
   deferred
@@ -39,16 +38,19 @@ cross-cutting areas are only partially closed:
 
 ## Recommended Direction
 
-The recommended path remains `stabilize-first`, but the center of gravity has
-shifted.
+The recommended path remains `stabilize-first`, but the release-hardening
+baseline is now materially more complete.
 
 Rationale:
 
 - the system already has several real slices worth protecting
 - the main remaining risk is no longer missing core functionality, but
   operational confidence
-- the highest-value next work is proving restore, rollback, and release
-  discipline against the now-real stack before another feature wave
+- the highest-value next work is narrowing the remaining operability gaps
+  exposed after restore, rollback, deploy, and smoke proof landed on the now-real
+  stack
+- Telegram escalation and terminal-failure policy are a stronger next candidate
+  than another round of generic release-path proof
 
 ## Phase A: Stabilization
 
@@ -73,9 +75,10 @@ Phase A is complete only when all of the following are true:
 Status on current branch:
 
 - `A1` through `A5` are complete in code and docs
-- `A7` is complete for the canonical smoke flow
-- the remaining meaningful gap is `A6`, where procedures exist but proof is
-  still too document-heavy
+- `A6` is complete through disposable restore proof, immutable-tag rollback
+  proof, version-policy documentation, and an aligned deploy gate contract
+- `A7` is complete for the canonical smoke flow, including mandatory CI
+  `voice-enabled` smoke and Open WebUI voice wiring validation
 
 ### A1. Truth Pass For Docs And Metadata
 
@@ -436,7 +439,7 @@ Primary targets:
 
 ## Explicit Non-Priorities Right Now
 
-Do not prioritize these before Phase A is complete:
+Do not prioritize these ahead of the remaining Telegram and operability follow-up:
 
 - XTTS or other premium GPU voice profiles
 - streaming TTS

@@ -26,6 +26,11 @@ That script checks:
 - a simple `POST /v1/chat/completions` request through the canonical backend path
 - `POST /v1/audio/transcriptions` when `VOICE_ENABLED=true` in the deployment env
 - `POST /v1/audio/speech` when `VOICE_ENABLED=true` in the deployment env
+- Open WebUI voice wiring to `agent-api` when `VOICE_ENABLED=true` in the deployment env
+
+The automated baseline is not a browser-driven UI test.
+It validates the public `agent-api` ingress directly and, for the supported
+voice profile, separately validates the effective Open WebUI runtime wiring.
 
 The rest of this document is still the broader manual checklist to use after the automated baseline passes.
 
@@ -39,6 +44,7 @@ Supported profile expectations:
   - `COMPOSE_PROFILES=voice`
   - `VOICE_ENABLED=true`
   - smoke must validate chat, STT, and TTS through `agent-api`
+  - smoke must validate Open WebUI voice wiring to the same `agent-api` ingress
   - `stt-service` is expected to prewarm its configured runtime during startup
     instead of acquiring it lazily on the first readiness call
 
@@ -51,6 +57,11 @@ When Telegram smoke inputs are configured, the automated baseline may also run:
 
 That check is intended for deterministic environments with stubbed downstream dependencies, such as CI or dedicated smoke stacks.
 The CI smoke stack uses `ollama-fake` for model runtime calls and `telegram-fake` for Telegram delivery.
+
+Current CI baseline:
+
+- `smoke-model` validates the text path and deterministic Telegram smoke
+- `smoke-voice` is a mandatory `voice-enabled-cpu` gate with STT, TTS, and Open WebUI voice wiring checks
 
 ## Required checks
 

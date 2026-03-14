@@ -14,6 +14,7 @@ Index:
 - `drill-rollback.sh`: open when proving rollback against explicit immutable image tags on a deterministic local stack.
 - `ensure-ollama-models.sh`: open when changing model preloading for CI or deployment.
 - `smoke-agent-api.py`: open when changing the canonical HTTP smoke contract for `agent-api`, including the `text-only` and `voice-enabled-cpu` profile checks.
+- `smoke-open-webui.py`: open when changing the runtime wiring validation for Open WebUI voice integration with `agent-api`.
 - `smoke-telegram-ingress.py`: open when changing deterministic smoke coverage for the Telegram ingress path.
 - `smoke.sh`: open when changing the containerized smoke flow used after deploy, including `VOICE_ENABLED` and `COMPOSE_PROFILES` expectations.
 - `test-python-services.sh`: open when changing the per-service Python test runner.

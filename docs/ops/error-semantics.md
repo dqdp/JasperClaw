@@ -60,6 +60,8 @@ Validation and request codes:
 - `missing_required_field`
 - `unknown_profile`
 - `unsupported_feature`
+- `unsupported_model`
+- `invalid_response_format`
 
 Authentication and authorization codes:
 
@@ -74,6 +76,7 @@ Policy codes:
 Dependency codes:
 
 - `database_unavailable`
+- `transcription_service_unavailable`
 - `runtime_unavailable`
 - `dependency_timeout`
 - `speech_service_unavailable`
