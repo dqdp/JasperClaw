@@ -16,6 +16,40 @@ def _load_smoke_module():
     return module
 
 
+def _discovery_payload() -> tuple[int, dict]:
+    return (
+        200,
+        {
+            "capabilities": [
+                {"id": "voice", "label": "Voice conversation", "state": "real"},
+                {
+                    "id": "spotify_playback",
+                    "label": "Spotify playback",
+                    "state": "demo",
+                },
+                {
+                    "id": "spotify_station",
+                    "label": "Spotify station",
+                    "state": "demo",
+                },
+                {
+                    "id": "telegram_send",
+                    "label": "Telegram send",
+                    "state": "unconfigured",
+                },
+            ],
+            "commands": ["/help", "/status", "/ask <message>"],
+            "help_text": "Spotify playback is demo. Telegram send is not configured.",
+            "status_text": (
+                "Voice conversation: connected\n"
+                "Spotify playback: demo\n"
+                "Spotify station: demo\n"
+                "Telegram send: not configured"
+            ),
+        },
+    )
+
+
 def test_main_passes_without_voice_check(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _load_smoke_module()
     monkeypatch.setenv("SMOKE_BASE_URL", "http://127.0.0.1:18080")
@@ -34,6 +68,7 @@ def test_main_passes_without_voice_check(monkeypatch: pytest.MonkeyPatch) -> Non
                     ]
                 },
             ),
+            _discovery_payload(),
             (
                 200,
                 {
@@ -96,6 +131,7 @@ def test_main_checks_voice_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None
                     ]
                 },
             ),
+            _discovery_payload(),
             (
                 200,
                 {
@@ -167,6 +203,7 @@ def test_main_retries_voice_until_it_stabilizes(
                     ]
                 },
             ),
+            _discovery_payload(),
             (
                 200,
                 {
@@ -226,6 +263,7 @@ def test_main_checks_stt_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
                     ]
                 },
             ),
+            _discovery_payload(),
             (
                 200,
                 {
@@ -303,6 +341,7 @@ def test_main_retries_stt_until_it_stabilizes(
                     ]
                 },
             ),
+            _discovery_payload(),
             (
                 200,
                 {
@@ -366,4 +405,52 @@ def test_main_rejects_missing_public_profiles(
     monkeypatch.setattr(module, "_wait_for_success", fake_wait_for_success)
 
     with pytest.raises(SystemExit, match="Required public model IDs missing"):
+        module.main()
+
+
+def test_main_rejects_invalid_capability_discovery_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_smoke_module()
+    monkeypatch.setenv("SMOKE_BASE_URL", "http://127.0.0.1:18080")
+    monkeypatch.setenv("SMOKE_INTERNAL_OPENAI_API_KEY", "smoke-key")
+    monkeypatch.delenv("SMOKE_CHECK_VOICE", raising=False)
+
+    wait_payloads = iter(
+        [
+            (
+                200,
+                {
+                    "data": [
+                        {"id": "assistant-v1"},
+                        {"id": "assistant-fast"},
+                    ]
+                },
+            ),
+            (
+                200,
+                {
+                    "capabilities": [{"id": "voice", "label": "Voice conversation"}],
+                    "commands": ["/help"],
+                    "help_text": "Voice conversation is connected.",
+                    "status_text": "Voice conversation: connected",
+                },
+            ),
+        ]
+    )
+
+    def fake_request_json(url: str, **kwargs):
+        _ = kwargs
+        if url.endswith("/readyz"):
+            return 200, {"status": "ready"}
+        raise AssertionError(f"unexpected direct JSON request: {url}")
+
+    def fake_wait_for_success(**kwargs):
+        _ = kwargs
+        return next(wait_payloads)
+
+    monkeypatch.setattr(module, "_request_json", fake_request_json)
+    monkeypatch.setattr(module, "_wait_for_success", fake_wait_for_success)
+
+    with pytest.raises(SystemExit, match="Capability discovery payload was invalid"):
         module.main()

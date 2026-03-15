@@ -148,6 +148,48 @@ def _wait_for_success(
         time.sleep(2)
 
 
+def _assert_valid_capability_discovery(payload: dict) -> None:
+    capabilities = payload.get("capabilities")
+    commands = payload.get("commands")
+    help_text = payload.get("help_text")
+    status_text = payload.get("status_text")
+
+    if not isinstance(capabilities, list) or not capabilities:
+        raise SystemExit(f"Capability discovery payload was invalid: {payload}")
+    if not isinstance(commands, list) or not all(
+        isinstance(command, str) and command.strip() for command in commands
+    ):
+        raise SystemExit(f"Capability discovery payload was invalid: {payload}")
+    if not isinstance(help_text, str) or not help_text.strip():
+        raise SystemExit(f"Capability discovery payload was invalid: {payload}")
+    if not isinstance(status_text, str) or not status_text.strip():
+        raise SystemExit(f"Capability discovery payload was invalid: {payload}")
+
+    allowed_states = {"demo", "real", "unconfigured"}
+    for entry in capabilities:
+        if not isinstance(entry, dict):
+            raise SystemExit(f"Capability discovery payload was invalid: {payload}")
+        capability_id = entry.get("id")
+        label = entry.get("label")
+        state = entry.get("state")
+        if (
+            not isinstance(capability_id, str)
+            or not capability_id.strip()
+            or not isinstance(label, str)
+            or not label.strip()
+            or not isinstance(state, str)
+            or state not in allowed_states
+        ):
+            raise SystemExit(f"Capability discovery payload was invalid: {payload}")
+
+    for forbidden_text in ("spotify-search", "SPOTIFY_ACCESS_TOKEN"):
+        if forbidden_text in help_text or forbidden_text in status_text:
+            raise SystemExit(
+                "Capability discovery leaked internal helper or raw config details: "
+                f"{forbidden_text}"
+            )
+
+
 def _decode_error_payload(body: bytes) -> dict:
     try:
         return json.loads(body.decode())
@@ -216,6 +258,17 @@ def main() -> int:
         raise SystemExit(
             f"Required public model IDs missing from model list: {sorted(model_ids)}"
         )
+
+    status, payload = _wait_for_success(
+        request_fn=lambda: _request_json(
+            f"{base_url}/v1/capabilities/discovery",
+            headers=auth_headers,
+        ),
+        success_predicate=lambda status, payload: status == 200,
+        timeout_seconds=30.0,
+        error_context="/v1/capabilities/discovery did not stabilize before timeout",
+    )
+    _assert_valid_capability_discovery(payload)
 
     status, payload = _wait_for_success(
         request_fn=lambda: _request_json(
