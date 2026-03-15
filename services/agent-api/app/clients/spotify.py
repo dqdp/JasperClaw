@@ -21,6 +21,14 @@ class SpotifyTrackItem:
     external_url: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class SpotifyPlaylistItem:
+    name: str
+    owner: str
+    uri: str
+    external_url: str | None
+
+
 class SpotifyClient:
     def __init__(
         self,
@@ -96,6 +104,43 @@ class SpotifyClient:
                     message="Spotify search payload contains invalid track item",
                 )
             results.append(self._normalize_search_item(raw_item))
+        return results
+
+    def list_playlists(self, *, limit: int) -> list[SpotifyPlaylistItem]:
+        response = self._authenticated_request(
+            "GET",
+            f"{self._base_url}/v1/me/playlists",
+            params={"limit": str(limit)},
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify playlists provider returned invalid JSON",
+            ) from exc
+
+        raw_items = payload.get("items")
+        if not isinstance(raw_items, list):
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify playlists payload is missing items",
+            )
+
+        results: list[SpotifyPlaylistItem] = []
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                raise APIError(
+                    status_code=502,
+                    error_type="upstream_error",
+                    code="dependency_bad_response",
+                    message="Spotify playlists payload contains invalid item",
+                )
+            results.append(self._normalize_playlist_item(raw_item))
         return results
 
     def play_track(self, *, track_uri: str, device_id: str | None = None) -> None:
@@ -238,6 +283,57 @@ class SpotifyClient:
             artists=", ".join(artist_names),
             uri=uri,
             album=album,
+            external_url=external_url,
+        )
+
+    def _normalize_playlist_item(
+        self,
+        raw_item: dict[str, object],
+    ) -> SpotifyPlaylistItem:
+        name = raw_item.get("name")
+        uri = raw_item.get("uri")
+        owner_payload = raw_item.get("owner")
+        if not isinstance(name, str) or not name.strip():
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify playlists payload returned invalid playlist name",
+            )
+        if not isinstance(uri, str) or not uri.strip():
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify playlists payload returned invalid playlist URI",
+            )
+        if not isinstance(owner_payload, dict):
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify playlists payload returned invalid playlist owner",
+            )
+        owner = owner_payload.get("display_name")
+        if not isinstance(owner, str) or not owner.strip():
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify playlists payload returned invalid playlist owner",
+            )
+
+        external_url: str | None = None
+        external_urls = raw_item.get("external_urls")
+        if isinstance(external_urls, dict):
+            spotify_url = external_urls.get("spotify")
+            if isinstance(spotify_url, str):
+                external_url = spotify_url
+
+        return SpotifyPlaylistItem(
+            name=name,
+            owner=owner,
+            uri=uri,
             external_url=external_url,
         )
 

@@ -1,5 +1,5 @@
 from app.clients.search import WebSearchResultItem
-from app.clients.spotify import SpotifyTrackItem
+from app.clients.spotify import SpotifyPlaylistItem, SpotifyTrackItem
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.modules.chat.executor import ToolContext, ToolExecutor
@@ -29,8 +29,20 @@ class _FakeSearchClient:
 
 class _FakeSpotifyClient:
     def __init__(self) -> None:
+        self.list_calls: list[dict[str, object]] = []
         self.search_calls: list[dict[str, object]] = []
         self.play_calls: list[dict[str, object]] = []
+
+    def list_playlists(self, *, limit: int) -> list[SpotifyPlaylistItem]:
+        self.list_calls.append({"limit": limit})
+        return [
+            SpotifyPlaylistItem(
+                name="Focus Flow",
+                owner="Alex",
+                uri="spotify:playlist:001",
+                external_url="https://open.spotify.com/playlist/001",
+            )
+        ]
 
     def search_tracks(self, *, query: str, limit: int) -> list[SpotifyTrackItem]:
         self.search_calls.append({"query": query, "limit": limit})
@@ -64,6 +76,7 @@ def _settings(**overrides: object) -> Settings:
         "internal_openai_api_key": "secret",
         "web_search_enabled": True,
         "spotify_access_token": "token",
+        "spotify_playlist_top_k": 5,
     }
     base.update(overrides)
     return Settings(**base)
@@ -172,3 +185,49 @@ def test_tool_executor_executes_spotify_play_action() -> None:
     assert context.execution.status == "completed"
     assert context.execution.output == {"status": "ok"}
     assert "Spotify action completed: spotify-play." in context.runtime_messages[0].content
+
+
+def test_tool_executor_executes_spotify_playlist_listing() -> None:
+    settings = _settings(
+        spotify_client_id="client-id",
+        spotify_client_secret="client-secret",
+        spotify_redirect_uri="http://assistant.test/callback",
+        spotify_refresh_token="refresh-token",
+    )
+    spotify_client = _FakeSpotifyClient()
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=spotify_client,
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_3a",
+        base_messages=[ChatMessage(role="user", content="what playlists do I have?")],
+        decision=ToolPlanningDecision(
+            tool_name="spotify-list-playlists",
+            arguments={},
+        ),
+        annotate_failures=False,
+        request_source=None,
+    )
+
+    assert spotify_client.list_calls == [{"limit": 5}]
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output == {
+        "results": [
+            {
+                "name": "Focus Flow",
+                "owner": "Alex",
+                "uri": "spotify:playlist:001",
+                "external_url": "https://open.spotify.com/playlist/001",
+            }
+        ]
+    }
+    assert "Available Spotify playlists" in context.runtime_messages[0].content

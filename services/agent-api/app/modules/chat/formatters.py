@@ -46,6 +46,29 @@ class ChatPromptFormatter:
         )
         return self._insert_after_system(messages, spotify_message)
 
+    def augment_with_spotify_playlists(
+        self,
+        messages: list[ChatMessage],
+        results: list[dict[str, object]],
+    ) -> list[ChatMessage]:
+        lines = [
+            (
+                f"- {result['name']}\n"
+                f"  Owner: {result['owner']}\n"
+                f"  URI: {result['uri']}"
+            )
+            for result in results
+        ]
+        playlist_message = ChatMessage(
+            role="system",
+            content=(
+                "Available Spotify playlists:\n"
+                + "\n".join(lines)
+                + "\nUse these playlists only when they help answer the request."
+            ),
+        )
+        return self._insert_after_system(messages, playlist_message)
+
     def augment_with_spotify_action(
         self,
         *,

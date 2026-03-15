@@ -53,6 +53,26 @@ def test_formatter_includes_spotify_action_arguments() -> None:
     assert "device id=phone" in messages[0].content
 
 
+def test_formatter_includes_spotify_playlists() -> None:
+    formatter = ChatPromptFormatter()
+
+    messages = formatter.augment_with_spotify_playlists(
+        [ChatMessage(role="user", content="what playlists do I have?")],
+        [
+            {
+                "name": "Focus Flow",
+                "owner": "Alex",
+                "uri": "spotify:playlist:001",
+                "external_url": "https://open.spotify.com/playlist/001",
+            }
+        ],
+    )
+
+    assert "Available Spotify playlists" in messages[0].content
+    assert "Focus Flow" in messages[0].content
+    assert "Owner: Alex" in messages[0].content
+
+
 def test_formatter_marks_tool_unavailable_with_tool_specific_copy() -> None:
     formatter = ChatPromptFormatter()
 

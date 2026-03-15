@@ -7,7 +7,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from app.clients.search import WebSearchClient, WebSearchResultItem
-from app.clients.spotify import SpotifyClient, SpotifyTrackItem
+from app.clients.spotify import SpotifyClient, SpotifyPlaylistItem, SpotifyTrackItem
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
@@ -331,6 +331,63 @@ class ToolExecutor:
                     execution=execution,
                 )
 
+        if decision.tool_name == "spotify-list-playlists":
+            tool_arguments = {
+                "limit": self._settings.spotify_playlist_top_k,
+            }
+            try:
+                playlists = self._spotify_client.list_playlists(
+                    limit=self._settings.spotify_playlist_top_k,
+                )
+                spotify_results = self._normalize_spotify_playlists(playlists)
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="completed",
+                    arguments=tool_arguments,
+                    output={"results": spotify_results},
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                return ToolContext(
+                    runtime_messages=self._prompt_formatter.augment_with_spotify_playlists(
+                        base_messages,
+                        spotify_results,
+                    ),
+                    execution=execution,
+                )
+            except APIError as exc:
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="failed",
+                    arguments=tool_arguments,
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                    error_type=exc.error_type,
+                    error_code=exc.code,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                return ToolContext(
+                    runtime_messages=self._apply_tool_failure_policy(
+                        base_messages=base_messages,
+                        annotate_failures=annotate_failures,
+                        tool_name=decision.tool_name,
+                    ),
+                    execution=execution,
+                )
+
         device_id = self._normalize_optional_device_id(decision.arguments)
 
         try:
@@ -463,6 +520,20 @@ class ToolExecutor:
                 "url": item.external_url,
             }
             for item in results
+        ]
+
+    def _normalize_spotify_playlists(
+        self,
+        playlists: list[SpotifyPlaylistItem],
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "name": item.name,
+                "owner": item.owner,
+                "uri": item.uri,
+                "external_url": item.external_url,
+            }
+            for item in playlists
         ]
 
     def _normalize_track_uri(self, arguments: dict[str, object]) -> str:

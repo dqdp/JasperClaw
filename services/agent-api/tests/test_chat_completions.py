@@ -5,7 +5,7 @@ from app.api import deps
 from app.clients.ollama import OllamaChatStreamChunk
 from app.core.config import get_settings
 from app.core.errors import APIError
-from app.clients.spotify import SpotifyTrackItem
+from app.clients.spotify import SpotifyPlaylistItem, SpotifyTrackItem
 from app.repositories.postgres import (
     ChatPersistenceResult,
     ConversationContext,
@@ -130,7 +130,9 @@ class _FakeSearchClient:
 
 class _FakeSpotifyClient:
     search_results = []
+    playlist_results = []
     error = None
+    list_calls = []
     search_calls = []
     play_calls = []
     pause_calls = []
@@ -141,6 +143,12 @@ class _FakeSpotifyClient:
         if _FakeSpotifyClient.error is not None:
             raise _FakeSpotifyClient.error
         return list(_FakeSpotifyClient.search_results)
+
+    def list_playlists(self, *, limit: int):
+        _FakeSpotifyClient.list_calls.append({"limit": limit})
+        if _FakeSpotifyClient.error is not None:
+            raise _FakeSpotifyClient.error
+        return list(_FakeSpotifyClient.playlist_results)
 
     def play_track(self, *, track_uri: str, device_id: str | None = None):
         _FakeSpotifyClient.play_calls.append(
@@ -186,7 +194,9 @@ def _patch_search_client():
 
 def _patch_spotify_client():
     _FakeSpotifyClient.search_results = []
+    _FakeSpotifyClient.playlist_results = []
     _FakeSpotifyClient.error = None
+    _FakeSpotifyClient.list_calls = []
     _FakeSpotifyClient.search_calls = []
     _FakeSpotifyClient.play_calls = []
     _FakeSpotifyClient.pause_calls = []
@@ -839,6 +849,69 @@ def test_chat_completions_model_driven_spotify_play_executes_action(
     assert len(repository.tool_execution_calls) == 1
     tool_execution = repository.tool_execution_calls[0]["tool_execution"]
     assert tool_execution.tool_name == "spotify-play"
+    assert tool_execution.status == "completed"
+
+
+def test_chat_completions_model_driven_spotify_playlist_listing_uses_spotify_adapter(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", "client-id")
+    monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("SPOTIFY_REDIRECT_URI", "http://assistant.test/callback")
+    monkeypatch.setenv("SPOTIFY_REFRESH_TOKEN", "refresh-token")
+    monkeypatch.setenv("SPOTIFY_PLAYLIST_TOP_K", "5")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_spotify_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_spotify_client] = (
+        lambda: _FakeSpotifyClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"spotify-list-playlists"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Here are your playlists.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+    _FakeSpotifyClient.playlist_results = [
+        SpotifyPlaylistItem(
+            name="Focus Flow",
+            owner="Alex",
+            uri="spotify:playlist:001",
+            external_url="https://open.spotify.com/playlist/001",
+        )
+    ]
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Here are your playlists."
+    assert _FakeSpotifyClient.list_calls == [{"limit": 5}]
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Available Spotify playlists" in final_messages[0]["content"]
+    assert "Focus Flow" in final_messages[0]["content"]
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "spotify-list-playlists"
     assert tool_execution.status == "completed"
 
 

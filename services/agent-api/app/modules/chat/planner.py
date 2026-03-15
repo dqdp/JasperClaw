@@ -8,6 +8,7 @@ from app.schemas.chat import ChatCompletionRequest, ChatMessage
 
 SUPPORTED_TOOL_NAMES = (
     "web-search",
+    "spotify-list-playlists",
     "spotify-search",
     "spotify-play",
     "spotify-pause",
@@ -36,9 +37,11 @@ class ToolPlanner:
         *,
         web_search_available: bool,
         spotify_available: bool,
+        spotify_real_available: bool = False,
     ) -> None:
         self._web_search_available = web_search_available
         self._spotify_available = spotify_available
+        self._spotify_real_available = spotify_real_available
 
     def is_web_search_requested(self, request: ChatCompletionRequest) -> bool:
         if not request.metadata:
@@ -54,7 +57,11 @@ class ToolPlanner:
     ) -> bool:
         if request.metadata and "web_search" in request.metadata:
             return False
-        if not self._web_search_available and not self._spotify_available:
+        if (
+            not self._web_search_available
+            and not self._spotify_available
+            and not self._spotify_real_available
+        ):
             return False
         return self._latest_user_message(request.messages) is not None
 
@@ -65,6 +72,8 @@ class ToolPlanner:
         tool_examples: list[str] = []
         if self._web_search_available:
             tool_examples.append('{"tool":"web-search","query":"..."}')
+        if self._spotify_real_available:
+            tool_examples.append('{"tool":"spotify-list-playlists"}')
         if self._spotify_available:
             tool_examples.extend(
                 [
@@ -129,6 +138,8 @@ class ToolPlanner:
             if not query:
                 return None
             arguments["query"] = query
+        elif tool_name == "spotify-list-playlists":
+            arguments = {}
         elif tool_name == "spotify-play":
             track_uri = arguments.get("track_uri")
             if track_uri is None:

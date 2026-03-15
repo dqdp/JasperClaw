@@ -65,3 +65,24 @@ def test_tool_policy_allows_configured_web_search_and_spotify() -> None:
     assert web_search.adapter_name == "search-http"
     assert spotify.allowed is True
     assert spotify.adapter_name == "spotify-http"
+
+
+def test_tool_policy_requires_real_spotify_bootstrap_for_playlist_listing() -> None:
+    denied = ToolPolicyEngine(
+        settings=_settings(spotify_access_token="token"),
+        web_search_adapter_available=False,
+    ).evaluate("spotify-list-playlists")
+    allowed = ToolPolicyEngine(
+        settings=_settings(
+            spotify_client_id="client-id",
+            spotify_client_secret="client-secret",
+            spotify_redirect_uri="http://assistant.test/callback",
+            spotify_refresh_token="refresh-token",
+        ),
+        web_search_adapter_available=False,
+    ).evaluate("spotify-list-playlists")
+
+    assert denied.allowed is False
+    assert "real Spotify baseline" in (denied.error_message or "")
+    assert allowed.allowed is True
+    assert allowed.adapter_name == "spotify-http"

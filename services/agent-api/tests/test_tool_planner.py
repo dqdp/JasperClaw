@@ -41,7 +41,11 @@ def test_tool_planner_requires_available_tools_and_user_message() -> None:
 
 
 def test_tool_planner_builds_prompt_after_existing_system_messages() -> None:
-    planner = ToolPlanner(web_search_available=True, spotify_available=True)
+    planner = ToolPlanner(
+        web_search_available=True,
+        spotify_available=True,
+        spotify_real_available=True,
+    )
 
     messages = planner.build_planning_messages(
         [
@@ -54,10 +58,15 @@ def test_tool_planner_builds_prompt_after_existing_system_messages() -> None:
     assert messages[1].role == "system"
     assert '{"tool":"web-search","query":"..."}' in messages[1].content
     assert '{"tool":"spotify-play","track_uri":"..."}' in messages[1].content
+    assert '{"tool":"spotify-list-playlists"}' in messages[1].content
 
 
 def test_tool_planner_parses_supported_directives() -> None:
-    planner = ToolPlanner(web_search_available=True, spotify_available=True)
+    planner = ToolPlanner(
+        web_search_available=True,
+        spotify_available=True,
+        spotify_real_available=True,
+    )
 
     assert planner.parse_decision('{"tool":"web-search","query":"  weather  "}') == (
         ToolPlanningDecision(
@@ -74,10 +83,20 @@ def test_tool_planner_parses_supported_directives() -> None:
             "device_id": "phone",
         },
     )
+    assert planner.parse_decision('{"tool":"spotify-list-playlists"}') == (
+        ToolPlanningDecision(
+            tool_name="spotify-list-playlists",
+            arguments={},
+        )
+    )
 
 
 def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
-    planner = ToolPlanner(web_search_available=True, spotify_available=True)
+    planner = ToolPlanner(
+        web_search_available=True,
+        spotify_available=True,
+        spotify_real_available=True,
+    )
 
     assert planner.parse_decision('{"tool":"unknown","query":"x"}') is None
     assert planner.parse_decision('{"tool":"spotify-play","device_id":""}') is None
@@ -88,3 +107,4 @@ def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
     assert planner.content_outcome('{"tool":"unknown"}', None) == "invalid_directive"
     assert planner.content_outcome("answer directly", None) == "respond_directly"
     assert "web-search" in SUPPORTED_TOOL_NAMES
+    assert "spotify-list-playlists" in SUPPORTED_TOOL_NAMES
