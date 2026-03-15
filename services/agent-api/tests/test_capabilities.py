@@ -55,7 +55,7 @@ def test_capability_discovery_endpoint_returns_user_facing_surface(
             {
                 "id": "spotify_playback",
                 "label": "Spotify playback",
-                "state": "real",
+                "state": "unconfigured",
             },
             {
                 "id": "spotify_station",
@@ -73,17 +73,39 @@ def test_capability_discovery_endpoint_returns_user_facing_surface(
             "I can answer questions, talk by voice when enabled, help with Spotify "
             "playback, and send Telegram messages to configured aliases.\n"
             "Current state: Voice conversation is connected; Spotify playback is "
-            "connected; Spotify station is not configured; Telegram send is not "
+            "not configured; Spotify station is not configured; Telegram send is not "
             "configured.\n"
             "Commands: /help, /status, /ask <message>"
         ),
         "status_text": (
             "Voice conversation: connected\n"
-            "Spotify playback: connected\n"
+            "Spotify playback: not configured\n"
             "Spotify station: not configured\n"
             "Telegram send: not configured"
         ),
     }
+
+
+def test_capability_discovery_endpoint_requires_refresh_capable_spotify_bootstrap_for_real(
+    client,
+    auth_headers,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", "spotify-client")
+    monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "spotify-secret")
+    monkeypatch.setenv("SPOTIFY_REDIRECT_URI", "http://assistant.test/callback")
+    monkeypatch.setenv("SPOTIFY_REFRESH_TOKEN", "spotify-refresh")
+
+    response = client.get("/v1/capabilities/discovery", headers=auth_headers)
+
+    assert response.status_code == 200
+    spotify_playback = next(
+        capability
+        for capability in response.json()["capabilities"]
+        if capability["id"] == "spotify_playback"
+    )
+    assert spotify_playback["state"] == "real"
+    assert "Spotify playback is connected" in response.json()["help_text"]
 
 
 def test_capability_discovery_endpoint_marks_telegram_send_demo_when_demo_household_exists(

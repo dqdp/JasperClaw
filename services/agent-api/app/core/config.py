@@ -30,6 +30,7 @@ class Settings:
     spotify_client_id: str = ""
     spotify_client_secret: str = ""
     spotify_redirect_uri: str = ""
+    spotify_refresh_token: str = ""
     spotify_timeout_seconds: float = 5.0
     spotify_search_top_k: int = 3
     household_config_path: str = ""
@@ -55,6 +56,16 @@ class Settings:
         return bool(
             self.spotify_access_token
             or (self.spotify_client_id and self.spotify_client_secret)
+        )
+
+    def is_spotify_real_configured(self) -> bool:
+        # Discovery uses the stricter baseline contract: refresh-capable auth is
+        # required for "real", even while the older execution scaffold still exists.
+        return bool(
+            self.spotify_client_id
+            and self.spotify_client_secret
+            and self.spotify_redirect_uri
+            and self.spotify_refresh_token
         )
 
 
@@ -112,6 +123,7 @@ def get_settings() -> Settings:
         spotify_client_id=(os.getenv("SPOTIFY_CLIENT_ID", "") or "").strip(),
         spotify_client_secret=(os.getenv("SPOTIFY_CLIENT_SECRET", "") or "").strip(),
         spotify_redirect_uri=(os.getenv("SPOTIFY_REDIRECT_URI", "") or "").strip(),
+        spotify_refresh_token=(os.getenv("SPOTIFY_REFRESH_TOKEN", "") or "").strip(),
         spotify_timeout_seconds=float(os.getenv("SPOTIFY_TIMEOUT_SECONDS", "5")),
         spotify_search_top_k=int(os.getenv("SPOTIFY_SEARCH_TOP_K", "3")),
         household_config_path=(os.getenv("HOUSEHOLD_CONFIG_PATH", "") or "").strip(),

@@ -79,7 +79,7 @@ def resolve_capability_discovery(settings: Settings) -> CapabilityDiscoverySnaps
             id="spotify_playback",
             label="Spotify playback",
             state="real"
-            if settings.is_spotify_client_configured()
+            if settings.is_spotify_real_configured()
             else "unconfigured",
         ),
         CapabilityDiscoveryEntry(
