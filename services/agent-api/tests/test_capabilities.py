@@ -104,8 +104,15 @@ def test_capability_discovery_endpoint_requires_refresh_capable_spotify_bootstra
         for capability in response.json()["capabilities"]
         if capability["id"] == "spotify_playback"
     )
+    spotify_station = next(
+        capability
+        for capability in response.json()["capabilities"]
+        if capability["id"] == "spotify_station"
+    )
     assert spotify_playback["state"] == "real"
+    assert spotify_station["state"] == "real"
     assert "Spotify playback is connected" in response.json()["help_text"]
+    assert "Spotify station is connected" in response.json()["help_text"]
 
 
 def test_capability_discovery_endpoint_marks_telegram_send_demo_when_demo_household_exists(

@@ -68,6 +68,9 @@ def build_capability_discovery_snapshot(
 
 def resolve_capability_discovery(settings: Settings) -> CapabilityDiscoverySnapshot:
     telegram_state = _resolve_telegram_household_state(settings)
+    spotify_state: CapabilityState = (
+        "real" if settings.is_spotify_real_configured() else "unconfigured"
+    )
     commands = ["/help", "/status", "/ask <message>"]
     if telegram_state != "unconfigured":
         commands.extend(("/aliases", "/send <alias> <message>"))
@@ -80,16 +83,12 @@ def resolve_capability_discovery(settings: Settings) -> CapabilityDiscoverySnaps
         CapabilityDiscoveryEntry(
             id="spotify_playback",
             label="Spotify playback",
-            state="real"
-            if settings.is_spotify_real_configured()
-            else "unconfigured",
+            state=spotify_state,
         ),
         CapabilityDiscoveryEntry(
             id="spotify_station",
             label="Spotify station",
-            # Station discovery exists in the product contract before the execution
-            # path lands; keep the state honest until the typed capability exists.
-            state="unconfigured",
+            state=spotify_state,
         ),
         CapabilityDiscoveryEntry(
             id="telegram_send",
