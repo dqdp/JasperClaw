@@ -28,8 +28,13 @@ class _FakeCursor:
     def execute(self, sql, params=None) -> None:
         normalized = " ".join(sql.split())
         self._connection.executed.append((normalized, params))
-        if normalized.startswith(
-            "SELECT id, conversation_id, request_id, source_class, tool_name, status, clarification_count, request_payload_json, created_at, expires_at, resolved_at FROM pending_tool_confirmations"
+        if (
+            normalized.startswith(
+                "SELECT id, conversation_id, request_id, source_class, tool_name, status, clarification_count, request_payload_json, created_at, expires_at, resolved_at FROM pending_tool_confirmations"
+            )
+            or normalized.startswith(
+                "UPDATE pending_tool_confirmations SET clarification_count = clarification_count + 1 WHERE id = %s AND conversation_id = %s AND status = %s RETURNING"
+            )
         ):
             self._rows = list(self._connection.rows)
             return
@@ -172,5 +177,49 @@ def test_pending_confirmation_repository_loads_active_pending(monkeypatch) -> No
         (
             "SELECT id, conversation_id, request_id, source_class, tool_name, status, clarification_count, request_payload_json, created_at, expires_at, resolved_at FROM pending_tool_confirmations WHERE conversation_id = %s AND status = %s ORDER BY created_at DESC LIMIT 1",
             ("conv_1", "pending"),
+        )
+    ]
+
+
+def test_pending_confirmation_repository_increments_clarification(monkeypatch) -> None:
+    from app.persistence.pending_confirmation_repo import (
+        PostgresPendingToolConfirmationRepository,
+    )
+
+    fake_connection = _FakeConnection()
+    fake_connection.rows = [
+        (
+            "confirm_123",
+            "conv_1",
+            "req_1",
+            "agent_api",
+            "telegram-send",
+            "pending",
+            2,
+            {"alias": "wife", "text": "Running late"},
+            datetime(2026, 3, 15, 10, 0, tzinfo=timezone.utc),
+            datetime(2026, 3, 15, 10, 0, 30, tzinfo=timezone.utc),
+            None,
+        )
+    ]
+    monkeypatch.setattr(
+        "app.persistence.pending_confirmation_repo.psycopg.connect",
+        lambda database_url: fake_connection,
+    )
+    repository = PostgresPendingToolConfirmationRepository(
+        database_url="postgresql://assistant:change-me@postgres:5432/assistant"
+    )
+
+    record = repository.increment_pending_confirmation_clarification(
+        confirmation_id="confirm_123",
+        conversation_id="conv_1",
+    )
+
+    assert record is not None
+    assert record.clarification_count == 2
+    assert fake_connection.executed == [
+        (
+            "UPDATE pending_tool_confirmations SET clarification_count = clarification_count + 1 WHERE id = %s AND conversation_id = %s AND status = %s RETURNING id, conversation_id, request_id, source_class, tool_name, status, clarification_count, request_payload_json, created_at, expires_at, resolved_at",
+            ("confirm_123", "conv_1", "pending"),
         )
     ]

@@ -93,6 +93,7 @@ class DeterministicToolOutcome:
 
 _CONFIRM_WORDS = frozenset({"да", "подтверждаю", "отправь", "окей", "ок"})
 _CANCEL_WORDS = frozenset({"нет", "отмена", "не надо", "стоп"})
+_UNCLEAR_WORDS = frozenset({"может быть", "не знаю", "повтори", "что"})
 _PENDING_CONFIRMATION_TIMEOUT = timedelta(seconds=30)
 
 
@@ -997,12 +998,33 @@ class ChatService:
             return None
         source_class = self._resolve_source_class(request)
         normalized_reply = latest_user_message.strip().casefold()
+        now = datetime.now(timezone.utc)
+
+        if pending.expires_at <= now:
+            self._repository.resolve_pending_tool_confirmation(
+                confirmation_id=pending.confirmation_id,
+                conversation_id=prepared_context.conversation_id,
+                status="expired",
+                resolved_at=now,
+            )
+            if normalized_reply in (_CONFIRM_WORDS | _CANCEL_WORDS | _UNCLEAR_WORDS):
+                return self._build_deterministic_tool_outcome(
+                    conversation_id=prepared_context.conversation_id,
+                    content="Подтверждение истекло. Попроси отправить сообщение заново.",
+                    tool_name=pending.tool_name,
+                    tool_status="expired",
+                    arguments=pending.arguments,
+                    output={"status": "expired"},
+                    request_id=request_id,
+                )
+            return None
+
         if normalized_reply in _CANCEL_WORDS:
             self._repository.resolve_pending_tool_confirmation(
                 confirmation_id=pending.confirmation_id,
                 conversation_id=prepared_context.conversation_id,
                 status="cancelled",
-                resolved_at=datetime.now(timezone.utc),
+                resolved_at=now,
             )
             return self._build_deterministic_tool_outcome(
                 conversation_id=prepared_context.conversation_id,
@@ -1014,10 +1036,7 @@ class ChatService:
                 request_id=request_id,
             )
 
-        if normalized_reply not in _CONFIRM_WORDS:
-            return None
-
-        if source_class != pending.source_class:
+        if normalized_reply in _CONFIRM_WORDS and source_class != pending.source_class:
             return self._build_deterministic_tool_outcome(
                 conversation_id=prepared_context.conversation_id,
                 content=(
@@ -1030,71 +1049,117 @@ class ChatService:
                 request_id=request_id,
             )
 
-        transitioned = self._repository.resolve_pending_tool_confirmation(
-            confirmation_id=pending.confirmation_id,
-            conversation_id=prepared_context.conversation_id,
-            status="executing",
-            resolved_at=datetime.now(timezone.utc),
-        )
-        if transitioned is None:
-            return None
+        if normalized_reply in _CONFIRM_WORDS:
+            transitioned = self._repository.resolve_pending_tool_confirmation(
+                confirmation_id=pending.confirmation_id,
+                conversation_id=prepared_context.conversation_id,
+                status="executing",
+                resolved_at=now,
+            )
+            if transitioned is None:
+                return None
 
-        execution_context = self._tool_executor.execute(
-            request_id=request_id,
-            base_messages=list(request.messages),
-            decision=ToolPlanningDecision(
-                tool_name=pending.tool_name,
-                arguments=pending.arguments,
-            ),
-            annotate_failures=False,
-            request_source=self._extract_request_source(request),
-        )
-        if execution_context.execution is None:
+            execution_context = self._tool_executor.execute(
+                request_id=request_id,
+                base_messages=list(request.messages),
+                decision=ToolPlanningDecision(
+                    tool_name=pending.tool_name,
+                    arguments=pending.arguments,
+                ),
+                annotate_failures=False,
+                request_source=self._extract_request_source(request),
+            )
+            if execution_context.execution is None:
+                self._repository.resolve_pending_tool_confirmation(
+                    confirmation_id=pending.confirmation_id,
+                    conversation_id=prepared_context.conversation_id,
+                    status="failed",
+                    resolved_at=datetime.now(timezone.utc),
+                )
+                return self._build_deterministic_tool_outcome(
+                    conversation_id=prepared_context.conversation_id,
+                    content="Не получилось отправить сообщение прямо сейчас.",
+                    tool_name=pending.tool_name,
+                    tool_status="failed",
+                    arguments=pending.arguments,
+                    output={"status": "failed"},
+                    request_id=request_id,
+                )
+
+            final_status = (
+                "executed"
+                if execution_context.execution.status == "completed"
+                else "failed"
+            )
             self._repository.resolve_pending_tool_confirmation(
                 confirmation_id=pending.confirmation_id,
                 conversation_id=prepared_context.conversation_id,
-                status="failed",
+                status=final_status,
                 resolved_at=datetime.now(timezone.utc),
             )
-            return self._build_deterministic_tool_outcome(
-                conversation_id=prepared_context.conversation_id,
-                content="Не получилось отправить сообщение прямо сейчас.",
-                tool_name=pending.tool_name,
-                tool_status="failed",
-                arguments=pending.arguments,
-                output={"status": "failed"},
-                request_id=request_id,
-            )
+            if execution_context.execution.status != "completed":
+                return DeterministicToolOutcome(
+                    conversation_id=prepared_context.conversation_id,
+                    runtime_result=OllamaChatResult(
+                        content="Не получилось отправить сообщение прямо сейчас."
+                    ),
+                    tool_context=execution_context,
+                )
 
-        final_status = (
-            "executed" if execution_context.execution.status == "completed" else "failed"
-        )
-        self._repository.resolve_pending_tool_confirmation(
-            confirmation_id=pending.confirmation_id,
-            conversation_id=prepared_context.conversation_id,
-            status=final_status,
-            resolved_at=datetime.now(timezone.utc),
-        )
-        if execution_context.execution.status != "completed":
+            resolved_send = resolve_telegram_send(
+                settings=self._settings,
+                arguments=pending.arguments,
+            )
             return DeterministicToolOutcome(
                 conversation_id=prepared_context.conversation_id,
                 runtime_result=OllamaChatResult(
-                    content="Не получилось отправить сообщение прямо сейчас."
+                    content=f"Сообщение отправлено {resolved_send.alias}."
                 ),
                 tool_context=execution_context,
             )
 
-        resolved_send = resolve_telegram_send(
-            settings=self._settings,
-            arguments=pending.arguments,
-        )
-        return DeterministicToolOutcome(
+        if normalized_reply in _UNCLEAR_WORDS:
+            if pending.clarification_count < 1:
+                self._repository.increment_pending_tool_confirmation_clarification(
+                    confirmation_id=pending.confirmation_id,
+                    conversation_id=prepared_context.conversation_id,
+                )
+                return self._build_deterministic_tool_outcome(
+                    conversation_id=prepared_context.conversation_id,
+                    content="Подтвердить отправку или отменить? Скажи 'да' или 'отмена'.",
+                    tool_name=pending.tool_name,
+                    tool_status="pending_confirmation",
+                    arguments=pending.arguments,
+                    output={"status": "pending_confirmation"},
+                    request_id=request_id,
+                )
+
+            self._repository.resolve_pending_tool_confirmation(
+                confirmation_id=pending.confirmation_id,
+                conversation_id=prepared_context.conversation_id,
+                status="cancelled",
+                resolved_at=now,
+            )
+            return self._build_deterministic_tool_outcome(
+                conversation_id=prepared_context.conversation_id,
+                content="Не получил понятного подтверждения, отправку отменил.",
+                tool_name=pending.tool_name,
+                tool_status="cancelled",
+                arguments=pending.arguments,
+                output={"status": "cancelled"},
+                request_id=request_id,
+            )
+
+        if normalized_reply in _CONFIRM_WORDS:
+            return None
+
+        self._repository.resolve_pending_tool_confirmation(
+            confirmation_id=pending.confirmation_id,
             conversation_id=prepared_context.conversation_id,
-            runtime_result=OllamaChatResult(
-                content=f"Сообщение отправлено {resolved_send.alias}."
-            ),
-            tool_context=execution_context,
+            status="interrupted",
+            resolved_at=now,
         )
+        return None
 
     def _create_pending_telegram_send_confirmation(
         self,
