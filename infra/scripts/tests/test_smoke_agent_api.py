@@ -320,6 +320,71 @@ def test_main_checks_stt_when_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(file_bytes) > 16000
 
 
+def test_main_checks_spotify_demo_intent_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_smoke_module()
+    monkeypatch.setenv("SMOKE_BASE_URL", "http://127.0.0.1:18080")
+    monkeypatch.setenv("SMOKE_INTERNAL_OPENAI_API_KEY", "smoke-key")
+    monkeypatch.setenv("SPOTIFY_DEMO_ENABLED", "true")
+    monkeypatch.delenv("SMOKE_CHECK_VOICE", raising=False)
+    monkeypatch.delenv("SMOKE_CHECK_STT", raising=False)
+
+    wait_payloads = iter(
+        [
+            (
+                200,
+                {
+                    "data": [
+                        {"id": "assistant-v1"},
+                        {"id": "assistant-fast"},
+                    ]
+                },
+            ),
+            _discovery_payload(),
+            (
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "ok",
+                            }
+                        }
+                    ]
+                },
+            ),
+            (
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "Focus Flow and Energy Kick are available in demo mode.",
+                            }
+                        }
+                    ]
+                },
+            ),
+        ]
+    )
+
+    def fake_request_json(url: str, **kwargs):
+        _ = kwargs
+        if url.endswith("/readyz"):
+            return 200, {"status": "ready"}
+        raise AssertionError(f"unexpected direct JSON request: {url}")
+
+    def fake_wait_for_success(**kwargs):
+        _ = kwargs
+        return next(wait_payloads)
+
+    monkeypatch.setattr(module, "_request_json", fake_request_json)
+    monkeypatch.setattr(module, "_wait_for_success", fake_wait_for_success)
+
+    assert module.main() == 0
+
+
 def test_main_retries_stt_until_it_stabilizes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

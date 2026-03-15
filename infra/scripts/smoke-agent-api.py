@@ -190,6 +190,19 @@ def _assert_valid_capability_discovery(payload: dict) -> None:
             )
 
 
+def _capability_state(payload: dict, capability_id: str) -> str | None:
+    capabilities = payload.get("capabilities")
+    if not isinstance(capabilities, list):
+        return None
+    for entry in capabilities:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("id") == capability_id:
+            state = entry.get("state")
+            return state if isinstance(state, str) else None
+    return None
+
+
 def _decode_error_payload(body: bytes) -> dict:
     try:
         return json.loads(body.decode())
@@ -268,7 +281,8 @@ def main() -> int:
         timeout_seconds=30.0,
         error_context="/v1/capabilities/discovery did not stabilize before timeout",
     )
-    _assert_valid_capability_discovery(payload)
+    discovery_payload = payload
+    _assert_valid_capability_discovery(discovery_payload)
 
     status, payload = _wait_for_success(
         request_fn=lambda: _request_json(
@@ -292,6 +306,58 @@ def main() -> int:
     content = message.get("content", "").strip() if isinstance(message, dict) else ""
     if not content:
         raise SystemExit(f"Chat response content was empty: {payload}")
+
+    if _is_truthy_env("SMOKE_CHECK_SPOTIFY_DEMO") or _is_truthy_env(
+        "SPOTIFY_DEMO_ENABLED"
+    ):
+        if (
+            _capability_state(
+                payload=discovery_payload,
+                capability_id="spotify_playback",
+            )
+            != "demo"
+        ):
+            raise SystemExit(
+                "Spotify demo smoke requested but discovery did not report "
+                "spotify_playback=demo"
+            )
+        if (
+            _capability_state(
+                payload=discovery_payload,
+                capability_id="spotify_station",
+            )
+            != "demo"
+        ):
+            raise SystemExit(
+                "Spotify demo smoke requested but discovery did not report "
+                "spotify_station=demo"
+            )
+        status, payload = _wait_for_success(
+            request_fn=lambda: _request_json(
+                f"{base_url}/v1/chat/completions",
+                headers=auth_headers,
+                body={
+                    "model": "assistant-fast",
+                    "messages": [
+                        {"role": "user", "content": "smoke spotify demo playlists"}
+                    ],
+                },
+            ),
+            success_predicate=lambda status, payload: status == 200,
+            timeout_seconds=45.0,
+            error_context="Spotify demo intent did not stabilize before timeout",
+        )
+        choices = payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise SystemExit(
+                f"Spotify demo response missing choices: {payload}"
+            )
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        content = message.get("content", "").strip() if isinstance(message, dict) else ""
+        if "demo mode" not in content.casefold() or "focus flow" not in content.casefold():
+            raise SystemExit(
+                f"Spotify demo response was unexpected: {payload}"
+            )
 
     if _is_truthy_env("SMOKE_CHECK_VOICE"):
         status, body, content_type = _wait_for_bytes_success(

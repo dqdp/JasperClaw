@@ -42,6 +42,50 @@ def test_chat_returns_non_empty_assistant_message() -> None:
     ]
 
 
+def test_chat_returns_spotify_demo_planning_directive_for_smoke_prompt() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "model": "qwen2.5:0.5b",
+            "messages": [
+                {"role": "system", "content": "Supported examples: {\"tool\":\"spotify-list-playlists\"}"},
+                {"role": "user", "content": "smoke spotify demo playlists"},
+            ],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"]["content"] == '{"tool":"spotify-list-playlists"}'
+
+
+def test_chat_returns_spotify_demo_final_answer_for_smoke_prompt() -> None:
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "model": "qwen2.5:0.5b",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Available Spotify playlists (demo):\n- Focus Flow",
+                },
+                {"role": "user", "content": "smoke spotify demo playlists"},
+            ],
+            "stream": False,
+        },
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.json()["message"]["content"]
+        == "Focus Flow and Energy Kick are available in demo mode."
+    )
+
+
 def test_embed_returns_one_embedding_per_input() -> None:
     client = TestClient(app)
     client.post("/test/reset")

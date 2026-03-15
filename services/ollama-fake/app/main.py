@@ -52,9 +52,20 @@ def _model_entries() -> list[dict[str, str]]:
 
 def _response_text(messages: list[ChatMessage]) -> str:
     user_messages = [message.content.strip() for message in messages if message.role == "user"]
+    system_messages = [
+        message.content.strip() for message in messages if message.role == "system"
+    ]
     if not user_messages:
         return "ok"
     last_message = user_messages[-1]
+    if last_message == "smoke spotify demo playlists":
+        if any("Supported examples:" in message for message in system_messages):
+            return '{"tool":"spotify-list-playlists"}'
+        if any(
+            "Available Spotify playlists (demo):" in message
+            for message in system_messages
+        ):
+            return "Focus Flow and Energy Kick are available in demo mode."
     return f"ok: {last_message}" if last_message else "ok"
 
 
