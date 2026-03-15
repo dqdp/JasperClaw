@@ -50,13 +50,30 @@ def test_ci_declares_mandatory_voice_smoke_job() -> None:
     job_body = _extract_job_body("smoke-voice")
 
     assert "cp infra/env/app.ci-voice-smoke.example.env infra/env/app.env" in job_body
+    assert "cp infra/env/telegram.ci-smoke.example.env infra/env/telegram.env" in job_body
     assert "docker compose --profile voice" in job_body
-    assert "build agent-api ollama-fake stt-service tts-service" in job_body
-    assert "up -d postgres ollama-fake" in job_body
+    assert (
+        "build agent-api ollama-fake stt-service tts-service telegram-ingress telegram-fake"
+        in job_body
+    )
+    assert "up -d postgres ollama-fake telegram-fake" in job_body
     assert "run --rm --no-deps agent-api python -m app.cli migrate" in job_body
-    assert "up -d --no-deps stt-service tts-service agent-api open-webui" in job_body
+    assert "up -d --no-deps stt-service tts-service agent-api open-webui telegram-ingress" in job_body
     assert 'SMOKE_SKIP_DOMAIN_CHECK: "true"' in job_body
     assert 'SMOKE_CHECK_VOICE: "true"' in job_body
     assert 'SMOKE_CHECK_STT: "true"' in job_body
+    assert 'TELEGRAM_SMOKE_BASE_URL: "http://127.0.0.1:18081"' in job_body
+    assert 'TELEGRAM_FAKE_BASE_URL: "http://127.0.0.1:18082"' in job_body
+    assert 'TELEGRAM_SMOKE_WEBHOOK_PATH: "/telegram/webhook"' in job_body
+    assert 'TELEGRAM_SMOKE_WEBHOOK_SECRET_TOKEN: "ci-webhook-secret"' in job_body
+    assert 'TELEGRAM_SMOKE_BOT_TOKEN: "ci-telegram-bot"' in job_body
+    assert 'TELEGRAM_SMOKE_ALERT_AUTH_TOKEN: "ci-alert-secret"' in job_body
+    assert 'TELEGRAM_SMOKE_ALERT_BOT_TOKEN: "ci-telegram-alert-bot"' in job_body
+    assert 'TELEGRAM_SMOKE_ALERT_CHAT_IDS: "9001"' in job_body
+    assert 'TELEGRAM_SMOKE_ALERT_WARNING_CHAT_IDS: "9002"' in job_body
+    assert 'TELEGRAM_SMOKE_ALERT_CRITICAL_CHAT_IDS: "9003"' in job_body
     assert "bash infra/scripts/smoke.sh" in job_body
-    assert "logs --no-color postgres ollama-fake stt-service tts-service agent-api open-webui" in job_body
+    assert (
+        "logs --no-color postgres ollama-fake stt-service tts-service agent-api open-webui "
+        "telegram-ingress telegram-fake" in job_body
+    )
