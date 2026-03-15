@@ -339,10 +339,10 @@ class TelegramBridgeService:
                 ),
             )
         if route.mode == "discovery_aliases":
-            return await self._reply_pipeline.send_local_reply(
+            return await self._handle_aliases_command(
                 update=update,
                 conversation_id=conversation_id,
-                text=self._render_aliases_reply(),
+                request_id=request_id,
             )
         if route.mode == "send_alias":
             return await self._handle_send_alias(
@@ -410,6 +410,32 @@ class TelegramBridgeService:
             for alias, config in self._household_selection.config.aliases.items()
         ]
         return "Available aliases:\n" + "\n".join(lines)
+
+    async def _handle_aliases_command(
+        self,
+        *,
+        update: TelegramUpdate,
+        conversation_id: str,
+        request_id: str,
+    ) -> WebhookResult:
+        try:
+            reply_text = await self._agent_client.list_aliases_command(
+                model=self._settings.agent_api_model,
+                conversation_id=conversation_id,
+                request_id=request_id,
+            )
+            if not reply_text.strip():
+                raise AgentApiError("agent-api response content missing")
+            return await self._reply_pipeline.send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text=reply_text,
+            )
+        except (AgentApiError, TelegramSendError):
+            await self._release_update_dedupe(update)
+            raise TelegramBridgeRetryableError(
+                "telegram bridge downstream unavailable"
+            )
 
     async def _handle_send_alias(
         self,

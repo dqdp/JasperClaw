@@ -163,6 +163,24 @@ class _FakeAgentApiClient(AgentApiClient):
         )
         return self.reply_text
 
+    async def list_aliases_command(
+        self,
+        *,
+        model: str,
+        conversation_id: str,
+        request_id: str,
+    ) -> str:
+        self.calls.append(
+            {
+                "model": model,
+                "text": "",
+                "conversation_id": conversation_id,
+                "request_id": request_id,
+                "mode": "list_aliases_command",
+            }
+        )
+        return self.reply_text
+
     async def describe_capabilities(
         self,
         *,
@@ -241,6 +259,24 @@ class _FailingAgentApiClient(AgentApiClient):
                 "conversation_id": conversation_id,
                 "request_id": request_id,
                 "mode": "send_alias_command",
+            }
+        )
+        raise AgentApiError("agent-api unavailable")
+
+    async def list_aliases_command(
+        self,
+        *,
+        model: str,
+        conversation_id: str,
+        request_id: str,
+    ) -> str:
+        self.calls.append(
+            {
+                "model": model,
+                "text": "",
+                "conversation_id": conversation_id,
+                "request_id": request_id,
+                "mode": "list_aliases_command",
             }
         )
         raise AgentApiError("agent-api unavailable")
@@ -914,9 +950,14 @@ def test_webhook_ask_command_without_body_returns_usage_and_skips_agent_api() ->
     assert telegram_client.sent_messages == [(77, "Usage: /ask <message>")]
 
 
-def test_webhook_aliases_command_returns_configured_aliases() -> None:
+def test_webhook_aliases_command_routes_through_agent_api() -> None:
     settings = _operational_settings({})
-    client, telegram_client, agent_client = _create_client(settings=settings)
+    client, telegram_client, agent_client = _create_client(
+        settings=settings,
+        agent_client=_FakeAgentApiClient(
+            reply_text="Available aliases:\n- wife: Personal chat"
+        ),
+    )
 
     response = client.post(
         "/webhook",
@@ -932,7 +973,15 @@ def test_webhook_aliases_command_returns_configured_aliases() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "processed"
-    assert not agent_client.calls
+    assert agent_client.calls == [
+        {
+            "model": "assistant-fast",
+            "text": "",
+            "conversation_id": "telegram:77",
+            "request_id": agent_client.calls[0]["request_id"],
+            "mode": "list_aliases_command",
+        }
+    ]
     assert telegram_client.sent_messages == [
         (77, "Available aliases:\n- wife: Personal chat")
     ]

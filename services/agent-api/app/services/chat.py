@@ -1050,10 +1050,12 @@ class ChatService:
             created_at=datetime.now(timezone.utc),
         )
         try:
-            resolved_send = resolve_telegram_send(
-                settings=self._settings,
-                arguments=decision.arguments,
-            )
+            resolved_send: ResolvedTelegramSend | None = None
+            if decision.tool_name == "telegram-send":
+                resolved_send = resolve_telegram_send(
+                    settings=self._settings,
+                    arguments=decision.arguments,
+                )
         except APIError:
             alias = str(decision.arguments.get("alias", "")).strip().casefold()
             return self._build_deterministic_tool_outcome(
@@ -1079,20 +1081,47 @@ class ChatService:
             return DeterministicToolOutcome(
                 conversation_id=prepared_context.conversation_id,
                 runtime_result=OllamaChatResult(
-                    content="Telegram send is unavailable right now."
+                    content=(
+                        "Telegram send is unavailable right now."
+                        if decision.tool_name == "telegram-send"
+                        else "Aliases are unavailable right now."
+                    )
                 ),
                 tool_context=tool_context,
             )
 
-        if resolved_send.mode == "demo":
+        if decision.tool_name == "telegram-list-aliases":
+            content = self._format_aliases_reply(
+                tool_context.execution.output or {}
+            )
+        elif resolved_send is not None and resolved_send.mode == "demo":
             content = f"Demo mode: would send to {resolved_send.alias}: {resolved_send.text}"
-        else:
+        elif resolved_send is not None:
             content = f"Sent to {resolved_send.alias}."
+        else:
+            content = "Telegram send is unavailable right now."
         return DeterministicToolOutcome(
             conversation_id=prepared_context.conversation_id,
             runtime_result=OllamaChatResult(content=content),
             tool_context=tool_context,
         )
+
+    def _format_aliases_reply(self, output: dict[str, object]) -> str:
+        raw_results = output.get("results")
+        if not isinstance(raw_results, list) or not raw_results:
+            return "No aliases are configured right now."
+        lines: list[str] = []
+        for item in raw_results:
+            if not isinstance(item, dict):
+                continue
+            alias = str(item.get("alias") or "").strip()
+            description = str(item.get("description") or "").strip()
+            if not alias or not description:
+                continue
+            lines.append(f"- {alias}: {description}")
+        if not lines:
+            return "No aliases are configured right now."
+        return "Available aliases:\n" + "\n".join(lines)
 
     def _extract_forced_tool_decision(
         self,
@@ -1103,21 +1132,26 @@ class ChatService:
         if self._extract_request_source(request) != "telegram_command":
             return None
         tool_name = (request.metadata.get("forced_tool_name") or "").strip().casefold()
-        if tool_name != "telegram-send":
-            return None
-        alias = (request.metadata.get("forced_tool_alias") or "").strip().casefold()
-        text = (request.metadata.get("forced_tool_text") or "").strip()
-        if not alias or not text:
-            raise APIError(
-                status_code=422,
-                error_type="validation_error",
-                code="invalid_request",
-                message="Telegram command payload is invalid",
+        if tool_name == "telegram-send":
+            alias = (request.metadata.get("forced_tool_alias") or "").strip().casefold()
+            text = (request.metadata.get("forced_tool_text") or "").strip()
+            if not alias or not text:
+                raise APIError(
+                    status_code=422,
+                    error_type="validation_error",
+                    code="invalid_request",
+                    message="Telegram command payload is invalid",
+                )
+            return ToolPlanningDecision(
+                tool_name="telegram-send",
+                arguments={"alias": alias, "text": text},
             )
-        return ToolPlanningDecision(
-            tool_name="telegram-send",
-            arguments={"alias": alias, "text": text},
-        )
+        if tool_name == "telegram-list-aliases":
+            return ToolPlanningDecision(
+                tool_name="telegram-list-aliases",
+                arguments={},
+            )
+        return None
 
     def _maybe_handle_pending_confirmation(
         self,

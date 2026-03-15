@@ -133,6 +133,41 @@ class AgentApiClient:
             raise AgentApiError("agent-api response content missing")
         return content
 
+    async def list_aliases_command(
+        self,
+        *,
+        model: str,
+        conversation_id: str,
+        request_id: str,
+    ) -> str:
+        response = await self._request(
+            method="POST",
+            url=f"{self._base_url}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": "/aliases"}],
+                "metadata": {
+                    "source": "telegram_command",
+                    "client_conversation_id": conversation_id,
+                    "forced_tool_name": "telegram-list-aliases",
+                },
+            },
+            extra_headers={
+                "X-Request-ID": request_id,
+            },
+        )
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise AgentApiError("agent-api response is missing completion choices")
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if not isinstance(message, dict):
+            raise AgentApiError("agent-api response message missing")
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise AgentApiError("agent-api response content missing")
+        return content
+
     async def _request(
         self,
         method: str,

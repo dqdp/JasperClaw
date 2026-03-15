@@ -133,6 +133,54 @@ def test_send_alias_command_uses_telegram_command_metadata() -> None:
     }
 
 
+def test_list_aliases_command_uses_telegram_command_metadata() -> None:
+    fake_http = _FakeAsyncClient(
+        responses=[
+            _FakeResponse(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "Available aliases:\n- wife: Personal chat",
+                            }
+                        }
+                    ]
+                },
+            )
+        ]
+    )
+    client = AgentApiClient(
+        base_url="http://agent-api:8080",
+        api_key="agent-token",
+        http_client=fake_http,
+    )
+
+    reply = asyncio.run(
+        client.list_aliases_command(
+            model="assistant-fast",
+            conversation_id="telegram:42",
+            request_id="req_790",
+        )
+    )
+
+    assert reply == "Available aliases:\n- wife: Personal chat"
+    method, url, headers, payload = fake_http.requests[0]
+    assert method == "POST"
+    assert url == "http://agent-api:8080/v1/chat/completions"
+    assert headers["Authorization"] == "Bearer agent-token"
+    assert headers["X-Request-ID"] == "req_790"
+    assert payload == {
+        "model": "assistant-fast",
+        "messages": [{"role": "user", "content": "/aliases"}],
+        "metadata": {
+            "source": "telegram_command",
+            "client_conversation_id": "telegram:42",
+            "forced_tool_name": "telegram-list-aliases",
+        },
+    }
+
+
 def test_describe_capabilities_uses_request_id_header() -> None:
     fake_http = _FakeAsyncClient(
         responses=[

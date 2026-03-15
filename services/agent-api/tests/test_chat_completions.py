@@ -1703,6 +1703,52 @@ description = "Personal chat"
     assert tool_execution.status == "completed"
 
 
+def test_chat_completions_telegram_command_aliases_executes_without_confirmation(
+    client, monkeypatch, auth_headers, tmp_path
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(household_path))
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [{"role": "user", "content": "/aliases"}],
+            "metadata": {
+                "source": "telegram_command",
+                "client_conversation_id": "telegram:77",
+                "forced_tool_name": "telegram-list-aliases",
+            },
+            "stream": False,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "Available aliases:\n- wife: Personal chat"
+    )
+    assert repository.pending_confirmations == {}
+    assert len(_FakeClient.chat_calls) == 0
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "telegram-list-aliases"
+    assert tool_execution.status == "completed"
+
+
 def test_chat_completions_model_driven_spotify_pause_executes_action(
     client, monkeypatch, auth_headers
 ) -> None:
