@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+MODEL_ENV_FILE = REPO_ROOT / "infra" / "env" / "app.ci-smoke.example.env"
 VOICE_ENV_FILE = REPO_ROOT / "infra" / "env" / "app.ci-voice-smoke.example.env"
 TELEGRAM_ENV_FILE = REPO_ROOT / "infra" / "env" / "telegram.ci-smoke.example.env"
+HOUSEHOLD_FIXTURE_FILE = REPO_ROOT / "infra" / "config" / "household.ci-smoke.toml"
 
 
 def _extract_job_body(job_name: str) -> str:
@@ -40,7 +43,8 @@ def test_voice_smoke_env_enables_supported_voice_profile() -> None:
 
     assert values["VOICE_ENABLED"] == "true"
     assert values["SPOTIFY_DEMO_ENABLED"] == "true"
-    assert values["DEMO_HOUSEHOLD_CONFIG_PATH"] == "/app/config/household.demo.toml"
+    assert values["HOUSEHOLD_CONFIG_PATH"] == "/app/config/household.ci-smoke.toml"
+    assert "DEMO_HOUSEHOLD_CONFIG_PATH" not in values
     assert values["TELEGRAM_BOT_TOKEN"] == "ci-telegram-bot"
     assert values["TELEGRAM_API_BASE_URL"] == "http://telegram-fake:8080"
     assert values["STT_MODEL"] == "base"
@@ -50,11 +54,29 @@ def test_voice_smoke_env_enables_supported_voice_profile() -> None:
     assert values["TTS_DEFAULT_VOICE"] == "assistant-default"
 
 
-def test_telegram_smoke_env_enables_demo_household_contract() -> None:
+def test_model_smoke_env_uses_household_fixture_for_trusted_telegram_paths() -> None:
+    values = _parse_env_file(MODEL_ENV_FILE)
+
+    assert values["VOICE_ENABLED"] == "false"
+    assert values["HOUSEHOLD_CONFIG_PATH"] == "/app/config/household.ci-smoke.toml"
+    assert "DEMO_HOUSEHOLD_CONFIG_PATH" not in values
+    assert values["TELEGRAM_BOT_TOKEN"] == "ci-telegram-bot"
+    assert values["TELEGRAM_API_BASE_URL"] == "http://telegram-fake:8080"
+
+
+def test_telegram_smoke_env_enables_real_household_contract() -> None:
     values = _parse_env_file(TELEGRAM_ENV_FILE)
 
-    assert values["DEMO_HOUSEHOLD_CONFIG_PATH"] == "/app/config/household.demo.toml"
+    assert values["HOUSEHOLD_CONFIG_PATH"] == "/app/config/household.ci-smoke.toml"
+    assert "DEMO_HOUSEHOLD_CONFIG_PATH" not in values
     assert values["TELEGRAM_ALLOWED_COMMANDS"] == "/help,/status,/ask,/aliases,/send"
+
+
+def test_ci_household_fixture_matches_smoke_alias_and_trusted_chat_contract() -> None:
+    fixture = tomllib.loads(HOUSEHOLD_FIXTURE_FILE.read_text(encoding="utf-8"))
+
+    assert fixture["telegram"]["trusted_chat_ids"] == [123456789]
+    assert fixture["telegram"]["aliases"]["demo_home"]["chat_id"] == 111111111
 
 
 def test_ci_declares_mandatory_voice_smoke_job() -> None:
@@ -93,3 +115,12 @@ def test_ci_declares_mandatory_voice_smoke_job() -> None:
         "logs --no-color postgres ollama-fake stt-service tts-service agent-api open-webui "
         "telegram-ingress telegram-fake" in job_body
     )
+
+
+def test_ci_declares_household_telegram_contract_for_model_smoke() -> None:
+    job_body = _extract_job_body("smoke-model")
+
+    assert 'TELEGRAM_SMOKE_CHECK_HOUSEHOLD: "true"' in job_body
+    assert 'TELEGRAM_SMOKE_TRUSTED_CHAT_ID: "123456789"' in job_body
+    assert 'TELEGRAM_SMOKE_ALIAS: "demo_home"' in job_body
+    assert 'TELEGRAM_SMOKE_ALIAS_CHAT_ID: "111111111"' in job_body

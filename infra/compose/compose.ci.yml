@@ -3,12 +3,12 @@ services:
     ports:
       - "18080:8080"
     volumes:
-      - ../config/household.demo.toml:/app/config/household.demo.toml:ro
+      - ../config/household.ci-smoke.toml:/app/config/household.ci-smoke.toml:ro
   telegram-ingress:
     ports:
       - "18081:8080"
     volumes:
-      - ../config/household.demo.toml:/app/config/household.demo.toml:ro
+      - ../config/household.ci-smoke.toml:/app/config/household.ci-smoke.toml:ro
   ollama-fake:
     build:
       context: ../../services/ollama-fake

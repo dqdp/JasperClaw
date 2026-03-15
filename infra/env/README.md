@@ -8,7 +8,7 @@ Start here:
 
 Index:
 - `app.example.env`: open when checking the normal application env surface.
-- `app.ci-smoke.example.env`: open when reproducing CI smoke inputs locally; this file points `OLLAMA_BASE_URL` at `ollama-fake`.
+- `app.ci-smoke.example.env`: open when reproducing CI smoke inputs locally; this file points `OLLAMA_BASE_URL` at `ollama-fake` and uses the deterministic Telegram household fixture.
 - `app.env`: open when checking the current local app env file used by scripts.
 - `prod.example.env`: open when preparing production root env values.
 - `root.ci-smoke.example.env`: open when checking CI root-level deploy/smoke inputs.

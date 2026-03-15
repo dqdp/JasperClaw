@@ -58,6 +58,10 @@ jobs:
           TELEGRAM_SMOKE_ALERT_WARNING_CHAT_IDS: "9002"
           TELEGRAM_SMOKE_ALERT_CRITICAL_CHAT_IDS: "9003"
           TELEGRAM_SMOKE_TIMEOUT_SECONDS: "180"
+          TELEGRAM_SMOKE_CHECK_HOUSEHOLD: "true"
+          TELEGRAM_SMOKE_TRUSTED_CHAT_ID: "123456789"
+          TELEGRAM_SMOKE_ALIAS: "demo_home"
+          TELEGRAM_SMOKE_ALIAS_CHAT_ID: "111111111"
         run: python infra/scripts/smoke-telegram-ingress.py
       - name: Dump smoke logs on failure
         if: failure()

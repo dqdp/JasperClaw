@@ -61,5 +61,5 @@ def test_telegram_example_env_matches_v1_command_surface() -> None:
 def test_ci_compose_mounts_demo_household_config_for_baseline_services() -> None:
     compose_text = COMPOSE_CI_FILE.read_text(encoding="utf-8")
 
-    assert "../config/household.demo.toml:/app/config/household.demo.toml:ro" in compose_text
-    assert compose_text.count("/app/config/household.demo.toml:ro") >= 2
+    assert "../config/household.ci-smoke.toml:/app/config/household.ci-smoke.toml:ro" in compose_text
+    assert compose_text.count("/app/config/household.ci-smoke.toml:ro") >= 2

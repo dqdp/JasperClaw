@@ -1,0 +1,6 @@
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.demo_home]
+chat_id = 111111111
+description = "CI smoke household chat"
