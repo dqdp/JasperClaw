@@ -38,6 +38,7 @@ def test_voice_smoke_env_enables_supported_voice_profile() -> None:
     values = _parse_env_file(VOICE_ENV_FILE)
 
     assert values["VOICE_ENABLED"] == "true"
+    assert values["SPOTIFY_DEMO_ENABLED"] == "true"
     assert values["STT_MODEL"] == "base"
     assert values["STT_DEVICE"] == "cpu"
     assert values["STT_COMPUTE_TYPE"] == "int8"
