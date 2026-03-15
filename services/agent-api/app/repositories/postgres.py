@@ -5,10 +5,7 @@ from uuid import uuid4
 import psycopg
 
 from app.core.errors import APIError
-from app.persistence.conversations_repo import (
-    PostgresConversationRepository,
-    matching_prefix_length,
-)
+from app.persistence.conversations_repo import PostgresConversationRepository
 from app.persistence.memory_repo import PostgresMemoryRepository
 from app.persistence.model_runs_repo import PostgresModelRunsRepository
 from app.persistence.models import (
@@ -22,7 +19,6 @@ from app.persistence.models import (
     PersistedMessage,
     TranscriptionPersistenceResult,
     ToolExecutionRecord,
-    TranscriptMessage,
 )
 from app.persistence.pending_confirmation_repo import (
     PostgresPendingToolConfirmationRepository,

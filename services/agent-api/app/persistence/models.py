@@ -1,5 +1,11 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.schemas.chat import ChatCompletionUsage
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +91,7 @@ class IngressCompletionRecord:
     public_model: str
     conversation_id: str
     content: str
-    usage: "ChatCompletionUsage | None"
+    usage: ChatCompletionUsage | None
 
 
 @dataclass(frozen=True, slots=True)

@@ -24,11 +24,11 @@ jobs:
           - service: stt-service
             image_name: local-assistant-stt
             context: ./services/stt-service
-            dockerfile: Dockerfile
+            dockerfile: services/stt-service/Dockerfile
           - service: tts-service
             image_name: local-assistant-tts
             context: ./services/tts-service
-            dockerfile: Dockerfile
+            dockerfile: services/tts-service/Dockerfile
           - service: telegram-ingress
             image_name: local-assistant-telegram-ingress
             context: .

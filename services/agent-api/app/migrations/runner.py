@@ -4,8 +4,10 @@ from app.core.errors import APIError
 from shared_infra.migrations import (
     MigrationRunner as _PlatformMigrationRunner,
     MigrationStatus,
-    default_migrations_dir,
+    default_migrations_dir as _default_migrations_dir,
 )
+
+default_migrations_dir = _default_migrations_dir
 
 
 class MigrationRunner(_PlatformMigrationRunner):

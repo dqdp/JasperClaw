@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from time import perf_counter, time
 from uuid import uuid4
@@ -25,7 +25,6 @@ from app.modules.chat.household import (
 )
 from app.modules.chat.memory import MemoryContext, MemoryService
 from app.modules.chat.planner import (
-    SUPPORTED_TOOL_NAMES,
     ToolPlanner,
     ToolPlanningDecision,
     ToolPlanningResult,
@@ -36,7 +35,6 @@ from app.repositories import (
     ChatPersistenceResult,
     ChatRepository,
     ConversationContext,
-    PendingToolConfirmationRecord,
     ToolExecutionRecord,
 )
 from app.schemas.chat import (

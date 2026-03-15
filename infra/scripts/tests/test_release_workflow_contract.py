@@ -17,6 +17,17 @@ def test_images_workflow_publishes_platform_db_admin_image() -> None:
     assert "dockerfile: platform-db/Dockerfile" in workflow_text
 
 
+def test_images_workflow_uses_repo_root_relative_dockerfiles_for_subdir_contexts() -> None:
+    workflow_text = IMAGES_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "service: stt-service" in workflow_text
+    assert "context: ./services/stt-service" in workflow_text
+    assert "dockerfile: services/stt-service/Dockerfile" in workflow_text
+    assert "service: tts-service" in workflow_text
+    assert "context: ./services/tts-service" in workflow_text
+    assert "dockerfile: services/tts-service/Dockerfile" in workflow_text
+
+
 def test_deploy_workflow_exports_selected_git_ref_for_rollout_scripts() -> None:
     workflow_text = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
 
