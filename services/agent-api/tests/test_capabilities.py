@@ -115,6 +115,32 @@ def test_capability_discovery_endpoint_requires_refresh_capable_spotify_bootstra
     assert "Spotify station is connected" in response.json()["help_text"]
 
 
+def test_capability_discovery_endpoint_marks_spotify_demo_when_demo_enabled(
+    client,
+    auth_headers,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SPOTIFY_DEMO_ENABLED", "true")
+
+    response = client.get("/v1/capabilities/discovery", headers=auth_headers)
+
+    assert response.status_code == 200
+    spotify_playback = next(
+        capability
+        for capability in response.json()["capabilities"]
+        if capability["id"] == "spotify_playback"
+    )
+    spotify_station = next(
+        capability
+        for capability in response.json()["capabilities"]
+        if capability["id"] == "spotify_station"
+    )
+    assert spotify_playback["state"] == "demo"
+    assert spotify_station["state"] == "demo"
+    assert "Spotify playback is demo" in response.json()["help_text"]
+    assert "Spotify station is demo" in response.json()["help_text"]
+
+
 def test_capability_discovery_endpoint_marks_telegram_send_demo_when_demo_household_exists(
     client,
     auth_headers,

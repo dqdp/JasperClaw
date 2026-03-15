@@ -22,6 +22,22 @@ from app.repositories import ToolExecutionRecord
 from app.schemas.chat import ChatMessage
 
 
+_SPOTIFY_DEMO_PLAYLISTS = (
+    SpotifyPlaylistItem(
+        name="Focus Flow",
+        owner="Assistant demo",
+        uri="spotify:playlist:demo-focus-flow",
+        external_url=None,
+    ),
+    SpotifyPlaylistItem(
+        name="Energy Kick",
+        owner="Assistant demo",
+        uri="spotify:playlist:demo-energy-kick",
+        external_url=None,
+    ),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ToolContext:
     runtime_messages: list[ChatMessage]
@@ -360,6 +376,25 @@ class ToolExecutor:
                     ),
                     execution=execution,
                 )
+
+        if (
+            self._settings.is_spotify_demo_configured()
+            and decision.tool_name
+            in {
+                "spotify-list-playlists",
+                "spotify-play-playlist",
+                "spotify-start-station",
+            }
+        ):
+            return self._execute_spotify_demo_tool(
+                request_id=request_id,
+                base_messages=base_messages,
+                decision=decision,
+                started_at=started_at,
+                tool_started=tool_started,
+                invocation_id=invocation_id,
+                policy=policy,
+            )
 
         if self._spotify_client is None:
             completed_at = datetime.now(timezone.utc)
@@ -722,6 +757,124 @@ class ToolExecutor:
                 ),
                 execution=execution,
             )
+
+    def _execute_spotify_demo_tool(
+        self,
+        *,
+        request_id: str,
+        base_messages: list[ChatMessage],
+        decision: ToolPlanningDecision,
+        started_at: datetime,
+        tool_started: float,
+        invocation_id: str,
+        policy: ToolPolicyDecision,
+    ) -> ToolContext:
+        demo_playlists = list(_SPOTIFY_DEMO_PLAYLISTS)
+
+        if decision.tool_name == "spotify-list-playlists":
+            tool_arguments = {"limit": self._settings.spotify_playlist_top_k}
+            spotify_results = self._normalize_spotify_playlists(demo_playlists)
+            completed_at = datetime.now(timezone.utc)
+            execution = ToolExecutionRecord(
+                invocation_id=invocation_id,
+                tool_name=decision.tool_name,
+                status="completed",
+                arguments=tool_arguments,
+                output={"mode": "demo", "results": spotify_results},
+                latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                started_at=started_at,
+                completed_at=completed_at,
+                adapter_name=policy.adapter_name,
+                provider=policy.provider,
+                policy_decision=policy.policy_decision,
+            )
+            self._log_tool_execution(request_id=request_id, execution=execution)
+            return ToolContext(
+                runtime_messages=self._prompt_formatter.augment_with_spotify_playlists(
+                    base_messages,
+                    spotify_results,
+                    mode="demo",
+                ),
+                execution=execution,
+            )
+
+        if decision.tool_name == "spotify-play-playlist":
+            playlist_name = self._normalize_playlist_name(decision.arguments)
+            tool_arguments: dict[str, object] = {
+                "playlist_name": playlist_name,
+                "limit": self._settings.spotify_playlist_top_k,
+            }
+            device_id = self._normalize_optional_device_id(decision.arguments)
+            if device_id:
+                tool_arguments["device_id"] = device_id
+            playlist_uri = self._resolve_playlist_uri(
+                playlists=demo_playlists,
+                playlist_name=playlist_name,
+            )
+            tool_arguments["playlist_uri"] = playlist_uri
+            completed_at = datetime.now(timezone.utc)
+            execution = ToolExecutionRecord(
+                invocation_id=invocation_id,
+                tool_name=decision.tool_name,
+                status="completed",
+                arguments=tool_arguments,
+                output={"status": "demo"},
+                latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                started_at=started_at,
+                completed_at=completed_at,
+                adapter_name=policy.adapter_name,
+                provider=policy.provider,
+                policy_decision=policy.policy_decision,
+            )
+            self._log_tool_execution(request_id=request_id, execution=execution)
+            return ToolContext(
+                runtime_messages=self._prompt_formatter.augment_with_spotify_action(
+                    messages=base_messages,
+                    tool_name=decision.tool_name,
+                    arguments=tool_arguments,
+                    mode="demo",
+                ),
+                execution=execution,
+            )
+
+        seed_kind = self._normalize_station_seed_kind(decision.arguments)
+        seed_value = self._normalize_station_seed_value(decision.arguments)
+        tool_arguments = {
+            "seed_kind": seed_kind,
+            "seed_value": seed_value,
+            "limit": self._settings.spotify_station_top_k,
+        }
+        device_id = self._normalize_optional_device_id(decision.arguments)
+        if device_id:
+            tool_arguments["device_id"] = device_id
+        completed_at = datetime.now(timezone.utc)
+        execution = ToolExecutionRecord(
+            invocation_id=invocation_id,
+            tool_name=decision.tool_name,
+            status="completed",
+            arguments=tool_arguments,
+            output={
+                "status": "demo",
+                "seed_kind": seed_kind,
+                "seed_value": seed_value,
+            },
+            latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+            started_at=started_at,
+            completed_at=completed_at,
+            adapter_name=policy.adapter_name,
+            provider=policy.provider,
+            policy_decision=policy.policy_decision,
+        )
+        self._log_tool_execution(request_id=request_id, execution=execution)
+        return ToolContext(
+            runtime_messages=self._prompt_formatter.augment_with_spotify_action(
+                messages=base_messages,
+                tool_name=decision.tool_name,
+                arguments=tool_arguments,
+                mode="demo",
+            ),
+            execution=execution,
+        )
 
     def _apply_tool_failure_policy(
         self,

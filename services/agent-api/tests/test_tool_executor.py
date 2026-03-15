@@ -110,6 +110,7 @@ def _settings(**overrides: object) -> Settings:
         "spotify_access_token": "token",
         "spotify_playlist_top_k": 5,
         "spotify_station_top_k": 20,
+        "spotify_demo_enabled": False,
         "telegram_bot_token": "telegram-bot-token",
         "telegram_api_base_url": "https://api.telegram.org",
     }
@@ -268,6 +269,55 @@ def test_tool_executor_executes_spotify_playlist_listing() -> None:
     assert "Available Spotify playlists" in context.runtime_messages[0].content
 
 
+def test_tool_executor_executes_spotify_playlist_listing_in_demo_mode() -> None:
+    settings = _settings(
+        spotify_access_token="",
+        spotify_demo_enabled=True,
+    )
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=None,
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_spotify_demo_list",
+        base_messages=[ChatMessage(role="user", content="what playlists do I have?")],
+        decision=ToolPlanningDecision(
+            tool_name="spotify-list-playlists",
+            arguments={},
+        ),
+        annotate_failures=False,
+        request_source=None,
+    )
+
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output == {
+        "mode": "demo",
+        "results": [
+            {
+                "name": "Focus Flow",
+                "owner": "Assistant demo",
+                "uri": "spotify:playlist:demo-focus-flow",
+                "external_url": None,
+            },
+            {
+                "name": "Energy Kick",
+                "owner": "Assistant demo",
+                "uri": "spotify:playlist:demo-energy-kick",
+                "external_url": None,
+            },
+        ],
+    }
+    assert "Available Spotify playlists (demo)" in context.runtime_messages[0].content
+
+
 def test_tool_executor_executes_telegram_send_in_demo_mode(tmp_path) -> None:
     demo_path = tmp_path / "household.demo.toml"
     demo_path.write_text(
@@ -400,6 +450,41 @@ def test_tool_executor_executes_spotify_playlist_playback() -> None:
     assert "Spotify action completed: spotify-play-playlist." in context.runtime_messages[0].content
 
 
+def test_tool_executor_executes_spotify_playlist_playback_in_demo_mode() -> None:
+    settings = _settings(
+        spotify_access_token="",
+        spotify_demo_enabled=True,
+    )
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=None,
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_spotify_demo_play",
+        base_messages=[ChatMessage(role="user", content="play focus flow")],
+        decision=ToolPlanningDecision(
+            tool_name="spotify-play-playlist",
+            arguments={"playlist_name": "Focus Flow"},
+        ),
+        annotate_failures=False,
+        request_source=None,
+    )
+
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output == {"status": "demo"}
+    assert "Spotify demo action completed: spotify-play-playlist." in (
+        context.runtime_messages[0].content
+    )
+
+
 def test_tool_executor_executes_spotify_station_start() -> None:
     settings = _settings(
         spotify_client_id="client-id",
@@ -446,6 +531,45 @@ def test_tool_executor_executes_spotify_station_start() -> None:
     assert context.execution.status == "completed"
     assert context.execution.output == {"status": "ok"}
     assert "Spotify action completed: spotify-start-station." in context.runtime_messages[0].content
+
+
+def test_tool_executor_executes_spotify_station_start_in_demo_mode() -> None:
+    settings = _settings(
+        spotify_access_token="",
+        spotify_demo_enabled=True,
+    )
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=None,
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_spotify_demo_station",
+        base_messages=[ChatMessage(role="user", content="play something energetic")],
+        decision=ToolPlanningDecision(
+            tool_name="spotify-start-station",
+            arguments={"seed_kind": "mood", "seed_value": "energy"},
+        ),
+        annotate_failures=False,
+        request_source=None,
+    )
+
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output == {
+        "status": "demo",
+        "seed_kind": "mood",
+        "seed_value": "energy",
+    }
+    assert "Spotify demo action completed: spotify-start-station." in (
+        context.runtime_messages[0].content
+    )
 
 
 def test_tool_executor_executes_telegram_alias_listing(tmp_path) -> None:

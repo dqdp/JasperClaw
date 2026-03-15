@@ -1037,6 +1037,58 @@ def test_chat_completions_model_driven_spotify_playlist_listing_uses_spotify_ada
     assert tool_execution.status == "completed"
 
 
+def test_chat_completions_model_driven_spotify_playlist_listing_in_demo_mode(
+    client, monkeypatch, auth_headers
+) -> None:
+    monkeypatch.setenv("SPOTIFY_DEMO_ENABLED", "true")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_spotify_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_spotify_client] = lambda: None
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"spotify-list-playlists"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "You can try Focus Flow in demo mode.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "You can try Focus Flow in demo mode."
+    )
+    assert _FakeSpotifyClient.list_calls == []
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Available Spotify playlists (demo)" in final_messages[0]["content"]
+    assert "Focus Flow" in final_messages[0]["content"]
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "spotify-list-playlists"
+    assert tool_execution.status == "completed"
+    assert tool_execution.output["mode"] == "demo"
+
+
 def test_chat_completions_model_driven_spotify_playlist_play_executes_action(
     client, monkeypatch, auth_headers
 ) -> None:

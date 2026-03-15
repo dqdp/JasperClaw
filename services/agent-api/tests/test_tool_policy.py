@@ -16,6 +16,7 @@ def _settings(**overrides: object) -> Settings:
         "spotify_client_secret": "",
         "household_config_path": "",
         "demo_household_config_path": "",
+        "spotify_demo_enabled": False,
     }
     base.update(overrides)
     return Settings(**base)
@@ -142,6 +143,24 @@ def test_tool_policy_requires_real_spotify_bootstrap_for_station_start() -> None
     assert "real Spotify baseline" in (denied.error_message or "")
     assert allowed.allowed is True
     assert allowed.adapter_name == "spotify-http"
+
+
+def test_tool_policy_allows_demo_spotify_baseline_tools_when_enabled() -> None:
+    engine = ToolPolicyEngine(
+        settings=_settings(spotify_demo_enabled=True),
+        web_search_adapter_available=False,
+    )
+
+    list_playlists = engine.evaluate("spotify-list-playlists")
+    play_playlist = engine.evaluate("spotify-play-playlist")
+    start_station = engine.evaluate("spotify-start-station")
+
+    assert list_playlists.allowed is True
+    assert list_playlists.adapter_name == "spotify-demo"
+    assert play_playlist.allowed is True
+    assert play_playlist.adapter_name == "spotify-demo"
+    assert start_station.allowed is True
+    assert start_station.adapter_name == "spotify-demo"
 
 
 def test_tool_policy_requires_household_config_for_telegram_alias_listing(

@@ -118,7 +118,7 @@ class ChatService:
                 self._settings.web_search_enabled and self._web_search_client is not None
             ),
             spotify_available=self._settings.is_spotify_client_configured(),
-            spotify_real_available=self._settings.is_spotify_real_configured(),
+            spotify_real_available=self._settings.is_spotify_baseline_configured(),
             telegram_household_available=(
                 resolve_household_selection(self._settings) is not None
             ),

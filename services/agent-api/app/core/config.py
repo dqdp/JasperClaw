@@ -31,6 +31,7 @@ class Settings:
     spotify_client_secret: str = ""
     spotify_redirect_uri: str = ""
     spotify_refresh_token: str = ""
+    spotify_demo_enabled: bool = False
     spotify_timeout_seconds: float = 5.0
     spotify_search_top_k: int = 3
     spotify_playlist_top_k: int = 5
@@ -72,6 +73,12 @@ class Settings:
             and self.spotify_redirect_uri
             and self.spotify_refresh_token
         )
+
+    def is_spotify_demo_configured(self) -> bool:
+        return self.spotify_demo_enabled and not self.is_spotify_real_configured()
+
+    def is_spotify_baseline_configured(self) -> bool:
+        return self.is_spotify_real_configured() or self.is_spotify_demo_configured()
 
 
 def _normalize_required_secret(value: str | None) -> str:
@@ -129,6 +136,7 @@ def get_settings() -> Settings:
         spotify_client_secret=(os.getenv("SPOTIFY_CLIENT_SECRET", "") or "").strip(),
         spotify_redirect_uri=(os.getenv("SPOTIFY_REDIRECT_URI", "") or "").strip(),
         spotify_refresh_token=(os.getenv("SPOTIFY_REFRESH_TOKEN", "") or "").strip(),
+        spotify_demo_enabled=_get_bool_env("SPOTIFY_DEMO_ENABLED", default=False),
         spotify_timeout_seconds=float(os.getenv("SPOTIFY_TIMEOUT_SECONDS", "5")),
         spotify_search_top_k=int(os.getenv("SPOTIFY_SEARCH_TOP_K", "3")),
         spotify_playlist_top_k=int(os.getenv("SPOTIFY_PLAYLIST_TOP_K", "5")),

@@ -159,7 +159,21 @@ class ToolPolicyEngine:
             "spotify-play-playlist",
             "spotify-start-station",
         }:
-            if not self._settings.is_spotify_real_configured():
+            if self._settings.is_spotify_real_configured():
+                return ToolPolicyDecision(
+                    allowed=True,
+                    policy_decision="allow",
+                    adapter_name="spotify-http",
+                    provider="spotify",
+                )
+            if self._settings.is_spotify_demo_configured():
+                return ToolPolicyDecision(
+                    allowed=True,
+                    policy_decision="allow",
+                    adapter_name="spotify-demo",
+                    provider="spotify",
+                )
+            else:
                 return ToolPolicyDecision(
                     allowed=False,
                     policy_decision="deny",
@@ -172,12 +186,6 @@ class ToolPolicyEngine:
                     adapter_name="spotify-http",
                     provider="spotify",
                 )
-            return ToolPolicyDecision(
-                allowed=True,
-                policy_decision="allow",
-                adapter_name="spotify-http",
-                provider="spotify",
-            )
 
         if not self._settings.is_spotify_client_configured():
             return ToolPolicyDecision(

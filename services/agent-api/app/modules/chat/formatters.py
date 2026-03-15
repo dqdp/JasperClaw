@@ -50,6 +50,8 @@ class ChatPromptFormatter:
         self,
         messages: list[ChatMessage],
         results: list[dict[str, object]],
+        *,
+        mode: str = "real",
     ) -> list[ChatMessage]:
         lines = [
             (
@@ -59,10 +61,16 @@ class ChatPromptFormatter:
             )
             for result in results
         ]
+        title = (
+            "Available Spotify playlists (demo):"
+            if mode == "demo"
+            else "Available Spotify playlists:"
+        )
         playlist_message = ChatMessage(
             role="system",
             content=(
-                "Available Spotify playlists:\n"
+                title
+                + "\n"
                 + "\n".join(lines)
                 + "\nUse these playlists only when they help answer the request."
             ),
@@ -94,6 +102,7 @@ class ChatPromptFormatter:
         messages: list[ChatMessage],
         tool_name: str,
         arguments: dict[str, object],
+        mode: str = "real",
     ) -> list[ChatMessage]:
         argument_lines = [
             f"{key.replace('_', ' ')}={value}"
@@ -101,12 +110,22 @@ class ChatPromptFormatter:
             if value is not None
         ]
         detail = ", ".join(argument_lines)
+        prefix = (
+            f"Spotify demo action completed: {tool_name}."
+            if mode == "demo"
+            else f"Spotify action completed: {tool_name}."
+        )
+        suffix = (
+            " This was a demo action; do not claim real playback started."
+            if mode == "demo"
+            else ""
+        )
         action_message = ChatMessage(
             role="system",
             content=(
-                f"Spotify action completed: {tool_name}. "
+                f"{prefix} "
                 f"Arguments: {detail}. "
-                "Continue with a normal response."
+                f"Continue with a normal response.{suffix}"
             ),
         )
         return self._insert_after_system(messages, action_message)
