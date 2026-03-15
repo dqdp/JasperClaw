@@ -18,6 +18,10 @@ def _require_env(name: str) -> str:
     return value
 
 
+def _is_truthy_env(name: str) -> bool:
+    return _get_env(name, "").lower() in {"1", "true", "yes", "on"}
+
+
 def _get_int_list_env(name: str) -> tuple[int, ...]:
     raw = _get_env(name, "")
     if not raw:
@@ -125,6 +129,13 @@ def main() -> int:
     alert_warning_chat_ids = _get_int_list_env("TELEGRAM_SMOKE_ALERT_WARNING_CHAT_IDS")
     alert_critical_chat_ids = _get_int_list_env("TELEGRAM_SMOKE_ALERT_CRITICAL_CHAT_IDS")
     timeout_seconds = float(_get_env("TELEGRAM_SMOKE_TIMEOUT_SECONDS", "180"))
+    check_household = _is_truthy_env("TELEGRAM_SMOKE_CHECK_HOUSEHOLD")
+    trusted_chat_id = int(_get_env("TELEGRAM_SMOKE_TRUSTED_CHAT_ID", "123456789"))
+    untrusted_chat_id = int(
+        _get_env("TELEGRAM_SMOKE_UNTRUSTED_CHAT_ID", str(trusted_chat_id + 1))
+    )
+    alias_name = _get_env("TELEGRAM_SMOKE_ALIAS", "demo_home")
+    alias_chat_id = int(_get_env("TELEGRAM_SMOKE_ALIAS_CHAT_ID", "111111111"))
 
     _wait_ready(ingress_base_url, timeout_seconds)
     _wait_ready(fake_base_url, timeout_seconds)
@@ -134,7 +145,9 @@ def main() -> int:
         raise SystemExit(f"fake telegram reset failed: {status} {payload}")
 
     run_id = int(time.time() * 1000)
-    chat_id = 900000 + (run_id % 100000)
+    chat_id = trusted_chat_id if check_household else 900000 + (run_id % 100000)
+    expected_sent_messages = 0
+    expected_send_attempts = 0
 
     valid_update = {
         "update_id": run_id,
@@ -158,7 +171,12 @@ def main() -> int:
     )
 
     state = _fake_state(fake_base_url)
-    _assert(len(state["sent_messages"]) == 1, f"expected 1 sent telegram message, got {state}")
+    expected_sent_messages += 1
+    expected_send_attempts += 1
+    _assert(
+        len(state["sent_messages"]) == expected_sent_messages,
+        f"expected {expected_sent_messages} sent telegram messages, got {state}",
+    )
     first_message = state["sent_messages"][0]
     _assert(first_message["bot_token"] == bot_token, f"unexpected bot token in fake state: {state}")
     _assert(first_message["chat_id"] == chat_id, f"unexpected chat id in fake state: {state}")
@@ -183,9 +201,11 @@ def main() -> int:
         raise SystemExit(f"telegram continuity happy path failed: {status} {payload}")
 
     state = _fake_state(fake_base_url)
+    expected_sent_messages += 1
+    expected_send_attempts += 1
     _assert(
-        len(state["sent_messages"]) == 2,
-        f"expected 2 sent telegram messages after continuity check, got {state}",
+        len(state["sent_messages"]) == expected_sent_messages,
+        f"expected {expected_sent_messages} sent telegram messages after continuity check, got {state}",
     )
     follow_up_message = state["sent_messages"][-1]
     _assert(follow_up_message["chat_id"] == chat_id, f"unexpected continuity chat id: {state}")
@@ -208,7 +228,110 @@ def main() -> int:
     )
     _assert(status == 401, f"expected webhook auth failure 401, got {status} {payload}")
     state = _fake_state(fake_base_url)
-    _assert(len(state["sent_messages"]) == 2, f"auth failure should not send telegram replies: {state}")
+    _assert(
+        len(state["sent_messages"]) == expected_sent_messages,
+        f"auth failure should not send telegram replies: {state}",
+    )
+
+    if check_household:
+        aliases_update = {
+            "update_id": run_id + 20,
+            "message": {
+                "message_id": run_id + 120,
+                "chat": {"id": trusted_chat_id},
+                "from": {"id": 1234, "is_bot": False},
+                "text": "/aliases",
+            },
+        }
+        status, payload = _request_json(
+            f"{ingress_base_url}{webhook_path}",
+            headers={"X-Telegram-Bot-Api-Secret-Token": secret},
+            body=aliases_update,
+            method="POST",
+        )
+        if status != 200:
+            raise SystemExit(f"telegram aliases command failed: {status} {payload}")
+        state = _fake_state(fake_base_url)
+        expected_sent_messages += 1
+        expected_send_attempts += 1
+        _assert(
+            len(state["sent_messages"]) == expected_sent_messages,
+            f"aliases command should add one reply message: {state}",
+        )
+        aliases_message = state["sent_messages"][-1]
+        _assert(aliases_message["chat_id"] == trusted_chat_id, f"unexpected aliases chat: {state}")
+        _assert(alias_name in aliases_message["text"], f"aliases reply missing alias name: {state}")
+
+        send_text = "Smoke household send."
+        send_update = {
+            "update_id": run_id + 21,
+            "message": {
+                "message_id": run_id + 121,
+                "chat": {"id": trusted_chat_id},
+                "from": {"id": 1234, "is_bot": False},
+                "text": f"/send {alias_name} {send_text}",
+            },
+        }
+        status, payload = _request_json(
+            f"{ingress_base_url}{webhook_path}",
+            headers={"X-Telegram-Bot-Api-Secret-Token": secret},
+            body=send_update,
+            method="POST",
+        )
+        if status != 200:
+            raise SystemExit(f"telegram send command failed: {status} {payload}")
+        state = _fake_state(fake_base_url)
+        expected_sent_messages += 2
+        expected_send_attempts += 2
+        _assert(
+            len(state["sent_messages"]) == expected_sent_messages,
+            f"send command should add alias delivery and sender acknowledgement: {state}",
+        )
+        recent_messages = state["sent_messages"][-2:]
+        _assert(
+            {message["chat_id"] for message in recent_messages}
+            == {trusted_chat_id, alias_chat_id},
+            f"send command used unexpected telegram targets: {state}",
+        )
+        alias_delivery = next(
+            message for message in recent_messages if message["chat_id"] == alias_chat_id
+        )
+        _assert(alias_delivery["text"] == send_text, f"unexpected alias delivery body: {state}")
+        sender_ack = next(
+            message for message in recent_messages if message["chat_id"] == trusted_chat_id
+        )
+        _assert(alias_name in sender_ack["text"], f"sender acknowledgement missing alias: {state}")
+
+        untrusted_update = {
+            "update_id": run_id + 22,
+            "message": {
+                "message_id": run_id + 122,
+                "chat": {"id": untrusted_chat_id},
+                "from": {"id": 2234, "is_bot": False},
+                "text": "Should be rejected",
+            },
+        }
+        status, payload = _request_json(
+            f"{ingress_base_url}{webhook_path}",
+            headers={"X-Telegram-Bot-Api-Secret-Token": secret},
+            body=untrusted_update,
+            method="POST",
+        )
+        if status != 200:
+            raise SystemExit(f"telegram untrusted rejection path failed: {status} {payload}")
+        state = _fake_state(fake_base_url)
+        expected_sent_messages += 1
+        expected_send_attempts += 1
+        _assert(
+            len(state["sent_messages"]) == expected_sent_messages,
+            f"untrusted chat should add one bounded rejection reply: {state}",
+        )
+        untrusted_message = state["sent_messages"][-1]
+        _assert(untrusted_message["chat_id"] == untrusted_chat_id, f"unexpected untrusted chat: {state}")
+        _assert(
+            "not authorized for household assistant access" in untrusted_message["text"],
+            f"unexpected untrusted rejection text: {state}",
+        )
 
     denied_command_update = {
         "update_id": run_id + 3,
@@ -230,7 +353,10 @@ def main() -> int:
     _assert(payload.get("status") == "ignored", f"expected ignored deny payload, got {payload}")
     _assert(payload.get("reason") == "command_not_allowed", f"unexpected deny reason: {payload}")
     state = _fake_state(fake_base_url)
-    _assert(len(state["sent_messages"]) == 2, f"denied command should not send telegram replies: {state}")
+    _assert(
+        len(state["sent_messages"]) == expected_sent_messages,
+        f"denied command should not send telegram replies: {state}",
+    )
 
     status, payload = _request_json(
         f"{fake_base_url}/test/fail-next-send",
@@ -257,8 +383,15 @@ def main() -> int:
     )
     _assert(status == 503, f"expected retryable downstream failure 503, got {status} {payload}")
     state = _fake_state(fake_base_url)
-    _assert(len(state["sent_messages"]) == 2, f"failed send should not add successful messages: {state}")
-    _assert(len(state["send_attempts"]) == 3, f"expected one extra failed send attempt: {state}")
+    expected_send_attempts += 1
+    _assert(
+        len(state["sent_messages"]) == expected_sent_messages,
+        f"failed send should not add successful messages: {state}",
+    )
+    _assert(
+        len(state["send_attempts"]) == expected_send_attempts,
+        f"expected one extra failed send attempt: {state}",
+    )
 
     status, payload = _request_json(
         f"{ingress_base_url}{webhook_path}",
@@ -269,8 +402,16 @@ def main() -> int:
     if status != 200:
         raise SystemExit(f"retry after downstream failure did not recover: {status} {payload}")
     state = _fake_state(fake_base_url)
-    _assert(len(state["sent_messages"]) == 3, f"retry should add a successful message: {state}")
-    _assert(len(state["send_attempts"]) == 4, f"retry should create a new send attempt: {state}")
+    expected_sent_messages += 1
+    expected_send_attempts += 1
+    _assert(
+        len(state["sent_messages"]) == expected_sent_messages,
+        f"retry should add a successful message: {state}",
+    )
+    _assert(
+        len(state["send_attempts"]) == expected_send_attempts,
+        f"retry should create a new send attempt: {state}",
+    )
     retry_message = state["sent_messages"][-1]
     _assert(retry_message["chat_id"] == chat_id, f"unexpected retry chat id: {state}")
     _assert(bool(retry_message["text"].strip()), f"retry reply should be non-empty: {state}")

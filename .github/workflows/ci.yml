@@ -106,6 +106,10 @@ jobs:
           TELEGRAM_SMOKE_ALERT_CHAT_IDS: "9001"
           TELEGRAM_SMOKE_ALERT_WARNING_CHAT_IDS: "9002"
           TELEGRAM_SMOKE_ALERT_CRITICAL_CHAT_IDS: "9003"
+          TELEGRAM_SMOKE_CHECK_HOUSEHOLD: "true"
+          TELEGRAM_SMOKE_TRUSTED_CHAT_ID: "123456789"
+          TELEGRAM_SMOKE_ALIAS: "demo_home"
+          TELEGRAM_SMOKE_ALIAS_CHAT_ID: "111111111"
         run: bash infra/scripts/smoke.sh
       - name: Dump voice smoke logs on failure
         if: failure()

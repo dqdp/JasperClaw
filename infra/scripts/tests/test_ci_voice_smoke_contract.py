@@ -41,6 +41,8 @@ def test_voice_smoke_env_enables_supported_voice_profile() -> None:
     assert values["VOICE_ENABLED"] == "true"
     assert values["SPOTIFY_DEMO_ENABLED"] == "true"
     assert values["DEMO_HOUSEHOLD_CONFIG_PATH"] == "/app/config/household.demo.toml"
+    assert values["TELEGRAM_BOT_TOKEN"] == "ci-telegram-bot"
+    assert values["TELEGRAM_API_BASE_URL"] == "http://telegram-fake:8080"
     assert values["STT_MODEL"] == "base"
     assert values["STT_DEVICE"] == "cpu"
     assert values["STT_COMPUTE_TYPE"] == "int8"
@@ -81,6 +83,10 @@ def test_ci_declares_mandatory_voice_smoke_job() -> None:
     assert 'TELEGRAM_SMOKE_ALERT_CHAT_IDS: "9001"' in job_body
     assert 'TELEGRAM_SMOKE_ALERT_WARNING_CHAT_IDS: "9002"' in job_body
     assert 'TELEGRAM_SMOKE_ALERT_CRITICAL_CHAT_IDS: "9003"' in job_body
+    assert 'TELEGRAM_SMOKE_CHECK_HOUSEHOLD: "true"' in job_body
+    assert 'TELEGRAM_SMOKE_TRUSTED_CHAT_ID: "123456789"' in job_body
+    assert 'TELEGRAM_SMOKE_ALIAS: "demo_home"' in job_body
+    assert 'TELEGRAM_SMOKE_ALIAS_CHAT_ID: "111111111"' in job_body
     assert "bash infra/scripts/smoke.sh" in job_body
     assert (
         "logs --no-color postgres ollama-fake stt-service tts-service agent-api open-webui "
