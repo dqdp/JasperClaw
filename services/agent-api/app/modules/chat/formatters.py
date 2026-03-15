@@ -69,6 +69,25 @@ class ChatPromptFormatter:
         )
         return self._insert_after_system(messages, playlist_message)
 
+    def augment_with_telegram_aliases(
+        self,
+        messages: list[ChatMessage],
+        results: list[dict[str, object]],
+    ) -> list[ChatMessage]:
+        lines = [
+            f"- {result['alias']}: {result['description']}"
+            for result in results
+        ]
+        alias_message = ChatMessage(
+            role="system",
+            content=(
+                "Available Telegram aliases:\n"
+                + "\n".join(lines)
+                + "\nUse these aliases only when they help answer the request."
+            ),
+        )
+        return self._insert_after_system(messages, alias_message)
+
     def augment_with_spotify_action(
         self,
         *,

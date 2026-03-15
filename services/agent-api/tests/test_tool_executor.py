@@ -344,3 +344,51 @@ def test_tool_executor_executes_spotify_station_start() -> None:
     assert context.execution.status == "completed"
     assert context.execution.output == {"status": "ok"}
     assert "Spotify action completed: spotify-start-station." in context.runtime_messages[0].content
+
+
+def test_tool_executor_executes_telegram_alias_listing(tmp_path) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    settings = _settings(household_config_path=str(household_path))
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=_FakeSpotifyClient(),
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_3d",
+        base_messages=[ChatMessage(role="user", content="what aliases do I have?")],
+        decision=ToolPlanningDecision(
+            tool_name="telegram-list-aliases",
+            arguments={},
+        ),
+        annotate_failures=False,
+        request_source=None,
+    )
+
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output == {
+        "results": [
+            {
+                "alias": "wife",
+                "description": "Personal chat",
+            }
+        ]
+    }
+    assert "Available Telegram aliases" in context.runtime_messages[0].content

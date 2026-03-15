@@ -73,6 +73,25 @@ def test_formatter_includes_spotify_playlists() -> None:
     assert "Owner: Alex" in messages[0].content
 
 
+def test_formatter_includes_telegram_aliases() -> None:
+    formatter = ChatPromptFormatter()
+
+    messages = formatter.augment_with_telegram_aliases(
+        [ChatMessage(role="user", content="what aliases do I have?")],
+        [
+            {
+                "alias": "wife",
+                "description": "Personal chat",
+            }
+        ],
+    )
+
+    assert "Available Telegram aliases" in messages[0].content
+    assert "wife" in messages[0].content
+    assert "Personal chat" in messages[0].content
+    assert "chat_id" not in messages[0].content
+
+
 def test_formatter_marks_tool_unavailable_with_tool_specific_copy() -> None:
     formatter = ChatPromptFormatter()
 

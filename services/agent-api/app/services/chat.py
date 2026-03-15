@@ -18,6 +18,7 @@ from app.core.logging import log_event
 from app.core.metrics import get_agent_metrics
 from app.modules.chat.executor import ToolContext, ToolExecutor
 from app.modules.chat.formatters import ChatPromptFormatter
+from app.modules.chat.household import resolve_household_selection
 from app.modules.chat.memory import MemoryContext, MemoryService
 from app.modules.chat.planner import (
     SUPPORTED_TOOL_NAMES,
@@ -100,6 +101,9 @@ class ChatService:
             ),
             spotify_available=self._settings.is_spotify_client_configured(),
             spotify_real_available=self._settings.is_spotify_real_configured(),
+            telegram_household_available=(
+                resolve_household_selection(self._settings) is not None
+            ),
         )
         self._prompt_formatter = ChatPromptFormatter()
         self._memory_service = MemoryService(

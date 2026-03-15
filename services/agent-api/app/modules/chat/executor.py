@@ -13,6 +13,7 @@ from app.core.errors import APIError
 from app.core.logging import log_event
 from app.core.metrics import get_agent_metrics
 from app.modules.chat.formatters import ChatPromptFormatter
+from app.modules.chat.household import resolve_household_selection
 from app.modules.chat.planner import ToolPlanningDecision
 from app.modules.chat.policy import ToolPolicyDecision, ToolPolicyEngine
 from app.repositories import ToolExecutionRecord
@@ -235,6 +236,57 @@ class ToolExecutor:
         invocation_id: str,
         policy: ToolPolicyDecision,
     ) -> ToolContext:
+        if decision.tool_name == "telegram-list-aliases":
+            try:
+                aliases = self._resolve_household_aliases()
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="completed",
+                    arguments={},
+                    output={"results": aliases},
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                return ToolContext(
+                    runtime_messages=self._prompt_formatter.augment_with_telegram_aliases(
+                        base_messages,
+                        aliases,
+                    ),
+                    execution=execution,
+                )
+            except APIError as exc:
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="failed",
+                    arguments={},
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                    error_type=exc.error_type,
+                    error_code=exc.code,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                return ToolContext(
+                    runtime_messages=self._apply_tool_failure_policy(
+                        base_messages=base_messages,
+                        annotate_failures=annotate_failures,
+                        tool_name=decision.tool_name,
+                    ),
+                    execution=execution,
+                )
+
         if self._spotify_client is None:
             completed_at = datetime.now(timezone.utc)
             execution = ToolExecutionRecord(
@@ -780,6 +832,23 @@ class ToolExecutor:
             code="invalid_request",
             message="Requested Spotify playlist is ambiguous",
         )
+
+    def _resolve_household_aliases(self) -> list[dict[str, str]]:
+        selection = resolve_household_selection(self._settings)
+        if selection is None:
+            raise APIError(
+                status_code=400,
+                error_type="validation_error",
+                code="invalid_request",
+                message="Telegram household aliases are not configured",
+            )
+        return [
+            {
+                "alias": alias,
+                "description": config.description,
+            }
+            for alias, config in selection.config.aliases.items()
+        ]
 
     def _log_tool_execution(
         self,

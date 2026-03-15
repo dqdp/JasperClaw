@@ -14,6 +14,8 @@ def _settings(**overrides: object) -> Settings:
         "spotify_access_token": "",
         "spotify_client_id": "",
         "spotify_client_secret": "",
+        "household_config_path": "",
+        "demo_household_config_path": "",
     }
     base.update(overrides)
     return Settings(**base)
@@ -112,3 +114,31 @@ def test_tool_policy_requires_real_spotify_bootstrap_for_station_start() -> None
     assert "real Spotify baseline" in (denied.error_message or "")
     assert allowed.allowed is True
     assert allowed.adapter_name == "spotify-http"
+
+
+def test_tool_policy_requires_household_config_for_telegram_alias_listing(
+    tmp_path,
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    denied = ToolPolicyEngine(
+        settings=_settings(),
+        web_search_adapter_available=False,
+    ).evaluate("telegram-list-aliases")
+    allowed = ToolPolicyEngine(
+        settings=_settings(household_config_path=str(household_path)),
+        web_search_adapter_available=False,
+    ).evaluate("telegram-list-aliases")
+
+    assert denied.allowed is False
+    assert "household config" in (denied.error_message or "")
+    assert allowed.allowed is True

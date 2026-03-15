@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.core.config import Settings
+from app.modules.chat.household import resolve_household_selection
 from app.modules.chat.planner import SUPPORTED_TOOL_NAMES
 
 
@@ -99,6 +100,27 @@ class ToolPolicyEngine:
                 policy_decision="allow",
                 adapter_name="search-http",
                 provider="search-provider",
+            )
+
+        if normalized_tool == "telegram-list-aliases":
+            if resolve_household_selection(self._settings) is None:
+                return ToolPolicyDecision(
+                    allowed=False,
+                    policy_decision="deny",
+                    error_type="policy_error",
+                    error_code="tool_not_allowed",
+                    error_message=(
+                        "telegram-list-aliases is unavailable because the household "
+                        "config is not configured."
+                    ),
+                    adapter_name="telegram-config",
+                    provider="telegram",
+                )
+            return ToolPolicyDecision(
+                allowed=True,
+                policy_decision="allow",
+                adapter_name="telegram-config",
+                provider="telegram",
             )
 
         if normalized_tool in {

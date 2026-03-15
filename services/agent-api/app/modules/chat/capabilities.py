@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from app.core.config import Settings
-from shared_infra.household_config import resolve_household_config
+from app.modules.chat.household import resolve_household_selection
 
 CapabilityState = Literal["demo", "real", "unconfigured"]
 
@@ -113,17 +112,7 @@ def _state_label(state: CapabilityState) -> str:
 
 
 def _resolve_telegram_household_state(settings: Settings) -> CapabilityState:
-    selection = resolve_household_config(
-        real_path=_optional_path(settings.household_config_path),
-        demo_path=_optional_path(settings.demo_household_config_path),
-    )
+    selection = resolve_household_selection(settings)
     if selection is None:
         return "unconfigured"
     return "real" if selection.mode == "real" else "demo"
-
-
-def _optional_path(raw_path: str) -> Path | None:
-    normalized = raw_path.strip()
-    if not normalized:
-        return None
-    return Path(normalized)

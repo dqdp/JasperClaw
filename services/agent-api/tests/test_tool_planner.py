@@ -45,6 +45,7 @@ def test_tool_planner_builds_prompt_after_existing_system_messages() -> None:
         web_search_available=True,
         spotify_available=True,
         spotify_real_available=True,
+        telegram_household_available=True,
     )
 
     messages = planner.build_planning_messages(
@@ -64,6 +65,7 @@ def test_tool_planner_builds_prompt_after_existing_system_messages() -> None:
         '{"tool":"spotify-start-station","seed_kind":"mood","seed_value":"focus"}'
         in messages[1].content
     )
+    assert '{"tool":"telegram-list-aliases"}' in messages[1].content
 
 
 def test_tool_planner_parses_supported_directives() -> None:
@@ -71,6 +73,7 @@ def test_tool_planner_parses_supported_directives() -> None:
         web_search_available=True,
         spotify_available=True,
         spotify_real_available=True,
+        telegram_household_available=True,
     )
 
     assert planner.parse_decision('{"tool":"web-search","query":"  weather  "}') == (
@@ -94,6 +97,12 @@ def test_tool_planner_parses_supported_directives() -> None:
             arguments={},
         )
     )
+    assert planner.parse_decision('{"tool":"telegram-list-aliases"}') == (
+        ToolPlanningDecision(
+            tool_name="telegram-list-aliases",
+            arguments={},
+        )
+    )
     assert planner.parse_decision(
         '{"tool":"spotify-play-playlist","playlist_name":" Focus Flow "}'
     ) == ToolPlanningDecision(
@@ -113,6 +122,7 @@ def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
         web_search_available=True,
         spotify_available=True,
         spotify_real_available=True,
+        telegram_household_available=True,
     )
 
     assert planner.parse_decision('{"tool":"unknown","query":"x"}') is None
@@ -133,3 +143,4 @@ def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
     assert "spotify-list-playlists" in SUPPORTED_TOOL_NAMES
     assert "spotify-play-playlist" in SUPPORTED_TOOL_NAMES
     assert "spotify-start-station" in SUPPORTED_TOOL_NAMES
+    assert "telegram-list-aliases" in SUPPORTED_TOOL_NAMES

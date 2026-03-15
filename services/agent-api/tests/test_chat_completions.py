@@ -1080,6 +1080,66 @@ def test_chat_completions_model_driven_spotify_station_executes_action(
     assert tool_execution.status == "completed"
 
 
+def test_chat_completions_model_driven_telegram_alias_listing_augments_prompt(
+    client, monkeypatch, auth_headers, tmp_path
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(household_path))
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": '{"tool":"telegram-list-aliases"}',
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "You can send a message to wife.",
+                },
+                "prompt_eval_count": 9,
+                "eval_count": 6,
+            },
+        ),
+    ]
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "You can send a message to wife."
+    )
+    final_messages = _FakeClient.chat_calls[1]["json"]["messages"]
+    assert final_messages[0]["role"] == "system"
+    assert "Available Telegram aliases" in final_messages[0]["content"]
+    assert "wife" in final_messages[0]["content"]
+    assert "chat_id" not in final_messages[0]["content"]
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "telegram-list-aliases"
+    assert tool_execution.status == "completed"
+
+
 def test_chat_completions_model_driven_spotify_pause_executes_action(
     client, monkeypatch, auth_headers
 ) -> None:
