@@ -10,6 +10,14 @@ from app.core.errors import APIError
 
 _DEFAULT_TOKEN_ENDPOINT = "/api/token"
 _SPOTIFY_ACCOUNTS_BASE_URL = "https://accounts.spotify.com"
+_SPOTIFY_STATION_MOOD_QUERIES = {
+    "focus": "focus instrumental",
+    "calm": "calm ambient",
+    "energy": "energetic upbeat",
+    "party": "party dance",
+    "sleep": "sleep ambient",
+}
+_SPOTIFY_STATION_SEED_KINDS = frozenset({"genre", "artist", "track", "mood"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,14 +164,54 @@ class SpotifyClient:
         )
 
     def play_track(self, *, track_uri: str, device_id: str | None = None) -> None:
-        self._ensure_playback_target(device_id=device_id)
-        payload = {"uris": [track_uri]}
-        self._authenticated_request(
-            "PUT",
-            f"{self._base_url}/v1/me/player/play",
-            json=payload,
-            params=self._build_device_query(device_id),
+        self._play_track_uris(track_uris=[track_uri], device_id=device_id)
+
+    def start_station(
+        self,
+        *,
+        seed_kind: str,
+        seed_value: str,
+        limit: int,
+        device_id: str | None = None,
+    ) -> None:
+        normalized_seed_kind = seed_kind.strip().casefold()
+        normalized_seed_value = seed_value.strip()
+        if normalized_seed_kind not in _SPOTIFY_STATION_SEED_KINDS:
+            raise APIError(
+                status_code=400,
+                error_type="validation_error",
+                code="invalid_request",
+                message="spotify-start-station requires a supported seed_kind",
+            )
+        if not normalized_seed_value:
+            raise APIError(
+                status_code=400,
+                error_type="validation_error",
+                code="invalid_request",
+                message="spotify-start-station requires a non-empty seed_value",
+            )
+        if limit < 1:
+            raise APIError(
+                status_code=400,
+                error_type="validation_error",
+                code="invalid_request",
+                message="spotify-start-station requires a positive limit",
+            )
+
+        query = self._build_station_query(
+            seed_kind=normalized_seed_kind,
+            seed_value=normalized_seed_value,
         )
+        tracks = self.search_tracks(query=query, limit=limit)
+        track_uris = self._dedupe_track_uris(tracks)
+        if not track_uris:
+            raise APIError(
+                status_code=400,
+                error_type="validation_error",
+                code="invalid_request",
+                message="Requested Spotify station returned no playable tracks",
+            )
+        self._play_track_uris(track_uris=track_uris, device_id=device_id)
 
     def pause_playback(self, *, device_id: str | None = None) -> None:
         self._ensure_playback_target(device_id=device_id)
@@ -419,6 +467,46 @@ class SpotifyClient:
         if not device_id:
             return {}
         return {"device_id": device_id.strip()} if device_id.strip() else {}
+
+    def _play_track_uris(
+        self,
+        *,
+        track_uris: list[str],
+        device_id: str | None,
+    ) -> None:
+        self._ensure_playback_target(device_id=device_id)
+        payload = {"uris": track_uris}
+        self._authenticated_request(
+            "PUT",
+            f"{self._base_url}/v1/me/player/play",
+            json=payload,
+            params=self._build_device_query(device_id),
+        )
+
+    def _build_station_query(self, *, seed_kind: str, seed_value: str) -> str:
+        if seed_kind == "mood":
+            query = _SPOTIFY_STATION_MOOD_QUERIES.get(seed_value.casefold())
+            if query is None:
+                raise APIError(
+                    status_code=400,
+                    error_type="validation_error",
+                    code="invalid_request",
+                    message="spotify-start-station requires a supported mood seed",
+                )
+            return query
+        return seed_value
+
+    @staticmethod
+    def _dedupe_track_uris(tracks: list[SpotifyTrackItem]) -> list[str]:
+        seen: set[str] = set()
+        unique: list[str] = []
+        for track in tracks:
+            uri = track.uri.strip()
+            if not uri or uri in seen:
+                continue
+            seen.add(uri)
+            unique.append(uri)
+        return unique
 
     def _ensure_playback_target(self, *, device_id: str | None) -> None:
         if device_id and device_id.strip():

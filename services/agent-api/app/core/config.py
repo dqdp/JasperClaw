@@ -34,6 +34,7 @@ class Settings:
     spotify_timeout_seconds: float = 5.0
     spotify_search_top_k: int = 3
     spotify_playlist_top_k: int = 5
+    spotify_station_top_k: int = 20
     household_config_path: str = ""
     demo_household_config_path: str = ""
     model_owner: str = "local-assistant"
@@ -128,6 +129,7 @@ def get_settings() -> Settings:
         spotify_timeout_seconds=float(os.getenv("SPOTIFY_TIMEOUT_SECONDS", "5")),
         spotify_search_top_k=int(os.getenv("SPOTIFY_SEARCH_TOP_K", "3")),
         spotify_playlist_top_k=int(os.getenv("SPOTIFY_PLAYLIST_TOP_K", "5")),
+        spotify_station_top_k=int(os.getenv("SPOTIFY_STATION_TOP_K", "20")),
         household_config_path=(os.getenv("HOUSEHOLD_CONFIG_PATH", "") or "").strip(),
         demo_household_config_path=(
             os.getenv("DEMO_HOUSEHOLD_CONFIG_PATH", "") or ""

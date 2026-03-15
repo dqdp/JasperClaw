@@ -33,6 +33,7 @@ class _FakeSpotifyClient:
         self.search_calls: list[dict[str, object]] = []
         self.play_calls: list[dict[str, object]] = []
         self.play_playlist_calls: list[dict[str, object]] = []
+        self.start_station_calls: list[dict[str, object]] = []
 
     def list_playlists(self, *, limit: int) -> list[SpotifyPlaylistItem]:
         self.list_calls.append({"limit": limit})
@@ -65,6 +66,23 @@ class _FakeSpotifyClient:
             {"playlist_uri": playlist_uri, "device_id": device_id}
         )
 
+    def start_station(
+        self,
+        *,
+        seed_kind: str,
+        seed_value: str,
+        limit: int,
+        device_id: str | None = None,
+    ) -> None:
+        self.start_station_calls.append(
+            {
+                "seed_kind": seed_kind,
+                "seed_value": seed_value,
+                "limit": limit,
+                "device_id": device_id,
+            }
+        )
+
     def pause_playback(self, *, device_id: str | None = None) -> None:
         raise AssertionError("unexpected pause")
 
@@ -83,6 +101,7 @@ def _settings(**overrides: object) -> Settings:
         "web_search_enabled": True,
         "spotify_access_token": "token",
         "spotify_playlist_top_k": 5,
+        "spotify_station_top_k": 20,
     }
     base.update(overrides)
     return Settings(**base)
@@ -277,3 +296,51 @@ def test_tool_executor_executes_spotify_playlist_playback() -> None:
     assert context.execution.status == "completed"
     assert context.execution.output == {"status": "ok"}
     assert "Spotify action completed: spotify-play-playlist." in context.runtime_messages[0].content
+
+
+def test_tool_executor_executes_spotify_station_start() -> None:
+    settings = _settings(
+        spotify_client_id="client-id",
+        spotify_client_secret="client-secret",
+        spotify_redirect_uri="http://assistant.test/callback",
+        spotify_refresh_token="refresh-token",
+    )
+    spotify_client = _FakeSpotifyClient()
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=spotify_client,
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_3c",
+        base_messages=[ChatMessage(role="user", content="play something energetic")],
+        decision=ToolPlanningDecision(
+            tool_name="spotify-start-station",
+            arguments={
+                "seed_kind": "mood",
+                "seed_value": "energy",
+                "device_id": "speaker",
+            },
+        ),
+        annotate_failures=False,
+        request_source=None,
+    )
+
+    assert spotify_client.start_station_calls == [
+        {
+            "seed_kind": "mood",
+            "seed_value": "energy",
+            "limit": 20,
+            "device_id": "speaker",
+        }
+    ]
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output == {"status": "ok"}
+    assert "Spotify action completed: spotify-start-station." in context.runtime_messages[0].content

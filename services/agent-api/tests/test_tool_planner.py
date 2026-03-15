@@ -60,6 +60,10 @@ def test_tool_planner_builds_prompt_after_existing_system_messages() -> None:
     assert '{"tool":"spotify-play","track_uri":"..."}' in messages[1].content
     assert '{"tool":"spotify-list-playlists"}' in messages[1].content
     assert '{"tool":"spotify-play-playlist","playlist_name":"..."}' in messages[1].content
+    assert (
+        '{"tool":"spotify-start-station","seed_kind":"mood","seed_value":"focus"}'
+        in messages[1].content
+    )
 
 
 def test_tool_planner_parses_supported_directives() -> None:
@@ -96,6 +100,12 @@ def test_tool_planner_parses_supported_directives() -> None:
         tool_name="spotify-play-playlist",
         arguments={"playlist_name": "Focus Flow"},
     )
+    assert planner.parse_decision(
+        '{"tool":"spotify-start-station","seed_kind":" mood ","seed_value":" energy "}'
+    ) == ToolPlanningDecision(
+        tool_name="spotify-start-station",
+        arguments={"seed_kind": "mood", "seed_value": "energy"},
+    )
 
 
 def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
@@ -107,6 +117,12 @@ def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
 
     assert planner.parse_decision('{"tool":"unknown","query":"x"}') is None
     assert planner.parse_decision('{"tool":"spotify-play","device_id":""}') is None
+    assert (
+        planner.parse_decision(
+            '{"tool":"spotify-start-station","seed_kind":"tempo","seed_value":"fast"}'
+        )
+        is None
+    )
     assert planner.content_outcome(
         '{"tool":"web-search","query":"x"}',
         ToolPlanningDecision(tool_name="web-search", arguments={"query": "x"}),
@@ -116,3 +132,4 @@ def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
     assert "web-search" in SUPPORTED_TOOL_NAMES
     assert "spotify-list-playlists" in SUPPORTED_TOOL_NAMES
     assert "spotify-play-playlist" in SUPPORTED_TOOL_NAMES
+    assert "spotify-start-station" in SUPPORTED_TOOL_NAMES

@@ -10,10 +10,16 @@ SUPPORTED_TOOL_NAMES = (
     "web-search",
     "spotify-list-playlists",
     "spotify-play-playlist",
+    "spotify-start-station",
     "spotify-search",
     "spotify-play",
     "spotify-pause",
     "spotify-next",
+)
+
+_SUPPORTED_SPOTIFY_STATION_SEED_KINDS = frozenset({"genre", "artist", "track", "mood"})
+_SUPPORTED_SPOTIFY_STATION_MOODS = frozenset(
+    {"focus", "calm", "energy", "party", "sleep"}
 )
 
 
@@ -78,6 +84,7 @@ class ToolPlanner:
                 [
                     '{"tool":"spotify-list-playlists"}',
                     '{"tool":"spotify-play-playlist","playlist_name":"..."}',
+                    '{"tool":"spotify-start-station","seed_kind":"mood","seed_value":"focus"}',
                 ]
             )
         if self._spotify_available:
@@ -156,6 +163,35 @@ class ToolPlanner:
             if not playlist_name:
                 return None
             arguments = {"playlist_name": playlist_name}
+            device_id = payload.get("device_id")
+            if device_id is not None:
+                if not isinstance(device_id, str) or not device_id.strip():
+                    return None
+                arguments["device_id"] = device_id.strip()
+        elif tool_name == "spotify-start-station":
+            seed_kind = arguments.get("seed_kind")
+            seed_value = arguments.get("seed_value")
+            if not isinstance(seed_kind, str) or not isinstance(seed_value, str):
+                return None
+            normalized_seed_kind = seed_kind.strip().casefold()
+            normalized_seed_value = seed_value.strip()
+            if (
+                normalized_seed_kind not in _SUPPORTED_SPOTIFY_STATION_SEED_KINDS
+                or not normalized_seed_value
+            ):
+                return None
+            if (
+                normalized_seed_kind == "mood"
+                and normalized_seed_value.casefold()
+                not in _SUPPORTED_SPOTIFY_STATION_MOODS
+            ):
+                return None
+            arguments = {
+                "seed_kind": normalized_seed_kind,
+                "seed_value": normalized_seed_value.casefold()
+                if normalized_seed_kind == "mood"
+                else normalized_seed_value,
+            }
             device_id = payload.get("device_id")
             if device_id is not None:
                 if not isinstance(device_id, str) or not device_id.strip():

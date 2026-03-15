@@ -101,7 +101,11 @@ class ToolPolicyEngine:
                 provider="search-provider",
             )
 
-        if normalized_tool in {"spotify-list-playlists", "spotify-play-playlist"}:
+        if normalized_tool in {
+            "spotify-list-playlists",
+            "spotify-play-playlist",
+            "spotify-start-station",
+        }:
             if not self._settings.is_spotify_real_configured():
                 return ToolPolicyDecision(
                     allowed=False,

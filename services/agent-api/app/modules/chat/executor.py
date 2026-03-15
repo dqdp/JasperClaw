@@ -459,6 +459,73 @@ class ToolExecutor:
                     execution=execution,
                 )
 
+        if decision.tool_name == "spotify-start-station":
+            seed_kind = self._normalize_station_seed_kind(decision.arguments)
+            seed_value = self._normalize_station_seed_value(decision.arguments)
+            tool_arguments = {
+                "seed_kind": seed_kind,
+                "seed_value": seed_value,
+                "limit": self._settings.spotify_station_top_k,
+            }
+            device_id = self._normalize_optional_device_id(decision.arguments)
+            if device_id:
+                tool_arguments["device_id"] = device_id
+            try:
+                self._spotify_client.start_station(
+                    seed_kind=seed_kind,
+                    seed_value=seed_value,
+                    limit=self._settings.spotify_station_top_k,
+                    device_id=device_id,
+                )
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="completed",
+                    arguments=tool_arguments,
+                    output={"status": "ok"},
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                return ToolContext(
+                    runtime_messages=self._prompt_formatter.augment_with_spotify_action(
+                        messages=base_messages,
+                        tool_name=decision.tool_name,
+                        arguments=tool_arguments,
+                    ),
+                    execution=execution,
+                )
+            except APIError as exc:
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="failed",
+                    arguments=tool_arguments,
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                    error_type=exc.error_type,
+                    error_code=exc.code,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                return ToolContext(
+                    runtime_messages=self._apply_tool_failure_policy(
+                        base_messages=base_messages,
+                        annotate_failures=annotate_failures,
+                        tool_name=decision.tool_name,
+                    ),
+                    execution=execution,
+                )
+
         device_id = self._normalize_optional_device_id(decision.arguments)
 
         try:
@@ -652,6 +719,38 @@ class ToolExecutor:
             error_type="validation_error",
             code="invalid_request",
             message="spotify-play-playlist requires a playlist_name",
+        )
+
+    def _normalize_station_seed_kind(
+        self,
+        arguments: dict[str, object],
+    ) -> str:
+        value = arguments.get("seed_kind")
+        if isinstance(value, str):
+            value = value.strip().casefold()
+            if value in {"genre", "artist", "track", "mood"}:
+                return value
+        raise APIError(
+            status_code=400,
+            error_type="validation_error",
+            code="invalid_request",
+            message="spotify-start-station requires a supported seed_kind",
+        )
+
+    def _normalize_station_seed_value(
+        self,
+        arguments: dict[str, object],
+    ) -> str:
+        value = arguments.get("seed_value")
+        if isinstance(value, str):
+            value = value.strip()
+            if value:
+                return value
+        raise APIError(
+            status_code=400,
+            error_type="validation_error",
+            code="invalid_request",
+            message="spotify-start-station requires a non-empty seed_value",
         )
 
     def _resolve_playlist_uri(

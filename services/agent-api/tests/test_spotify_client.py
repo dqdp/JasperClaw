@@ -275,3 +275,102 @@ def test_play_playlist_classifies_player_403_as_premium_required(monkeypatch) ->
         client.play_playlist(playlist_uri="spotify:playlist:001", device_id=None)
 
     assert exc_info.value.code == "premium_required"
+
+
+def test_start_station_uses_search_and_ephemeral_track_playback(monkeypatch) -> None:
+    monkeypatch.setattr("app.clients.spotify.httpx.Client", _FakeClient)
+    _FakeClient.requests = []
+    _FakeClient.responses = [
+        _FakeResponse(
+            200,
+            {
+                "tracks": {
+                    "items": [
+                        {
+                            "name": "Energy One",
+                            "uri": "spotify:track:001",
+                            "artists": [{"name": "Artist A"}],
+                            "album": {"name": "Album A"},
+                            "external_urls": {
+                                "spotify": "https://open.spotify.com/track/001"
+                            },
+                        },
+                        {
+                            "name": "Energy Duplicate",
+                            "uri": "spotify:track:001",
+                            "artists": [{"name": "Artist A"}],
+                            "album": {"name": "Album A"},
+                            "external_urls": {
+                                "spotify": "https://open.spotify.com/track/001"
+                            },
+                        },
+                        {
+                            "name": "Energy Two",
+                            "uri": "spotify:track:002",
+                            "artists": [{"name": "Artist B"}],
+                            "album": {"name": "Album B"},
+                            "external_urls": {
+                                "spotify": "https://open.spotify.com/track/002"
+                            },
+                        },
+                    ]
+                }
+            },
+        ),
+        _FakeResponse(204, {}),
+    ]
+
+    client = SpotifyClient(
+        base_url="https://api.spotify.com",
+        access_token="token",
+        client_id="",
+        client_secret="",
+        redirect_uri="",
+        timeout_seconds=5.0,
+    )
+
+    client.start_station(
+        seed_kind="mood",
+        seed_value="energy",
+        limit=20,
+        device_id="speaker",
+    )
+
+    assert _FakeClient.requests[0]["url"] == "https://api.spotify.com/v1/search"
+    assert _FakeClient.requests[0]["kwargs"]["params"] == {
+        "q": "energetic upbeat",
+        "type": "track",
+        "limit": "20",
+    }
+    assert _FakeClient.requests[1]["url"] == "https://api.spotify.com/v1/me/player/play"
+    assert _FakeClient.requests[1]["kwargs"]["json"] == {
+        "uris": ["spotify:track:001", "spotify:track:002"]
+    }
+    assert _FakeClient.requests[1]["kwargs"]["params"] == {"device_id": "speaker"}
+
+
+def test_start_station_rejects_empty_candidate_set(monkeypatch) -> None:
+    monkeypatch.setattr("app.clients.spotify.httpx.Client", _FakeClient)
+    _FakeClient.requests = []
+    _FakeClient.responses = [
+        _FakeResponse(200, {"tracks": {"items": []}}),
+    ]
+
+    client = SpotifyClient(
+        base_url="https://api.spotify.com",
+        access_token="token",
+        client_id="",
+        client_secret="",
+        redirect_uri="",
+        timeout_seconds=5.0,
+    )
+
+    with pytest.raises(APIError) as exc_info:
+        client.start_station(
+            seed_kind="genre",
+            seed_value="jazz",
+            limit=20,
+            device_id="speaker",
+        )
+
+    assert exc_info.value.code == "invalid_request"
