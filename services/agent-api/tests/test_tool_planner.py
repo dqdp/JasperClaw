@@ -45,7 +45,8 @@ def test_tool_planner_builds_prompt_after_existing_system_messages() -> None:
         web_search_available=True,
         spotify_available=True,
         spotify_real_available=True,
-        telegram_household_available=True,
+        telegram_alias_listing_available=True,
+        telegram_send_available=True,
     )
 
     messages = planner.build_planning_messages(
@@ -77,7 +78,8 @@ def test_tool_planner_parses_supported_directives() -> None:
         web_search_available=True,
         spotify_available=True,
         spotify_real_available=True,
-        telegram_household_available=True,
+        telegram_alias_listing_available=True,
+        telegram_send_available=True,
     )
 
     assert planner.parse_decision('{"tool":"web-search","query":"  weather  "}') == (
@@ -132,7 +134,8 @@ def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
         web_search_available=True,
         spotify_available=True,
         spotify_real_available=True,
-        telegram_household_available=True,
+        telegram_alias_listing_available=True,
+        telegram_send_available=True,
     )
 
     assert planner.parse_decision('{"tool":"unknown","query":"x"}') is None

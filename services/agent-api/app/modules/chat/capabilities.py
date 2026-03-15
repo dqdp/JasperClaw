@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from typing import Literal
 
 from app.core.config import Settings
-from app.modules.chat.household import resolve_household_selection
+from app.modules.chat.household import (
+    resolve_household_selection,
+    resolve_telegram_send_state,
+)
 
 CapabilityState = Literal["demo", "real", "unconfigured"]
 
@@ -67,11 +70,14 @@ def build_capability_discovery_snapshot(
 
 
 def resolve_capability_discovery(settings: Settings) -> CapabilityDiscoverySnapshot:
-    telegram_state = _resolve_telegram_household_state(settings)
+    selection = resolve_household_selection(settings)
+    telegram_state = _resolve_telegram_send_state(settings)
     spotify_state = _resolve_spotify_state(settings)
     commands = ["/help", "/status", "/ask <message>"]
+    if selection is not None:
+        commands.append("/aliases")
     if telegram_state != "unconfigured":
-        commands.extend(("/aliases", "/send <alias> <message>"))
+        commands.append("/send <alias> <message>")
     capabilities = (
         CapabilityDiscoveryEntry(
             id="voice",
@@ -108,11 +114,8 @@ def _state_label(state: CapabilityState) -> str:
     return "not configured"
 
 
-def _resolve_telegram_household_state(settings: Settings) -> CapabilityState:
-    selection = resolve_household_selection(settings)
-    if selection is None:
-        return "unconfigured"
-    return "real" if selection.mode == "real" else "demo"
+def _resolve_telegram_send_state(settings: Settings) -> CapabilityState:
+    return resolve_telegram_send_state(settings)
 
 
 def _resolve_spotify_state(settings: Settings) -> CapabilityState:

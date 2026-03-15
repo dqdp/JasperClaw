@@ -380,6 +380,9 @@ class _FakeRepository:
         current = self.pending_confirmations.get(kwargs["conversation_id"])
         if current is None or current.confirmation_id != kwargs["confirmation_id"]:
             return None
+        expected_status = kwargs.get("expected_status")
+        if expected_status is not None and current.status != expected_status:
+            return None
         resolved = PendingToolConfirmationRecord(
             confirmation_id=current.confirmation_id,
             conversation_id=current.conversation_id,
@@ -1416,6 +1419,63 @@ description = "Personal chat"
     assert len(_FakeClient.chat_calls) == 2
     assert third_response.status_code == 200
     assert _FakeTelegramClient.calls == [{"chat_id": 111111111, "text": "Running late"}]
+
+
+def test_chat_completions_pending_telegram_send_confirm_in_demo_mode_uses_demo_wording(
+    client, monkeypatch, auth_headers, tmp_path
+) -> None:
+    demo_household_path = tmp_path / "household.demo.toml"
+    demo_household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    monkeypatch.setenv("DEMO_HOUSEHOLD_CONFIG_PATH", str(demo_household_path))
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_telegram_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_telegram_client] = (
+        lambda: _FakeTelegramClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        '{"tool":"telegram-send","alias":"wife","text":"Running late"}'
+                    ),
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+    ]
+
+    client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [{"role": "user", "content": "да"}],
+            "stream": False,
+        },
+        headers={**auth_headers, "X-Conversation-ID": "conv_test"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "Демо-режим: отправил бы сообщение wife."
+    )
+    assert _FakeTelegramClient.calls == []
 
 
 def test_chat_completions_pending_telegram_send_cancel_skips_send(

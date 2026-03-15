@@ -133,34 +133,63 @@ class PostgresPendingToolConfirmationRepository:
         conversation_id: str,
         status: str,
         resolved_at,
+        expected_status: str | None = None,
     ) -> PendingToolConfirmationRecord | None:
         def write(conn: psycopg.Connection) -> PendingToolConfirmationRecord | None:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE pending_tool_confirmations
-                    SET status = %s, resolved_at = %s
-                    WHERE id = %s AND conversation_id = %s
-                    RETURNING
-                        id,
-                        conversation_id,
-                        request_id,
-                        source_class,
-                        tool_name,
-                        status,
-                        clarification_count,
-                        request_payload_json,
-                        created_at,
-                        expires_at,
-                        resolved_at
-                    """,
-                    (
-                        status,
-                        resolved_at.astimezone(timezone.utc),
-                        confirmation_id,
-                        conversation_id,
-                    ),
-                )
+                if expected_status is None:
+                    cur.execute(
+                        """
+                        UPDATE pending_tool_confirmations
+                        SET status = %s, resolved_at = %s
+                        WHERE id = %s AND conversation_id = %s
+                        RETURNING
+                            id,
+                            conversation_id,
+                            request_id,
+                            source_class,
+                            tool_name,
+                            status,
+                            clarification_count,
+                            request_payload_json,
+                            created_at,
+                            expires_at,
+                            resolved_at
+                        """,
+                        (
+                            status,
+                            resolved_at.astimezone(timezone.utc),
+                            confirmation_id,
+                            conversation_id,
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE pending_tool_confirmations
+                        SET status = %s, resolved_at = %s
+                        WHERE id = %s AND conversation_id = %s AND status = %s
+                        RETURNING
+                            id,
+                            conversation_id,
+                            request_id,
+                            source_class,
+                            tool_name,
+                            status,
+                            clarification_count,
+                            request_payload_json,
+                            created_at,
+                            expires_at,
+                            resolved_at
+                        """,
+                        (
+                            status,
+                            resolved_at.astimezone(timezone.utc),
+                            confirmation_id,
+                            conversation_id,
+                            expected_status,
+                        ),
+                    )
                 row = cur.fetchone()
             if row is None:
                 return None

@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.core.config import Settings
-from app.modules.chat.household import resolve_household_selection
+from app.modules.chat.household import (
+    is_telegram_send_available,
+    resolve_household_selection,
+)
 from app.modules.chat.planner import SUPPORTED_TOOL_NAMES
 
 
@@ -126,7 +129,8 @@ class ToolPolicyEngine:
             )
 
         if normalized_tool in {"telegram-list-aliases", "telegram-send"}:
-            if resolve_household_selection(self._settings) is None:
+            selection = resolve_household_selection(self._settings)
+            if selection is None:
                 return ToolPolicyDecision(
                     allowed=False,
                     policy_decision="deny",
@@ -141,6 +145,21 @@ class ToolPolicyEngine:
                         if normalized_tool == "telegram-list-aliases"
                         else "telegram-bot-api"
                     ),
+                    provider="telegram",
+                )
+            if normalized_tool == "telegram-send" and not is_telegram_send_available(
+                self._settings
+            ):
+                return ToolPolicyDecision(
+                    allowed=False,
+                    policy_decision="deny",
+                    error_type="policy_error",
+                    error_code="tool_not_allowed",
+                    error_message=(
+                        "telegram-send is unavailable because Telegram Bot API is "
+                        "not configured."
+                    ),
+                    adapter_name="telegram-bot-api",
                     provider="telegram",
                 )
             return ToolPolicyDecision(

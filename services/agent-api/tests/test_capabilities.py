@@ -209,6 +209,7 @@ description = "Demo household alias"
     )
     monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(real_path))
     monkeypatch.setenv("DEMO_HOUSEHOLD_CONFIG_PATH", str(demo_path))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-bot-token")
 
     response = client.get("/v1/capabilities/discovery", headers=auth_headers)
 
@@ -226,4 +227,40 @@ description = "Demo household alias"
         "/ask <message>",
         "/aliases",
         "/send <alias> <message>",
+    ]
+
+
+def test_capability_discovery_keeps_aliases_but_hides_send_without_bot_token(
+    client,
+    auth_headers,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    real_path = tmp_path / "household.toml"
+    real_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Real household alias"
+""".strip()
+    )
+    monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(real_path))
+
+    response = client.get("/v1/capabilities/discovery", headers=auth_headers)
+
+    assert response.status_code == 200
+    telegram_send = next(
+        capability
+        for capability in response.json()["capabilities"]
+        if capability["id"] == "telegram_send"
+    )
+    assert telegram_send["state"] == "unconfigured"
+    assert response.json()["commands"] == [
+        "/help",
+        "/status",
+        "/ask <message>",
+        "/aliases",
     ]

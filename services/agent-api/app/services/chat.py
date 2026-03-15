@@ -19,7 +19,10 @@ from app.core.logging import log_event
 from app.core.metrics import get_agent_metrics
 from app.modules.chat.executor import ToolContext, ToolExecutor
 from app.modules.chat.formatters import ChatPromptFormatter
-from app.modules.chat.household import resolve_household_selection
+from app.modules.chat.household import (
+    is_telegram_send_available,
+    resolve_household_selection,
+)
 from app.modules.chat.memory import MemoryContext, MemoryService
 from app.modules.chat.planner import (
     SUPPORTED_TOOL_NAMES,
@@ -119,9 +122,10 @@ class ChatService:
             ),
             spotify_available=self._settings.is_spotify_client_configured(),
             spotify_real_available=self._settings.is_spotify_baseline_configured(),
-            telegram_household_available=(
+            telegram_alias_listing_available=(
                 resolve_household_selection(self._settings) is not None
             ),
+            telegram_send_available=is_telegram_send_available(self._settings),
         )
         self._prompt_formatter = ChatPromptFormatter()
         self._memory_service = MemoryService(
@@ -1194,6 +1198,7 @@ class ChatService:
                 conversation_id=prepared_context.conversation_id,
                 status="expired",
                 resolved_at=now,
+                expected_status="pending",
             )
             if normalized_reply in (_CONFIRM_WORDS | _CANCEL_WORDS | _UNCLEAR_WORDS):
                 return self._build_deterministic_tool_outcome(
@@ -1213,6 +1218,7 @@ class ChatService:
                 conversation_id=prepared_context.conversation_id,
                 status="cancelled",
                 resolved_at=now,
+                expected_status="pending",
             )
             return self._build_deterministic_tool_outcome(
                 conversation_id=prepared_context.conversation_id,
@@ -1243,6 +1249,7 @@ class ChatService:
                 conversation_id=prepared_context.conversation_id,
                 status="executing",
                 resolved_at=now,
+                expected_status="pending",
             )
             if transitioned is None:
                 return None
@@ -1263,6 +1270,7 @@ class ChatService:
                     conversation_id=prepared_context.conversation_id,
                     status="failed",
                     resolved_at=datetime.now(timezone.utc),
+                    expected_status="executing",
                 )
                 return self._build_deterministic_tool_outcome(
                     conversation_id=prepared_context.conversation_id,
@@ -1284,6 +1292,7 @@ class ChatService:
                 conversation_id=prepared_context.conversation_id,
                 status=final_status,
                 resolved_at=datetime.now(timezone.utc),
+                expected_status="executing",
             )
             if execution_context.execution.status != "completed":
                 return DeterministicToolOutcome(
@@ -1294,15 +1303,23 @@ class ChatService:
                     tool_context=execution_context,
                 )
 
-            resolved_send = resolve_telegram_send(
-                settings=self._settings,
-                arguments=pending.arguments,
-            )
+            alias = str(pending.arguments.get("alias") or "").strip()
+            tool_output = execution_context.execution.output or {}
+            if tool_output.get("status") == "demo":
+                content = (
+                    f"Демо-режим: отправил бы сообщение {alias}."
+                    if alias
+                    else "Демо-режим: отправил бы сообщение."
+                )
+            else:
+                content = (
+                    f"Сообщение отправлено {alias}."
+                    if alias
+                    else "Сообщение отправлено."
+                )
             return DeterministicToolOutcome(
                 conversation_id=prepared_context.conversation_id,
-                runtime_result=OllamaChatResult(
-                    content=f"Сообщение отправлено {resolved_send.alias}."
-                ),
+                runtime_result=OllamaChatResult(content=content),
                 tool_context=execution_context,
             )
 
@@ -1327,6 +1344,7 @@ class ChatService:
                 conversation_id=prepared_context.conversation_id,
                 status="cancelled",
                 resolved_at=now,
+                expected_status="pending",
             )
             return self._build_deterministic_tool_outcome(
                 conversation_id=prepared_context.conversation_id,
@@ -1346,6 +1364,7 @@ class ChatService:
             conversation_id=prepared_context.conversation_id,
             status="interrupted",
             resolved_at=now,
+            expected_status="pending",
         )
         return None
 
@@ -1368,6 +1387,18 @@ class ChatService:
             ),
             created_at=datetime.now(timezone.utc),
         )
+        if not is_telegram_send_available(self._settings):
+            return self._build_deterministic_tool_outcome(
+                conversation_id=prepared_context.conversation_id,
+                content="Не могу отправить это сообщение: Telegram не настроен.",
+                tool_name=decision.tool_name,
+                tool_status="failed",
+                arguments=dict(decision.arguments),
+                output={"status": "failed"},
+                error_type="policy_error",
+                error_code="tool_not_allowed",
+                request_id=request_id,
+            )
         try:
             resolved_send = resolve_telegram_send(
                 settings=self._settings,

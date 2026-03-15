@@ -462,16 +462,34 @@ class TelegramBridgeService:
             )
             if not reply_text.strip():
                 raise AgentApiError("agent-api response content missing")
-            return await self._reply_pipeline.send_local_reply(
-                update=update,
-                conversation_id=conversation_id,
-                text=reply_text,
-            )
-        except (AgentApiError, TelegramSendError):
+        except AgentApiError:
             await self._release_update_dedupe(update)
             raise TelegramBridgeRetryableError(
                 "telegram bridge downstream unavailable"
             )
+        try:
+            await self._telegram_client.send_message(
+                chat_id=update.chat_id,
+                text=reply_text,
+            )
+        except TelegramSendError as exc:
+            log_event(
+                "telegram_send_alias_ack_failed",
+                level=logging.WARNING,
+                request_id=request_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=conversation_id,
+                error_code=type(exc).__name__,
+                error_message=str(exc),
+            )
+        return WebhookResult.ok(
+            status="processed",
+            update_id=update.update_id,
+            chat_id=update.chat_id,
+            message_id=update.message_id,
+            conversation_id=conversation_id,
+        )
 
     def _cache_key(self, update: TelegramUpdate) -> str:
         if update.update_id > 0:

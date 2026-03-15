@@ -53,7 +53,10 @@ description = "Personal chat"
 """.strip()
     )
     engine = ToolPolicyEngine(
-        settings=_settings(household_config_path=str(household_path)),
+        settings=_settings(
+            household_config_path=str(household_path),
+            telegram_bot_token="telegram-bot-token",
+        ),
         web_search_adapter_available=True,
     )
 
@@ -210,7 +213,10 @@ description = "Personal chat"
         web_search_adapter_available=False,
     ).evaluate("telegram-send")
     allowed = ToolPolicyEngine(
-        settings=_settings(household_config_path=str(household_path)),
+        settings=_settings(
+            household_config_path=str(household_path),
+            telegram_bot_token="telegram-bot-token",
+        ),
         web_search_adapter_available=False,
     ).evaluate("telegram-send")
 
@@ -219,3 +225,30 @@ description = "Personal chat"
     assert allowed.allowed is True
     assert allowed.adapter_name == "telegram-bot-api"
     assert allowed.provider == "telegram"
+
+
+def test_tool_policy_denies_real_telegram_send_without_bot_token(
+    tmp_path,
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    engine = ToolPolicyEngine(
+        settings=_settings(household_config_path=str(household_path)),
+        web_search_adapter_available=False,
+    )
+
+    aliases_allowed = engine.evaluate("telegram-list-aliases")
+    send_denied = engine.evaluate("telegram-send")
+
+    assert aliases_allowed.allowed is True
+    assert send_denied.allowed is False
+    assert "Bot API" in (send_denied.error_message or "")

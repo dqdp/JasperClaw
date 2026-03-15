@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.clients.agent_api import AgentApiClient, AgentApiError, CapabilityDiscovery
-from app.clients.telegram import TelegramClient
+from app.clients.telegram import TelegramClient, TelegramSendError
 from app.core.config import Settings
 from app.core.metrics import AlertDeliveryMetrics
 from app.main import create_app
@@ -40,11 +40,14 @@ def _events(caplog) -> list[dict[str, object]]:
 
 
 class _FakeTelegramClient(TelegramClient):
-    def __init__(self) -> None:
+    def __init__(self, *, errors: list[Exception] | None = None) -> None:
         self.sent_messages: list[tuple[int, str]] = []
         self.closed = False
+        self._errors = list(errors or [])
 
     async def send_message(self, *, chat_id: int, text: str) -> None:
+        if self._errors:
+            raise self._errors.pop(0)
         self.sent_messages.append((chat_id, text))
 
     async def close(self) -> None:
@@ -1057,6 +1060,43 @@ def test_webhook_send_command_surfaces_agent_api_alias_validation() -> None:
     assert telegram_client.sent_messages == [
         (77, "Unknown alias 'unknown'. Use /aliases to see configured recipients.")
     ]
+
+
+def test_webhook_send_command_does_not_retry_after_ack_failure() -> None:
+    settings = _operational_settings({})
+    client, telegram_client, agent_client = _create_client(
+        settings=settings,
+        telegram_client=_FakeTelegramClient(
+            errors=[TelegramSendError("ack failed", status_code=502)]
+        ),
+        agent_client=_FakeAgentApiClient(reply_text="Sent to wife."),
+    )
+
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 6054,
+            "message": {
+                "message_id": 18,
+                "chat": {"id": 77},
+                "text": "/send wife Running late",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processed"
+    assert agent_client.calls == [
+        {
+            "model": "assistant-fast",
+            "text": "Running late",
+            "alias": "wife",
+            "conversation_id": "telegram:77",
+            "request_id": agent_client.calls[0]["request_id"],
+            "mode": "send_alias_command",
+        }
+    ]
+    assert telegram_client.sent_messages == []
 
 
 def test_webhook_rejects_untrusted_chat_before_agent_call() -> None:

@@ -156,6 +156,7 @@ class ChatRepository(Protocol):
         conversation_id: str,
         status: str,
         resolved_at: datetime,
+        expected_status: str | None = None,
     ) -> PendingToolConfirmationRecord | None: ...
 
     def increment_pending_tool_confirmation_clarification(
@@ -553,12 +554,14 @@ class PostgresChatRepository:
         conversation_id: str,
         status: str,
         resolved_at: datetime,
+        expected_status: str | None = None,
     ) -> PendingToolConfirmationRecord | None:
         return self._pending_confirmation_repository.resolve_pending_confirmation(
             confirmation_id=confirmation_id,
             conversation_id=conversation_id,
             status=status,
             resolved_at=resolved_at,
+            expected_status=expected_status,
         )
 
     def increment_pending_tool_confirmation_clarification(

@@ -47,12 +47,14 @@ class ToolPlanner:
         web_search_available: bool,
         spotify_available: bool,
         spotify_real_available: bool = False,
-        telegram_household_available: bool = False,
+        telegram_alias_listing_available: bool = False,
+        telegram_send_available: bool = False,
     ) -> None:
         self._web_search_available = web_search_available
         self._spotify_available = spotify_available
         self._spotify_real_available = spotify_real_available
-        self._telegram_household_available = telegram_household_available
+        self._telegram_alias_listing_available = telegram_alias_listing_available
+        self._telegram_send_available = telegram_send_available
 
     def is_web_search_requested(self, request: ChatCompletionRequest) -> bool:
         if not request.metadata:
@@ -72,7 +74,8 @@ class ToolPlanner:
             not self._web_search_available
             and not self._spotify_available
             and not self._spotify_real_available
-            and not self._telegram_household_available
+            and not self._telegram_alias_listing_available
+            and not self._telegram_send_available
         ):
             return False
         return self._latest_user_message(request.messages) is not None
@@ -84,12 +87,11 @@ class ToolPlanner:
         tool_examples: list[str] = []
         if self._web_search_available:
             tool_examples.append('{"tool":"web-search","query":"..."}')
-        if self._telegram_household_available:
-            tool_examples.extend(
-                [
-                    '{"tool":"telegram-list-aliases"}',
-                    '{"tool":"telegram-send","alias":"wife","text":"Running late by 10 minutes"}',
-                ]
+        if self._telegram_alias_listing_available:
+            tool_examples.append('{"tool":"telegram-list-aliases"}')
+        if self._telegram_send_available:
+            tool_examples.append(
+                '{"tool":"telegram-send","alias":"wife","text":"Running late by 10 minutes"}'
             )
         if self._spotify_real_available:
             tool_examples.extend(
