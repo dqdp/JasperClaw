@@ -5,7 +5,7 @@ from pathlib import Path
 from time import perf_counter
 
 from app.clients.agent_api import AgentApiClient, AgentApiError
-from app.clients.telegram import TelegramClient
+from app.clients.telegram import TelegramClient, TelegramSendError
 from app.core.config import Settings
 from app.core.logging import log_event
 from app.modules.webhook.commands import CommandRouter
@@ -344,6 +344,12 @@ class TelegramBridgeService:
                 conversation_id=conversation_id,
                 text=self._render_aliases_reply(),
             )
+        if route.mode == "send_alias":
+            return await self._handle_send_alias(
+                update=update,
+                conversation_id=conversation_id,
+                route=route,
+            )
         if route.mode == "local_reply":
             return await self._reply_pipeline.send_local_reply(
                 update=update,
@@ -403,6 +409,49 @@ class TelegramBridgeService:
             for alias, config in self._household_selection.config.aliases.items()
         ]
         return "Available aliases:\n" + "\n".join(lines)
+
+    async def _handle_send_alias(
+        self,
+        *,
+        update: TelegramUpdate,
+        conversation_id: str,
+        route: CommandRoute,
+    ) -> WebhookResult:
+        alias = (route.alias or "").strip().casefold()
+        if self._household_selection is None or not alias:
+            return await self._reply_pipeline.send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text="Usage: /send <alias> <message>",
+            )
+        alias_config = self._household_selection.config.aliases.get(alias)
+        if alias_config is None:
+            return await self._reply_pipeline.send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text=f"Unknown alias '{alias}'. Use /aliases to see configured recipients.",
+            )
+        if self._household_selection.mode == "demo":
+            return await self._reply_pipeline.send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text=f"Demo mode: would send to {alias}: {route.text}",
+            )
+        try:
+            await self._telegram_client.send_message(
+                chat_id=alias_config.chat_id,
+                text=route.text,
+            )
+        except TelegramSendError:
+            await self._release_update_dedupe(update)
+            raise TelegramBridgeRetryableError(
+                "telegram bridge downstream unavailable"
+            )
+        return await self._reply_pipeline.send_local_reply(
+            update=update,
+            conversation_id=conversation_id,
+            text=f"Sent to {alias}.",
+        )
 
     def _cache_key(self, update: TelegramUpdate) -> str:
         if update.update_id > 0:

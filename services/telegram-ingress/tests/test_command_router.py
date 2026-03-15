@@ -7,7 +7,7 @@ def test_command_router_handles_local_commands() -> None:
 
     assert router.route("/help") == CommandRoute(
         mode="discovery_help",
-        text="Available commands: /help, /status, /ask <message>, /aliases",
+        text="Available commands: /help, /status, /ask <message>, /aliases, /send <alias> <message>",
     )
     assert router.route("/status@MyBot") == CommandRoute(
         mode="discovery_status",
@@ -16,6 +16,11 @@ def test_command_router_handles_local_commands() -> None:
     assert router.route("/aliases") == CommandRoute(
         mode="discovery_aliases",
         text="Aliases are temporarily unavailable right now.",
+    )
+    assert router.route("/send wife Hello there") == CommandRoute(
+        mode="send_alias",
+        text="Hello there",
+        alias="wife",
     )
 
 
@@ -29,6 +34,10 @@ def test_command_router_handles_ask_command() -> None:
     assert router.route("/ask") == CommandRoute(
         mode="local_reply",
         text="Usage: /ask <message>",
+    )
+    assert router.route("/send wife") == CommandRoute(
+        mode="local_reply",
+        text="Usage: /send <alias> <message>",
     )
 
 

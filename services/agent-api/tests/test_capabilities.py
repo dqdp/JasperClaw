@@ -142,6 +142,7 @@ description = "Demo household alias"
         "/status",
         "/ask <message>",
         "/aliases",
+        "/send <alias> <message>",
     ]
 
 
@@ -191,4 +192,5 @@ description = "Demo household alias"
         "/status",
         "/ask <message>",
         "/aliases",
+        "/send <alias> <message>",
     ]

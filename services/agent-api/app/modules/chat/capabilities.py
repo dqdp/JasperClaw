@@ -71,7 +71,7 @@ def resolve_capability_discovery(settings: Settings) -> CapabilityDiscoverySnaps
     telegram_state = _resolve_telegram_household_state(settings)
     commands = ["/help", "/status", "/ask <message>"]
     if telegram_state != "unconfigured":
-        commands.append("/aliases")
+        commands.extend(("/aliases", "/send <alias> <message>"))
     capabilities = (
         CapabilityDiscoveryEntry(
             id="voice",

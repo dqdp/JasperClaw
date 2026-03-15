@@ -9,6 +9,7 @@ from app.modules.webhook.parser import TelegramUpdateParser
 class CommandRoute:
     mode: str
     text: str
+    alias: str | None = None
 
 
 class CommandRouter:
@@ -22,7 +23,10 @@ class CommandRouter:
         if command == "/help":
             return CommandRoute(
                 mode="discovery_help",
-                text="Available commands: /help, /status, /ask <message>, /aliases",
+                text=(
+                    "Available commands: /help, /status, /ask <message>, /aliases, "
+                    "/send <alias> <message>"
+                ),
             )
         if command == "/status":
             return CommandRoute(
@@ -42,4 +46,22 @@ class CommandRouter:
                     text="Usage: /ask <message>",
                 )
             return CommandRoute(mode="completion", text=prompt_text)
+        if command == "/send":
+            body_text = self._parser.extract_command_body(text)
+            if not body_text:
+                return CommandRoute(
+                    mode="local_reply",
+                    text="Usage: /send <alias> <message>",
+                )
+            alias, separator, message_text = body_text.partition(" ")
+            if not separator or not message_text.strip():
+                return CommandRoute(
+                    mode="local_reply",
+                    text="Usage: /send <alias> <message>",
+                )
+            return CommandRoute(
+                mode="send_alias",
+                text=message_text.strip(),
+                alias=alias.strip().casefold(),
+            )
         return None

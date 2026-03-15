@@ -788,7 +788,11 @@ def test_webhook_help_command_falls_back_to_bounded_local_reply_when_discovery_f
     assert response.status_code == 200
     assert response.json()["status"] == "processed"
     assert telegram_client.sent_messages == [
-        (77, "Available commands: /help, /status, /ask <message>, /aliases")
+        (
+            77,
+            "Available commands: /help, /status, /ask <message>, /aliases, "
+            "/send <alias> <message>",
+        )
     ]
     assert agent_client.calls[0]["request_id"] == response.headers["X-Request-ID"]
 
@@ -889,6 +893,55 @@ def test_webhook_aliases_command_returns_configured_aliases() -> None:
     assert not agent_client.calls
     assert telegram_client.sent_messages == [
         (77, "Available aliases:\n- wife: Personal chat")
+    ]
+
+
+def test_webhook_send_command_delivers_to_alias_and_acknowledges_sender() -> None:
+    settings = _operational_settings({})
+    client, telegram_client, agent_client = _create_client(settings=settings)
+
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 6052,
+            "message": {
+                "message_id": 16,
+                "chat": {"id": 77},
+                "text": "/send wife Running late",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processed"
+    assert not agent_client.calls
+    assert telegram_client.sent_messages == [
+        (111111111, "Running late"),
+        (77, "Sent to wife."),
+    ]
+
+
+def test_webhook_send_command_rejects_unknown_alias() -> None:
+    settings = _operational_settings({})
+    client, telegram_client, agent_client = _create_client(settings=settings)
+
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 6053,
+            "message": {
+                "message_id": 17,
+                "chat": {"id": 77},
+                "text": "/send unknown Running late",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processed"
+    assert not agent_client.calls
+    assert telegram_client.sent_messages == [
+        (77, "Unknown alias 'unknown'. Use /aliases to see configured recipients.")
     ]
 
 
