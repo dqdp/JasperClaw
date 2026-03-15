@@ -69,6 +69,9 @@ def build_capability_discovery_snapshot(
 
 def resolve_capability_discovery(settings: Settings) -> CapabilityDiscoverySnapshot:
     telegram_state = _resolve_telegram_household_state(settings)
+    commands = ["/help", "/status", "/ask <message>"]
+    if telegram_state != "unconfigured":
+        commands.append("/aliases")
     capabilities = (
         CapabilityDiscoveryEntry(
             id="voice",
@@ -97,7 +100,7 @@ def resolve_capability_discovery(settings: Settings) -> CapabilityDiscoverySnaps
     )
     return build_capability_discovery_snapshot(
         capabilities=capabilities,
-        commands=("/help", "/status", "/ask <message>"),
+        commands=tuple(commands),
     )
 
 

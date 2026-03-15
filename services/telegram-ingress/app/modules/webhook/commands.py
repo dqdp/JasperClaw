@@ -22,12 +22,17 @@ class CommandRouter:
         if command == "/help":
             return CommandRoute(
                 mode="discovery_help",
-                text="Available commands: /help, /status, /ask <message>",
+                text="Available commands: /help, /status, /ask <message>, /aliases",
             )
         if command == "/status":
             return CommandRoute(
                 mode="discovery_status",
                 text="Status is temporarily unavailable right now.",
+            )
+        if command == "/aliases":
+            return CommandRoute(
+                mode="discovery_aliases",
+                text="Aliases are temporarily unavailable right now.",
             )
         if command == "/ask":
             prompt_text = self._parser.extract_command_body(text)

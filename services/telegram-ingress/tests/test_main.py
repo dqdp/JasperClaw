@@ -788,7 +788,7 @@ def test_webhook_help_command_falls_back_to_bounded_local_reply_when_discovery_f
     assert response.status_code == 200
     assert response.json()["status"] == "processed"
     assert telegram_client.sent_messages == [
-        (77, "Available commands: /help, /status, /ask <message>")
+        (77, "Available commands: /help, /status, /ask <message>, /aliases")
     ]
     assert agent_client.calls[0]["request_id"] == response.headers["X-Request-ID"]
 
@@ -866,6 +866,30 @@ def test_webhook_ask_command_without_body_returns_usage_and_skips_agent_api() ->
     assert data["status"] == "processed"
     assert not agent_client.calls
     assert telegram_client.sent_messages == [(77, "Usage: /ask <message>")]
+
+
+def test_webhook_aliases_command_returns_configured_aliases() -> None:
+    settings = _operational_settings({})
+    client, telegram_client, agent_client = _create_client(settings=settings)
+
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 6051,
+            "message": {
+                "message_id": 15,
+                "chat": {"id": 77},
+                "text": "/aliases",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processed"
+    assert not agent_client.calls
+    assert telegram_client.sent_messages == [
+        (77, "Available aliases:\n- wife: Personal chat")
+    ]
 
 
 def test_webhook_rejects_untrusted_chat_before_agent_call() -> None:

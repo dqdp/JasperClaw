@@ -338,6 +338,12 @@ class TelegramBridgeService:
                     route=route,
                 ),
             )
+        if route.mode == "discovery_aliases":
+            return await self._reply_pipeline.send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text=self._render_aliases_reply(),
+            )
         if route.mode == "local_reply":
             return await self._reply_pipeline.send_local_reply(
                 update=update,
@@ -388,6 +394,15 @@ class TelegramBridgeService:
         if self._household_selection is None:
             return False
         return chat_id in self._household_selection.config.trusted_chat_ids
+
+    def _render_aliases_reply(self) -> str:
+        if self._household_selection is None or not self._household_selection.config.aliases:
+            return "No aliases are configured right now."
+        lines = [
+            f"- {alias}: {config.description}"
+            for alias, config in self._household_selection.config.aliases.items()
+        ]
+        return "Available aliases:\n" + "\n".join(lines)
 
     def _cache_key(self, update: TelegramUpdate) -> str:
         if update.update_id > 0:

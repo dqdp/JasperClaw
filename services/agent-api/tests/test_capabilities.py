@@ -137,6 +137,12 @@ description = "Demo household alias"
     )
     assert telegram_send["state"] == "demo"
     assert "Telegram send is demo" in response.json()["help_text"]
+    assert response.json()["commands"] == [
+        "/help",
+        "/status",
+        "/ask <message>",
+        "/aliases",
+    ]
 
 
 def test_capability_discovery_endpoint_prefers_real_household_over_demo(
@@ -180,3 +186,9 @@ description = "Demo household alias"
     )
     assert telegram_send["state"] == "real"
     assert "Telegram send is connected" in response.json()["help_text"]
+    assert response.json()["commands"] == [
+        "/help",
+        "/status",
+        "/ask <message>",
+        "/aliases",
+    ]
