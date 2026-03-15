@@ -77,15 +77,15 @@ jobs:
           python-version: '3.12'
       - run: cp infra/env/app.ci-voice-smoke.example.env infra/env/app.env
       - run: cp infra/env/telegram.ci-smoke.example.env infra/env/telegram.env
-      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml build agent-api ollama-fake stt-service tts-service telegram-ingress telegram-fake
-      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d postgres ollama-fake telegram-fake
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml build agent-api ollama-fake stt-service tts-service telegram-ingress telegram-fake
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d postgres ollama-fake telegram-fake
       - name: Wait for postgres
         run: |
-          until docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml exec -T postgres pg_isready -U assistant -d assistant; do
+          until docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml exec -T postgres pg_isready -U assistant -d assistant; do
             sleep 2
           done
-      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml run --rm --no-deps agent-api python -m app.cli migrate
-      - run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d --no-deps stt-service tts-service agent-api open-webui telegram-ingress
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml run --rm --no-deps agent-api python -m app.cli migrate
+      - run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml up -d --no-deps stt-service tts-service agent-api open-webui telegram-ingress
       - name: Run canonical voice smoke
         env:
           ROOT_ENV_FILE: infra/env/root.ci-smoke.example.env
@@ -114,10 +114,10 @@ jobs:
       - name: Dump voice smoke logs on failure
         if: failure()
         run: |
-          docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml logs --no-color postgres ollama-fake stt-service tts-service agent-api open-webui telegram-ingress telegram-fake
+          docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml logs --no-color postgres ollama-fake stt-service tts-service agent-api open-webui telegram-ingress telegram-fake
       - name: Tear down voice smoke stack
         if: always()
-        run: docker compose --profile voice --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml down -v
+        run: docker compose --env-file infra/env/root.ci-smoke.example.env -f infra/compose/compose.yml -f infra/compose/compose.ci.yml down -v
 
   validate-compose:
     runs-on: ubuntu-latest

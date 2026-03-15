@@ -190,7 +190,6 @@ services:
       context: ../../services/stt-service
     image: ghcr.io/${GHCR_OWNER}/local-assistant-stt:${APP_VERSION}
     restart: unless-stopped
-    profiles: ["voice"]
     env_file:
       - ../env/app.env
     networks:
@@ -201,7 +200,6 @@ services:
       context: ../../services/tts-service
     image: ghcr.io/${GHCR_OWNER}/local-assistant-tts:${APP_VERSION}
     restart: unless-stopped
-    profiles: ["voice"]
     env_file:
       - ../env/app.env
     networks:

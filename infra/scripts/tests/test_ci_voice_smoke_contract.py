@@ -62,7 +62,8 @@ def test_ci_declares_mandatory_voice_smoke_job() -> None:
 
     assert "cp infra/env/app.ci-voice-smoke.example.env infra/env/app.env" in job_body
     assert "cp infra/env/telegram.ci-smoke.example.env infra/env/telegram.env" in job_body
-    assert "docker compose --profile voice" in job_body
+    assert "docker compose --env-file infra/env/root.ci-smoke.example.env" in job_body
+    assert "--profile voice" not in job_body
     assert (
         "build agent-api ollama-fake stt-service tts-service telegram-ingress telegram-fake"
         in job_body
