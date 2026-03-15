@@ -37,6 +37,34 @@ def test_tool_policy_denies_unknown_and_telegram_origin_tools() -> None:
     assert blocked.provider == "search-provider"
 
 
+def test_tool_policy_allows_only_telegram_tools_for_telegram_command_source(
+    tmp_path,
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    engine = ToolPolicyEngine(
+        settings=_settings(household_config_path=str(household_path)),
+        web_search_adapter_available=True,
+    )
+
+    allowed = engine.evaluate("telegram-send", request_source="telegram_command")
+    denied = engine.evaluate("web-search", request_source="telegram_command")
+
+    assert allowed.allowed is True
+    assert allowed.adapter_name == "telegram-bot-api"
+    assert denied.allowed is False
+    assert denied.error_code == "tool_not_allowed"
+
+
 def test_tool_policy_denies_disabled_or_unconfigured_web_search() -> None:
     disabled = ToolPolicyEngine(
         settings=_settings(web_search_enabled=False),

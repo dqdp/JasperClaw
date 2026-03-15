@@ -349,6 +349,7 @@ class TelegramBridgeService:
                 update=update,
                 conversation_id=conversation_id,
                 route=route,
+                request_id=request_id,
             )
         if route.mode == "local_reply":
             return await self._reply_pipeline.send_local_reply(
@@ -416,6 +417,7 @@ class TelegramBridgeService:
         update: TelegramUpdate,
         conversation_id: str,
         route: CommandRoute,
+        request_id: str,
     ) -> WebhookResult:
         alias = (route.alias or "").strip().casefold()
         if self._household_selection is None or not alias:
@@ -424,34 +426,26 @@ class TelegramBridgeService:
                 conversation_id=conversation_id,
                 text="Usage: /send <alias> <message>",
             )
-        alias_config = self._household_selection.config.aliases.get(alias)
-        if alias_config is None:
-            return await self._reply_pipeline.send_local_reply(
-                update=update,
-                conversation_id=conversation_id,
-                text=f"Unknown alias '{alias}'. Use /aliases to see configured recipients.",
-            )
-        if self._household_selection.mode == "demo":
-            return await self._reply_pipeline.send_local_reply(
-                update=update,
-                conversation_id=conversation_id,
-                text=f"Demo mode: would send to {alias}: {route.text}",
-            )
         try:
-            await self._telegram_client.send_message(
-                chat_id=alias_config.chat_id,
+            reply_text = await self._agent_client.send_alias_command(
+                model=self._settings.agent_api_model,
+                alias=alias,
                 text=route.text,
+                conversation_id=conversation_id,
+                request_id=request_id,
             )
-        except TelegramSendError:
+            if not reply_text.strip():
+                raise AgentApiError("agent-api response content missing")
+            return await self._reply_pipeline.send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text=reply_text,
+            )
+        except (AgentApiError, TelegramSendError):
             await self._release_update_dedupe(update)
             raise TelegramBridgeRetryableError(
                 "telegram bridge downstream unavailable"
             )
-        return await self._reply_pipeline.send_local_reply(
-            update=update,
-            conversation_id=conversation_id,
-            text=f"Sent to {alias}.",
-        )
 
     def _cache_key(self, update: TelegramUpdate) -> str:
         if update.update_id > 0:

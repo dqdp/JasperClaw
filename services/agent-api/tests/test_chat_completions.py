@@ -1651,6 +1651,58 @@ description = "Personal chat"
     assert _FakeTelegramClient.calls == []
 
 
+def test_chat_completions_telegram_command_send_executes_without_confirmation(
+    client, monkeypatch, auth_headers, tmp_path
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(household_path))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-bot-token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_telegram_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_telegram_client] = (
+        lambda: _FakeTelegramClient()
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [{"role": "user", "content": "/send wife Running late"}],
+            "metadata": {
+                "source": "telegram_command",
+                "client_conversation_id": "telegram:77",
+                "forced_tool_name": "telegram-send",
+                "forced_tool_alias": "wife",
+                "forced_tool_text": "Running late",
+            },
+            "stream": False,
+        },
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Sent to wife."
+    assert _FakeTelegramClient.calls == [{"chat_id": 111111111, "text": "Running late"}]
+    assert repository.pending_confirmations == {}
+    assert len(_FakeClient.chat_calls) == 0
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "telegram-send"
+    assert tool_execution.status == "completed"
+
+
 def test_chat_completions_model_driven_spotify_pause_executes_action(
     client, monkeypatch, auth_headers
 ) -> None:

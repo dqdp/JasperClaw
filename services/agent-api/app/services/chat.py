@@ -155,6 +155,29 @@ class ChatService:
             conversation_id_hint or self._extract_conversation_hint(request)
         )
         client_binding = self._extract_client_conversation_binding(request)
+        forced_tool_outcome = self._maybe_handle_forced_tool_command(
+            request_id=request_id,
+            request=request,
+            profile=profile,
+            conversation_id_hint=resolved_conversation_hint,
+            client_binding=client_binding,
+        )
+        if forced_tool_outcome is not None:
+            completed_at = datetime.now(timezone.utc)
+            return self._build_success_result(
+                request_id=request_id,
+                request=request,
+                profile=profile,
+                conversation_id_hint=forced_tool_outcome.conversation_id,
+                client_binding=client_binding,
+                memory_context=MemoryContext(runtime_messages=list(request.messages)),
+                tool_context=forced_tool_outcome.tool_context,
+                runtime_result=forced_tool_outcome.runtime_result,
+                started_at=completed_at,
+                completed_at=completed_at,
+                runtime_started=perf_counter(),
+                log_runtime=False,
+            )
         deterministic_outcome = self._maybe_handle_pending_confirmation(
             request_id=request_id,
             request=request,
@@ -202,7 +225,8 @@ class ChatService:
             elif planning_result is not None and planning_result.decision is not None:
                 if (
                     planning_result.decision.tool_name == "telegram-send"
-                    and self._extract_request_source(request) != "telegram"
+                    and self._extract_request_source(request)
+                    not in {"telegram", "telegram_command"}
                 ):
                     deterministic_outcome = self._create_pending_telegram_send_confirmation(
                         request_id=request_id,
@@ -318,6 +342,40 @@ class ChatService:
             conversation_id_hint or self._extract_conversation_hint(request)
         )
         client_binding = self._extract_client_conversation_binding(request)
+        forced_tool_outcome = self._maybe_handle_forced_tool_command(
+            request_id=request_id,
+            request=request,
+            profile=profile,
+            conversation_id_hint=resolved_conversation_hint,
+            client_binding=client_binding,
+        )
+        if forced_tool_outcome is not None:
+            response_id = f"chatcmpl_{uuid4().hex[:12]}"
+            created = int(time())
+            context = ConversationContext(
+                conversation_id=forced_tool_outcome.conversation_id,
+                existing_message_count=0,
+                matched_request_message_count=0,
+                conversation_created=False,
+            )
+            events = self._stream_precomputed_result(
+                request_id=request_id,
+                request=request,
+                profile=profile,
+                context=context,
+                client_binding=client_binding,
+                memory_context=MemoryContext(runtime_messages=list(request.messages)),
+                tool_context=forced_tool_outcome.tool_context,
+                started_at=datetime.now(timezone.utc),
+                runtime_result=forced_tool_outcome.runtime_result,
+            )
+            return ChatStreamSession(
+                response_id=response_id,
+                created=created,
+                public_model=profile.public_id,
+                conversation_id=forced_tool_outcome.conversation_id,
+                events=events,
+            )
         deterministic_outcome = self._maybe_handle_pending_confirmation(
             request_id=request_id,
             request=request,
@@ -386,7 +444,8 @@ class ChatService:
             elif planning_result is not None and planning_result.decision is not None:
                 if (
                     planning_result.decision.tool_name == "telegram-send"
-                    and self._extract_request_source(request) != "telegram"
+                    and self._extract_request_source(request)
+                    not in {"telegram", "telegram_command"}
                 ):
                     deterministic_outcome = self._create_pending_telegram_send_confirmation(
                         request_id=request_id,
@@ -963,7 +1022,102 @@ class ChatService:
         request_source = self._extract_request_source(request)
         if request_source == "telegram":
             return "telegram"
+        if request_source == "telegram_command":
+            return "telegram_command"
         return "agent_api"
+
+    def _maybe_handle_forced_tool_command(
+        self,
+        *,
+        request_id: str,
+        request: ChatCompletionRequest,
+        profile: RuntimeProfile,
+        conversation_id_hint: str | None,
+        client_binding: ClientConversationBinding | None,
+    ) -> DeterministicToolOutcome | None:
+        decision = self._extract_forced_tool_decision(request)
+        if decision is None:
+            return None
+
+        prepared_context = self._repository.prepare_conversation(
+            public_model=profile.public_id,
+            request_messages=request.messages,
+            conversation_id_hint=conversation_id_hint,
+            client_source=client_binding.source if client_binding is not None else None,
+            client_conversation_id=(
+                client_binding.conversation_id if client_binding is not None else None
+            ),
+            created_at=datetime.now(timezone.utc),
+        )
+        try:
+            resolved_send = resolve_telegram_send(
+                settings=self._settings,
+                arguments=decision.arguments,
+            )
+        except APIError:
+            alias = str(decision.arguments.get("alias", "")).strip().casefold()
+            return self._build_deterministic_tool_outcome(
+                conversation_id=prepared_context.conversation_id,
+                content=(
+                    f"Unknown alias '{alias}'. Use /aliases to see configured recipients."
+                ),
+                tool_name=decision.tool_name,
+                tool_status="failed",
+                arguments=decision.arguments,
+                output={"status": "failed"},
+                request_id=request_id,
+            )
+
+        tool_context = self._execute_tool_decision(
+            request_id=request_id,
+            base_messages=list(request.messages),
+            decision=decision,
+            annotate_failures=False,
+            request_source=self._extract_request_source(request),
+        )
+        if tool_context.execution is None or tool_context.execution.status != "completed":
+            return DeterministicToolOutcome(
+                conversation_id=prepared_context.conversation_id,
+                runtime_result=OllamaChatResult(
+                    content="Telegram send is unavailable right now."
+                ),
+                tool_context=tool_context,
+            )
+
+        if resolved_send.mode == "demo":
+            content = f"Demo mode: would send to {resolved_send.alias}: {resolved_send.text}"
+        else:
+            content = f"Sent to {resolved_send.alias}."
+        return DeterministicToolOutcome(
+            conversation_id=prepared_context.conversation_id,
+            runtime_result=OllamaChatResult(content=content),
+            tool_context=tool_context,
+        )
+
+    def _extract_forced_tool_decision(
+        self,
+        request: ChatCompletionRequest,
+    ) -> ToolPlanningDecision | None:
+        if not request.metadata:
+            return None
+        if self._extract_request_source(request) != "telegram_command":
+            return None
+        tool_name = (request.metadata.get("forced_tool_name") or "").strip().casefold()
+        if tool_name != "telegram-send":
+            return None
+        alias = (request.metadata.get("forced_tool_alias") or "").strip().casefold()
+        text = (request.metadata.get("forced_tool_text") or "").strip()
+        if not alias or not text:
+            raise APIError(
+                status_code=422,
+                error_type="validation_error",
+                code="invalid_request",
+                message="Telegram command payload is invalid",
+            )
+        return ToolPlanningDecision(
+            tool_name="telegram-send",
+            arguments={"alias": alias, "text": text},
+        )
 
     def _maybe_handle_pending_confirmation(
         self,
@@ -1541,7 +1695,9 @@ class ChatService:
         if not source or not client_conversation_id:
             return None
 
+        binding_source = "telegram" if source == "telegram_command" else source
+
         return ClientConversationBinding(
-            source=source,
+            source=binding_source,
             conversation_id=client_conversation_id,
         )

@@ -142,6 +142,27 @@ class _FakeAgentApiClient(AgentApiClient):
         )
         return self.reply_text
 
+    async def send_alias_command(
+        self,
+        *,
+        model: str,
+        alias: str,
+        text: str,
+        conversation_id: str,
+        request_id: str,
+    ) -> str:
+        self.calls.append(
+            {
+                "model": model,
+                "text": text,
+                "alias": alias,
+                "conversation_id": conversation_id,
+                "request_id": request_id,
+                "mode": "send_alias_command",
+            }
+        )
+        return self.reply_text
+
     async def describe_capabilities(
         self,
         *,
@@ -199,6 +220,27 @@ class _FailingAgentApiClient(AgentApiClient):
                 "text": "",
                 "conversation_id": "",
                 "request_id": request_id,
+            }
+        )
+        raise AgentApiError("agent-api unavailable")
+
+    async def send_alias_command(
+        self,
+        *,
+        model: str,
+        alias: str,
+        text: str,
+        conversation_id: str,
+        request_id: str,
+    ) -> str:
+        self.calls.append(
+            {
+                "model": model,
+                "text": text,
+                "alias": alias,
+                "conversation_id": conversation_id,
+                "request_id": request_id,
+                "mode": "send_alias_command",
             }
         )
         raise AgentApiError("agent-api unavailable")
@@ -896,9 +938,12 @@ def test_webhook_aliases_command_returns_configured_aliases() -> None:
     ]
 
 
-def test_webhook_send_command_delivers_to_alias_and_acknowledges_sender() -> None:
+def test_webhook_send_command_routes_through_agent_api_and_acknowledges_sender() -> None:
     settings = _operational_settings({})
-    client, telegram_client, agent_client = _create_client(settings=settings)
+    client, telegram_client, agent_client = _create_client(
+        settings=settings,
+        agent_client=_FakeAgentApiClient(reply_text="Sent to wife."),
+    )
 
     response = client.post(
         "/webhook",
@@ -914,16 +959,27 @@ def test_webhook_send_command_delivers_to_alias_and_acknowledges_sender() -> Non
 
     assert response.status_code == 200
     assert response.json()["status"] == "processed"
-    assert not agent_client.calls
-    assert telegram_client.sent_messages == [
-        (111111111, "Running late"),
-        (77, "Sent to wife."),
+    assert agent_client.calls == [
+        {
+            "model": "assistant-fast",
+            "text": "Running late",
+            "alias": "wife",
+            "conversation_id": "telegram:77",
+            "request_id": agent_client.calls[0]["request_id"],
+            "mode": "send_alias_command",
+        }
     ]
+    assert telegram_client.sent_messages == [(77, "Sent to wife.")]
 
 
-def test_webhook_send_command_rejects_unknown_alias() -> None:
+def test_webhook_send_command_surfaces_agent_api_alias_validation() -> None:
     settings = _operational_settings({})
-    client, telegram_client, agent_client = _create_client(settings=settings)
+    client, telegram_client, agent_client = _create_client(
+        settings=settings,
+        agent_client=_FakeAgentApiClient(
+            reply_text="Unknown alias 'unknown'. Use /aliases to see configured recipients."
+        ),
+    )
 
     response = client.post(
         "/webhook",
@@ -939,7 +995,16 @@ def test_webhook_send_command_rejects_unknown_alias() -> None:
 
     assert response.status_code == 200
     assert response.json()["status"] == "processed"
-    assert not agent_client.calls
+    assert agent_client.calls == [
+        {
+            "model": "assistant-fast",
+            "text": "Running late",
+            "alias": "unknown",
+            "conversation_id": "telegram:77",
+            "request_id": agent_client.calls[0]["request_id"],
+            "mode": "send_alias_command",
+        }
+    ]
     assert telegram_client.sent_messages == [
         (77, "Unknown alias 'unknown'. Use /aliases to see configured recipients.")
     ]

@@ -69,6 +69,29 @@ class ToolPolicyEngine:
                 ),
             )
 
+        if request_source == "telegram_command":
+            if normalized_tool not in {"telegram-send", "telegram-list-aliases"}:
+                return ToolPolicyDecision(
+                    allowed=False,
+                    policy_decision="deny",
+                    error_type="policy_error",
+                    error_code="tool_not_allowed",
+                    error_message=(
+                        f"Tool '{normalized_tool}' is blocked for Telegram command "
+                        "requests."
+                    ),
+                    adapter_name=(
+                        "search-http"
+                        if normalized_tool == "web-search"
+                        else "spotify-http"
+                    ),
+                    provider=(
+                        "search-provider"
+                        if normalized_tool == "web-search"
+                        else "spotify"
+                    ),
+                )
+
         if normalized_tool == "web-search":
             if not self._settings.web_search_enabled:
                 return ToolPolicyDecision(
