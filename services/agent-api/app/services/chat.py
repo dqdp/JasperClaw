@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 import logging
 from time import perf_counter, time
 from uuid import uuid4
@@ -12,6 +12,7 @@ from app.clients.ollama import (
 )
 from app.clients.search import WebSearchClient
 from app.clients.spotify import SpotifyClient
+from app.clients.telegram import TelegramClient
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
@@ -27,10 +28,12 @@ from app.modules.chat.planner import (
     ToolPlanningResult,
 )
 from app.modules.chat.policy import ToolPolicyEngine
+from app.modules.chat.telegram_send import ResolvedTelegramSend, resolve_telegram_send
 from app.repositories import (
     ChatPersistenceResult,
     ChatRepository,
     ConversationContext,
+    PendingToolConfirmationRecord,
     ToolExecutionRecord,
 )
 from app.schemas.chat import (
@@ -81,6 +84,18 @@ class ClientConversationBinding:
     conversation_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class DeterministicToolOutcome:
+    conversation_id: str
+    runtime_result: OllamaChatResult
+    tool_context: ToolContext
+
+
+_CONFIRM_WORDS = frozenset({"да", "подтверждаю", "отправь", "окей", "ок"})
+_CANCEL_WORDS = frozenset({"нет", "отмена", "не надо", "стоп"})
+_PENDING_CONFIRMATION_TIMEOUT = timedelta(seconds=30)
+
+
 class ChatService:
     def __init__(
         self,
@@ -89,12 +104,14 @@ class ChatService:
         repository: ChatRepository,
         web_search_client: WebSearchClient | None = None,
         spotify_client: SpotifyClient | None = None,
+        telegram_client: TelegramClient | None = None,
     ) -> None:
         self._settings = settings
         self._ollama_client = ollama_client
         self._repository = repository
         self._web_search_client = web_search_client
         self._spotify_client = spotify_client
+        self._telegram_client = telegram_client
         self._tool_planner = ToolPlanner(
             web_search_available=(
                 self._settings.web_search_enabled and self._web_search_client is not None
@@ -120,6 +137,7 @@ class ChatService:
             settings=self._settings,
             web_search_client=self._web_search_client,
             spotify_client=self._spotify_client,
+            telegram_client=self._telegram_client,
             prompt_formatter=self._prompt_formatter,
             policy_engine=self._tool_policy,
         )
@@ -136,6 +154,29 @@ class ChatService:
             conversation_id_hint or self._extract_conversation_hint(request)
         )
         client_binding = self._extract_client_conversation_binding(request)
+        deterministic_outcome = self._maybe_handle_pending_confirmation(
+            request_id=request_id,
+            request=request,
+            profile=profile,
+            conversation_id_hint=resolved_conversation_hint,
+            client_binding=client_binding,
+        )
+        if deterministic_outcome is not None:
+            completed_at = datetime.now(timezone.utc)
+            return self._build_success_result(
+                request_id=request_id,
+                request=request,
+                profile=profile,
+                conversation_id_hint=deterministic_outcome.conversation_id,
+                client_binding=client_binding,
+                memory_context=MemoryContext(runtime_messages=list(request.messages)),
+                tool_context=deterministic_outcome.tool_context,
+                runtime_result=deterministic_outcome.runtime_result,
+                started_at=completed_at,
+                completed_at=completed_at,
+                runtime_started=perf_counter(),
+                log_runtime=False,
+            )
         memory_context = self._memory_service.prepare_context(
             request_id=request_id,
             request=request,
@@ -158,6 +199,32 @@ class ChatService:
                     base_messages=memory_context.runtime_messages,
                 )
             elif planning_result is not None and planning_result.decision is not None:
+                if (
+                    planning_result.decision.tool_name == "telegram-send"
+                    and self._extract_request_source(request) != "telegram"
+                ):
+                    deterministic_outcome = self._create_pending_telegram_send_confirmation(
+                        request_id=request_id,
+                        request=request,
+                        conversation_id_hint=resolved_conversation_hint,
+                        client_binding=client_binding,
+                        decision=planning_result.decision,
+                    )
+                    completed_at = datetime.now(timezone.utc)
+                    return self._build_success_result(
+                        request_id=request_id,
+                        request=request,
+                        profile=profile,
+                        conversation_id_hint=deterministic_outcome.conversation_id,
+                        client_binding=client_binding,
+                        memory_context=memory_context,
+                        tool_context=deterministic_outcome.tool_context,
+                        runtime_result=deterministic_outcome.runtime_result,
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        runtime_started=runtime_started,
+                        log_runtime=False,
+                    )
                 tool_context = self._prepare_model_driven_tool_context(
                     request_id=request_id,
                     request=request,
@@ -250,6 +317,40 @@ class ChatService:
             conversation_id_hint or self._extract_conversation_hint(request)
         )
         client_binding = self._extract_client_conversation_binding(request)
+        deterministic_outcome = self._maybe_handle_pending_confirmation(
+            request_id=request_id,
+            request=request,
+            profile=profile,
+            conversation_id_hint=resolved_conversation_hint,
+            client_binding=client_binding,
+        )
+        if deterministic_outcome is not None:
+            response_id = f"chatcmpl_{uuid4().hex[:12]}"
+            created = int(time())
+            context = ConversationContext(
+                conversation_id=deterministic_outcome.conversation_id,
+                existing_message_count=0,
+                matched_request_message_count=0,
+                conversation_created=False,
+            )
+            events = self._stream_precomputed_result(
+                request_id=request_id,
+                request=request,
+                profile=profile,
+                context=context,
+                client_binding=client_binding,
+                memory_context=MemoryContext(runtime_messages=list(request.messages)),
+                tool_context=deterministic_outcome.tool_context,
+                started_at=datetime.now(timezone.utc),
+                runtime_result=deterministic_outcome.runtime_result,
+            )
+            return ChatStreamSession(
+                response_id=response_id,
+                created=created,
+                public_model=profile.public_id,
+                conversation_id=deterministic_outcome.conversation_id,
+                events=events,
+            )
         started_at = datetime.now(timezone.utc)
         context = self._repository.prepare_conversation(
             public_model=profile.public_id,
@@ -282,6 +383,43 @@ class ChatService:
                     base_messages=memory_context.runtime_messages,
                 )
             elif planning_result is not None and planning_result.decision is not None:
+                if (
+                    planning_result.decision.tool_name == "telegram-send"
+                    and self._extract_request_source(request) != "telegram"
+                ):
+                    deterministic_outcome = self._create_pending_telegram_send_confirmation(
+                        request_id=request_id,
+                        request=request,
+                        conversation_id_hint=context.conversation_id,
+                        client_binding=client_binding,
+                        decision=planning_result.decision,
+                    )
+                    response_id = f"chatcmpl_{uuid4().hex[:12]}"
+                    created = int(time())
+                    deterministic_context = ConversationContext(
+                        conversation_id=deterministic_outcome.conversation_id,
+                        existing_message_count=0,
+                        matched_request_message_count=0,
+                        conversation_created=False,
+                    )
+                    events = self._stream_precomputed_result(
+                        request_id=request_id,
+                        request=request,
+                        profile=profile,
+                        context=deterministic_context,
+                        client_binding=client_binding,
+                        memory_context=memory_context,
+                        tool_context=deterministic_outcome.tool_context,
+                        started_at=started_at,
+                        runtime_result=deterministic_outcome.runtime_result,
+                    )
+                    return ChatStreamSession(
+                        response_id=response_id,
+                        created=created,
+                        public_model=profile.public_id,
+                        conversation_id=deterministic_outcome.conversation_id,
+                        events=events,
+                    )
                 tool_context = self._prepare_model_driven_tool_context(
                     request_id=request_id,
                     request=request,
@@ -816,6 +954,255 @@ class ChatService:
             return None
         normalized = value.strip().casefold()
         return normalized or None
+
+    def _resolve_source_class(
+        self,
+        request: ChatCompletionRequest,
+    ) -> str:
+        request_source = self._extract_request_source(request)
+        if request_source == "telegram":
+            return "telegram"
+        return "agent_api"
+
+    def _maybe_handle_pending_confirmation(
+        self,
+        *,
+        request_id: str,
+        request: ChatCompletionRequest,
+        profile: RuntimeProfile,
+        conversation_id_hint: str | None,
+        client_binding: ClientConversationBinding | None,
+    ) -> DeterministicToolOutcome | None:
+        if conversation_id_hint is None and client_binding is None:
+            return None
+
+        prepared_context = self._repository.prepare_conversation(
+            public_model=profile.public_id,
+            request_messages=request.messages,
+            conversation_id_hint=conversation_id_hint,
+            client_source=client_binding.source if client_binding is not None else None,
+            client_conversation_id=(
+                client_binding.conversation_id if client_binding is not None else None
+            ),
+            created_at=datetime.now(timezone.utc),
+        )
+        pending = self._repository.get_active_pending_tool_confirmation(
+            conversation_id=prepared_context.conversation_id,
+        )
+        if pending is None:
+            return None
+
+        latest_user_message = self._latest_user_message(request.messages)
+        if latest_user_message is None:
+            return None
+        source_class = self._resolve_source_class(request)
+        normalized_reply = latest_user_message.strip().casefold()
+        if normalized_reply in _CANCEL_WORDS:
+            self._repository.resolve_pending_tool_confirmation(
+                confirmation_id=pending.confirmation_id,
+                conversation_id=prepared_context.conversation_id,
+                status="cancelled",
+                resolved_at=datetime.now(timezone.utc),
+            )
+            return self._build_deterministic_tool_outcome(
+                conversation_id=prepared_context.conversation_id,
+                content="Отправку отменил.",
+                tool_name=pending.tool_name,
+                tool_status="cancelled",
+                arguments=pending.arguments,
+                output={"status": "cancelled"},
+                request_id=request_id,
+            )
+
+        if normalized_reply not in _CONFIRM_WORDS:
+            return None
+
+        if source_class != pending.source_class:
+            return self._build_deterministic_tool_outcome(
+                conversation_id=prepared_context.conversation_id,
+                content=(
+                    "Подтверждение нужно дать в том же канале, где была запрошена отправка."
+                ),
+                tool_name=pending.tool_name,
+                tool_status="rejected",
+                arguments=pending.arguments,
+                output={"status": "source_mismatch"},
+                request_id=request_id,
+            )
+
+        transitioned = self._repository.resolve_pending_tool_confirmation(
+            confirmation_id=pending.confirmation_id,
+            conversation_id=prepared_context.conversation_id,
+            status="executing",
+            resolved_at=datetime.now(timezone.utc),
+        )
+        if transitioned is None:
+            return None
+
+        execution_context = self._tool_executor.execute(
+            request_id=request_id,
+            base_messages=list(request.messages),
+            decision=ToolPlanningDecision(
+                tool_name=pending.tool_name,
+                arguments=pending.arguments,
+            ),
+            annotate_failures=False,
+            request_source=self._extract_request_source(request),
+        )
+        if execution_context.execution is None:
+            self._repository.resolve_pending_tool_confirmation(
+                confirmation_id=pending.confirmation_id,
+                conversation_id=prepared_context.conversation_id,
+                status="failed",
+                resolved_at=datetime.now(timezone.utc),
+            )
+            return self._build_deterministic_tool_outcome(
+                conversation_id=prepared_context.conversation_id,
+                content="Не получилось отправить сообщение прямо сейчас.",
+                tool_name=pending.tool_name,
+                tool_status="failed",
+                arguments=pending.arguments,
+                output={"status": "failed"},
+                request_id=request_id,
+            )
+
+        final_status = (
+            "executed" if execution_context.execution.status == "completed" else "failed"
+        )
+        self._repository.resolve_pending_tool_confirmation(
+            confirmation_id=pending.confirmation_id,
+            conversation_id=prepared_context.conversation_id,
+            status=final_status,
+            resolved_at=datetime.now(timezone.utc),
+        )
+        if execution_context.execution.status != "completed":
+            return DeterministicToolOutcome(
+                conversation_id=prepared_context.conversation_id,
+                runtime_result=OllamaChatResult(
+                    content="Не получилось отправить сообщение прямо сейчас."
+                ),
+                tool_context=execution_context,
+            )
+
+        resolved_send = resolve_telegram_send(
+            settings=self._settings,
+            arguments=pending.arguments,
+        )
+        return DeterministicToolOutcome(
+            conversation_id=prepared_context.conversation_id,
+            runtime_result=OllamaChatResult(
+                content=f"Сообщение отправлено {resolved_send.alias}."
+            ),
+            tool_context=execution_context,
+        )
+
+    def _create_pending_telegram_send_confirmation(
+        self,
+        *,
+        request_id: str,
+        request: ChatCompletionRequest,
+        conversation_id_hint: str | None,
+        client_binding: ClientConversationBinding | None,
+        decision: ToolPlanningDecision,
+    ) -> DeterministicToolOutcome:
+        prepared_context = self._repository.prepare_conversation(
+            public_model=request.model,
+            request_messages=request.messages,
+            conversation_id_hint=conversation_id_hint,
+            client_source=client_binding.source if client_binding is not None else None,
+            client_conversation_id=(
+                client_binding.conversation_id if client_binding is not None else None
+            ),
+            created_at=datetime.now(timezone.utc),
+        )
+        try:
+            resolved_send = resolve_telegram_send(
+                settings=self._settings,
+                arguments=decision.arguments,
+            )
+        except APIError as exc:
+            return self._build_deterministic_tool_outcome(
+                conversation_id=prepared_context.conversation_id,
+                content="Не могу отправить это сообщение: alias не найден или Telegram не настроен.",
+                tool_name=decision.tool_name,
+                tool_status="failed",
+                arguments=dict(decision.arguments),
+                output={"status": "failed"},
+                error_type=exc.error_type,
+                error_code=exc.code,
+                request_id=request_id,
+            )
+
+        confirmation_id = f"confirm_{uuid4().hex[:12]}"
+        created_at = datetime.now(timezone.utc)
+        pending = self._repository.replace_pending_tool_confirmation(
+            confirmation_id=confirmation_id,
+            conversation_id=prepared_context.conversation_id,
+            request_id=request_id,
+            source_class=self._resolve_source_class(request),
+            tool_name=decision.tool_name,
+            arguments={
+                "alias": resolved_send.alias,
+                "text": resolved_send.text,
+            },
+            created_at=created_at,
+            expires_at=created_at + _PENDING_CONFIRMATION_TIMEOUT,
+        )
+        return self._build_deterministic_tool_outcome(
+            conversation_id=prepared_context.conversation_id,
+            content=(
+                f"Отправить {resolved_send.alias} сообщение: {resolved_send.text}? "
+                "Скажи 'да' или 'отмена'."
+            ),
+            tool_name=decision.tool_name,
+            tool_status="pending_confirmation",
+            arguments=pending.arguments,
+            output={
+                "status": "pending_confirmation",
+                "confirmation_id": pending.confirmation_id,
+                "alias": resolved_send.alias,
+            },
+            request_id=request_id,
+        )
+
+    def _build_deterministic_tool_outcome(
+        self,
+        *,
+        conversation_id: str,
+        content: str,
+        tool_name: str,
+        tool_status: str,
+        arguments: dict[str, object],
+        output: dict[str, object] | None,
+        request_id: str,
+        error_type: str | None = None,
+        error_code: str | None = None,
+    ) -> DeterministicToolOutcome:
+        now = datetime.now(timezone.utc)
+        execution = ToolExecutionRecord(
+            invocation_id=f"tool_{uuid4().hex[:12]}",
+            tool_name=tool_name,
+            status=tool_status,
+            arguments=dict(arguments),
+            output=output,
+            latency_ms=0.0,
+            started_at=now,
+            completed_at=now,
+            adapter_name="telegram-bot-api" if tool_name == "telegram-send" else None,
+            provider="telegram" if tool_name.startswith("telegram") else None,
+            policy_decision="allow",
+            error_type=error_type,
+            error_code=error_code,
+        )
+        self._log_tool_execution(request_id=request_id, execution=execution)
+        return DeterministicToolOutcome(
+            conversation_id=conversation_id,
+            runtime_result=OllamaChatResult(content=content),
+            tool_context=ToolContext(
+                runtime_messages=[ChatMessage(role="assistant", content=content)],
+                execution=execution,
+            ),
+        )
 
     def _record_tool_execution(
         self,

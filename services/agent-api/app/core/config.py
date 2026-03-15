@@ -35,6 +35,9 @@ class Settings:
     spotify_search_top_k: int = 3
     spotify_playlist_top_k: int = 5
     spotify_station_top_k: int = 20
+    telegram_bot_token: str = ""
+    telegram_api_base_url: str = "https://api.telegram.org"
+    telegram_timeout_seconds: float = 5.0
     household_config_path: str = ""
     demo_household_config_path: str = ""
     model_owner: str = "local-assistant"
@@ -130,6 +133,14 @@ def get_settings() -> Settings:
         spotify_search_top_k=int(os.getenv("SPOTIFY_SEARCH_TOP_K", "3")),
         spotify_playlist_top_k=int(os.getenv("SPOTIFY_PLAYLIST_TOP_K", "5")),
         spotify_station_top_k=int(os.getenv("SPOTIFY_STATION_TOP_K", "20")),
+        telegram_bot_token=_normalize_required_secret(
+            os.getenv("TELEGRAM_BOT_TOKEN", "")
+        ),
+        telegram_api_base_url=(
+            os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org").strip()
+            or "https://api.telegram.org"
+        ),
+        telegram_timeout_seconds=float(os.getenv("TELEGRAM_TIMEOUT_SECONDS", "5")),
         household_config_path=(os.getenv("HOUSEHOLD_CONFIG_PATH", "") or "").strip(),
         demo_household_config_path=(
             os.getenv("DEMO_HOUSEHOLD_CONFIG_PATH", "") or ""

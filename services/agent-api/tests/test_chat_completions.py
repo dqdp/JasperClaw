@@ -196,6 +196,16 @@ class _FakeSpotifyClient:
             raise _FakeSpotifyClient.error
 
 
+class _FakeTelegramClient:
+    calls = []
+    error = None
+
+    def send_message(self, *, chat_id: int, text: str):
+        _FakeTelegramClient.calls.append({"chat_id": chat_id, "text": text})
+        if _FakeTelegramClient.error is not None:
+            raise _FakeTelegramClient.error
+
+
 def _patch_http_client(monkeypatch):
     monkeypatch.setattr("app.clients.ollama.httpx.Client", _FakeClient)
     _FakeClient.error = None
@@ -234,6 +244,12 @@ def _patch_spotify_client():
     deps.get_spotify_client.cache_clear()
 
 
+def _patch_telegram_client():
+    _FakeTelegramClient.calls = []
+    _FakeTelegramClient.error = None
+    deps.get_telegram_client.cache_clear()
+
+
 class _FakeRepository:
     def __init__(
         self,
@@ -253,6 +269,10 @@ class _FakeRepository:
         self.retrieval_calls = []
         self.store_memory_calls = []
         self.tool_execution_calls = []
+        self.pending_confirmations = {}
+        self.pending_create_calls = []
+        self.pending_resolve_calls = []
+        self.pending_clarification_calls = []
 
     def prepare_conversation(self, **kwargs):
         self.prepare_calls.append(kwargs)
@@ -329,6 +349,78 @@ class _FakeRepository:
 
     def record_tool_execution(self, **kwargs):
         self.tool_execution_calls.append(kwargs)
+
+    def get_active_pending_tool_confirmation(self, *, conversation_id: str):
+        return self.pending_confirmations.get(conversation_id)
+
+    def replace_pending_tool_confirmation(self, **kwargs):
+        from app.persistence.models import PendingToolConfirmationRecord
+
+        self.pending_create_calls.append(kwargs)
+        record = PendingToolConfirmationRecord(
+            confirmation_id=kwargs["confirmation_id"],
+            conversation_id=kwargs["conversation_id"],
+            request_id=kwargs["request_id"],
+            source_class=kwargs["source_class"],
+            tool_name=kwargs["tool_name"],
+            status="pending",
+            clarification_count=0,
+            arguments=dict(kwargs["arguments"]),
+            created_at=kwargs["created_at"],
+            expires_at=kwargs["expires_at"],
+            resolved_at=None,
+        )
+        self.pending_confirmations[kwargs["conversation_id"]] = record
+        return record
+
+    def resolve_pending_tool_confirmation(self, **kwargs):
+        from app.persistence.models import PendingToolConfirmationRecord
+
+        self.pending_resolve_calls.append(kwargs)
+        current = self.pending_confirmations.get(kwargs["conversation_id"])
+        if current is None or current.confirmation_id != kwargs["confirmation_id"]:
+            return None
+        resolved = PendingToolConfirmationRecord(
+            confirmation_id=current.confirmation_id,
+            conversation_id=current.conversation_id,
+            request_id=current.request_id,
+            source_class=current.source_class,
+            tool_name=current.tool_name,
+            status=kwargs["status"],
+            clarification_count=current.clarification_count,
+            arguments=dict(current.arguments),
+            created_at=current.created_at,
+            expires_at=current.expires_at,
+            resolved_at=kwargs["resolved_at"],
+        )
+        if kwargs["status"] == "executing":
+            self.pending_confirmations[kwargs["conversation_id"]] = resolved
+        else:
+            self.pending_confirmations.pop(kwargs["conversation_id"], None)
+        return resolved
+
+    def increment_pending_tool_confirmation_clarification(self, **kwargs):
+        from app.persistence.models import PendingToolConfirmationRecord
+
+        self.pending_clarification_calls.append(kwargs)
+        current = self.pending_confirmations.get(kwargs["conversation_id"])
+        if current is None or current.confirmation_id != kwargs["confirmation_id"]:
+            return None
+        updated = PendingToolConfirmationRecord(
+            confirmation_id=current.confirmation_id,
+            conversation_id=current.conversation_id,
+            request_id=current.request_id,
+            source_class=current.source_class,
+            tool_name=current.tool_name,
+            status=current.status,
+            clarification_count=current.clarification_count + 1,
+            arguments=dict(current.arguments),
+            created_at=current.created_at,
+            expires_at=current.expires_at,
+            resolved_at=current.resolved_at,
+        )
+        self.pending_confirmations[kwargs["conversation_id"]] = updated
+        return updated
 
 
 def _chat_payload(
@@ -1138,6 +1230,205 @@ description = "Personal chat"
     tool_execution = repository.tool_execution_calls[0]["tool_execution"]
     assert tool_execution.tool_name == "telegram-list-aliases"
     assert tool_execution.status == "completed"
+
+
+def test_chat_completions_model_driven_telegram_send_requires_confirmation(
+    client, monkeypatch, auth_headers, tmp_path
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(household_path))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-bot-token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_telegram_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_telegram_client] = (
+        lambda: _FakeTelegramClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        '{"tool":"telegram-send","alias":"wife","text":"Running late"}'
+                    ),
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+    ]
+
+    response = client.post("/v1/chat/completions", json=_chat_payload(), headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.headers["x-conversation-id"] == "conv_test"
+    assert response.json()["choices"][0]["message"]["content"] == (
+        "Отправить wife сообщение: Running late? Скажи 'да' или 'отмена'."
+    )
+    assert len(_FakeClient.chat_calls) == 1
+    assert _FakeTelegramClient.calls == []
+    assert len(repository.pending_create_calls) == 1
+    assert repository.pending_confirmations["conv_test"].arguments == {
+        "alias": "wife",
+        "text": "Running late",
+    }
+    tool_execution = repository.tool_execution_calls[0]["tool_execution"]
+    assert tool_execution.tool_name == "telegram-send"
+    assert tool_execution.status == "pending_confirmation"
+
+
+def test_chat_completions_pending_telegram_send_confirm_executes_once(
+    client, monkeypatch, auth_headers, tmp_path
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(household_path))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-bot-token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_telegram_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_telegram_client] = (
+        lambda: _FakeTelegramClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        '{"tool":"telegram-send","alias":"wife","text":"Running late"}'
+                    ),
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+    ]
+
+    first_response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(),
+        headers=auth_headers,
+    )
+    second_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [{"role": "user", "content": "да"}],
+            "stream": False,
+        },
+        headers={**auth_headers, "X-Conversation-ID": "conv_test"},
+    )
+    third_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [{"role": "user", "content": "да"}],
+            "stream": False,
+        },
+        headers={**auth_headers, "X-Conversation-ID": "conv_test"},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.json()["choices"][0]["message"]["content"] == (
+        "Сообщение отправлено wife."
+    )
+    assert _FakeTelegramClient.calls == [{"chat_id": 111111111, "text": "Running late"}]
+    assert len(_FakeClient.chat_calls) == 2
+    assert third_response.status_code == 200
+    assert _FakeTelegramClient.calls == [{"chat_id": 111111111, "text": "Running late"}]
+
+
+def test_chat_completions_pending_telegram_send_cancel_skips_send(
+    client, monkeypatch, auth_headers, tmp_path
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(household_path))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-bot-token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_telegram_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_telegram_client] = (
+        lambda: _FakeTelegramClient()
+    )
+    _FakeClient.response_queue = [
+        _FakeResponse(
+            200,
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        '{"tool":"telegram-send","alias":"wife","text":"Running late"}'
+                    ),
+                },
+                "prompt_eval_count": 4,
+                "eval_count": 2,
+            },
+        ),
+    ]
+
+    first_response = client.post(
+        "/v1/chat/completions",
+        json=_chat_payload(),
+        headers=auth_headers,
+    )
+    second_response = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "assistant-v1",
+            "messages": [{"role": "user", "content": "отмена"}],
+            "stream": False,
+        },
+        headers={**auth_headers, "X-Conversation-ID": "conv_test"},
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.json()["choices"][0]["message"]["content"] == (
+        "Отправку отменил."
+    )
+    assert _FakeTelegramClient.calls == []
+    assert repository.pending_confirmations == {}
+    assert repository.pending_resolve_calls[-1]["status"] == "cancelled"
 
 
 def test_chat_completions_model_driven_spotify_pause_executes_action(

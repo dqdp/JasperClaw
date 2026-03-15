@@ -9,6 +9,7 @@ from app.schemas.chat import ChatCompletionRequest, ChatMessage
 SUPPORTED_TOOL_NAMES = (
     "web-search",
     "telegram-list-aliases",
+    "telegram-send",
     "spotify-list-playlists",
     "spotify-play-playlist",
     "spotify-start-station",
@@ -84,7 +85,12 @@ class ToolPlanner:
         if self._web_search_available:
             tool_examples.append('{"tool":"web-search","query":"..."}')
         if self._telegram_household_available:
-            tool_examples.append('{"tool":"telegram-list-aliases"}')
+            tool_examples.extend(
+                [
+                    '{"tool":"telegram-list-aliases"}',
+                    '{"tool":"telegram-send","alias":"wife","text":"Running late by 10 minutes"}',
+                ]
+            )
         if self._spotify_real_available:
             tool_examples.extend(
                 [
@@ -159,6 +165,21 @@ class ToolPlanner:
             arguments["query"] = query
         elif tool_name in {"spotify-list-playlists", "telegram-list-aliases"}:
             arguments = {}
+        elif tool_name == "telegram-send":
+            alias = arguments.get("alias")
+            text = arguments.get("text")
+            if text is None:
+                text = arguments.get("message")
+            if not isinstance(alias, str) or not isinstance(text, str):
+                return None
+            normalized_alias = alias.strip().casefold()
+            normalized_text = text.strip()
+            if not normalized_alias or not normalized_text:
+                return None
+            arguments = {
+                "alias": normalized_alias,
+                "text": normalized_text,
+            }
         elif tool_name == "spotify-play-playlist":
             playlist_name = arguments.get("playlist_name")
             if playlist_name is None:

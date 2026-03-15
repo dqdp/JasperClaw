@@ -102,7 +102,7 @@ class ToolPolicyEngine:
                 provider="search-provider",
             )
 
-        if normalized_tool == "telegram-list-aliases":
+        if normalized_tool in {"telegram-list-aliases", "telegram-send"}:
             if resolve_household_selection(self._settings) is None:
                 return ToolPolicyDecision(
                     allowed=False,
@@ -110,16 +110,24 @@ class ToolPolicyEngine:
                     error_type="policy_error",
                     error_code="tool_not_allowed",
                     error_message=(
-                        "telegram-list-aliases is unavailable because the household "
+                        f"{normalized_tool} is unavailable because the household "
                         "config is not configured."
                     ),
-                    adapter_name="telegram-config",
+                    adapter_name=(
+                        "telegram-config"
+                        if normalized_tool == "telegram-list-aliases"
+                        else "telegram-bot-api"
+                    ),
                     provider="telegram",
                 )
             return ToolPolicyDecision(
                 allowed=True,
                 policy_decision="allow",
-                adapter_name="telegram-config",
+                adapter_name=(
+                    "telegram-config"
+                    if normalized_tool == "telegram-list-aliases"
+                    else "telegram-bot-api"
+                ),
                 provider="telegram",
             )
 

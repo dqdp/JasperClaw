@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from app.clients.search import WebSearchClient, WebSearchResultItem
 from app.clients.spotify import SpotifyClient, SpotifyPlaylistItem, SpotifyTrackItem
+from app.clients.telegram import TelegramClient
 from app.core.config import Settings
 from app.core.errors import APIError
 from app.core.logging import log_event
@@ -16,6 +17,7 @@ from app.modules.chat.formatters import ChatPromptFormatter
 from app.modules.chat.household import resolve_household_selection
 from app.modules.chat.planner import ToolPlanningDecision
 from app.modules.chat.policy import ToolPolicyDecision, ToolPolicyEngine
+from app.modules.chat.telegram_send import resolve_telegram_send
 from app.repositories import ToolExecutionRecord
 from app.schemas.chat import ChatMessage
 
@@ -35,12 +37,14 @@ class ToolExecutor:
         settings: Settings,
         web_search_client: WebSearchClient | None,
         spotify_client: SpotifyClient | None,
+        telegram_client: TelegramClient | None = None,
         prompt_formatter: ChatPromptFormatter,
         policy_engine: ToolPolicyEngine,
     ) -> None:
         self._settings = settings
         self._web_search_client = web_search_client
         self._spotify_client = spotify_client
+        self._telegram_client = telegram_client
         self._prompt_formatter = prompt_formatter
         self._policy_engine = policy_engine
 
@@ -268,6 +272,76 @@ class ToolExecutor:
                     tool_name=decision.tool_name,
                     status="failed",
                     arguments={},
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                    error_type=exc.error_type,
+                    error_code=exc.code,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                return ToolContext(
+                    runtime_messages=self._apply_tool_failure_policy(
+                        base_messages=base_messages,
+                        annotate_failures=annotate_failures,
+                        tool_name=decision.tool_name,
+                    ),
+                    execution=execution,
+                )
+
+        if decision.tool_name == "telegram-send":
+            try:
+                resolved_send = resolve_telegram_send(
+                    settings=self._settings,
+                    arguments=decision.arguments,
+                )
+                tool_arguments = {
+                    "alias": resolved_send.alias,
+                    "text": resolved_send.text,
+                }
+                if resolved_send.mode == "real":
+                    if self._telegram_client is None:
+                        raise APIError(
+                            status_code=503,
+                            error_type="dependency_unavailable",
+                            code="tool_not_configured",
+                            message="Telegram Bot API is not configured",
+                        )
+                    self._telegram_client.send_message(
+                        chat_id=resolved_send.chat_id,
+                        text=resolved_send.text,
+                    )
+                    tool_output = {"status": "ok", "alias": resolved_send.alias}
+                else:
+                    tool_output = {"status": "demo", "alias": resolved_send.alias}
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="completed",
+                    arguments=tool_arguments,
+                    output=tool_output,
+                    latency_ms=round((perf_counter() - tool_started) * 1000, 2),
+                    started_at=started_at,
+                    completed_at=completed_at,
+                    adapter_name=policy.adapter_name,
+                    provider=policy.provider,
+                    policy_decision=policy.policy_decision,
+                )
+                self._log_tool_execution(request_id=request_id, execution=execution)
+                return ToolContext(
+                    runtime_messages=list(base_messages),
+                    execution=execution,
+                )
+            except APIError as exc:
+                completed_at = datetime.now(timezone.utc)
+                execution = ToolExecutionRecord(
+                    invocation_id=invocation_id,
+                    tool_name=decision.tool_name,
+                    status="failed",
+                    arguments=dict(decision.arguments),
                     latency_ms=round((perf_counter() - tool_started) * 1000, 2),
                     started_at=started_at,
                     completed_at=completed_at,

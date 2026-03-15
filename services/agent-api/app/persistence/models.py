@@ -56,6 +56,21 @@ class ToolExecutionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class PendingToolConfirmationRecord:
+    confirmation_id: str
+    conversation_id: str
+    request_id: str
+    source_class: str
+    tool_name: str
+    status: str
+    clarification_count: int
+    arguments: dict[str, object]
+    created_at: datetime
+    expires_at: datetime
+    resolved_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ChatPersistenceResult:
     conversation_id: str
     assistant_message_id: str | None

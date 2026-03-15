@@ -17,10 +17,14 @@ from app.persistence.models import (
     MemoryLifecycleTransitionResult,
     MemoryRetrievalRecord,
     MemorySearchHit,
+    PendingToolConfirmationRecord,
     PersistedMessage,
     TranscriptionPersistenceResult,
     ToolExecutionRecord,
     TranscriptMessage,
+)
+from app.persistence.pending_confirmation_repo import (
+    PostgresPendingToolConfirmationRepository,
 )
 from app.persistence.transcript_repo import PostgresTranscriptRepository
 from app.persistence.tool_exec_repo import PostgresToolExecutionRepository
@@ -126,6 +130,41 @@ class ChatRepository(Protocol):
         tool_execution: ToolExecutionRecord,
     ) -> None: ...
 
+    def get_active_pending_tool_confirmation(
+        self,
+        *,
+        conversation_id: str,
+    ) -> PendingToolConfirmationRecord | None: ...
+
+    def replace_pending_tool_confirmation(
+        self,
+        *,
+        confirmation_id: str,
+        conversation_id: str,
+        request_id: str,
+        source_class: str,
+        tool_name: str,
+        arguments: dict[str, object],
+        created_at: datetime,
+        expires_at: datetime,
+    ) -> PendingToolConfirmationRecord: ...
+
+    def resolve_pending_tool_confirmation(
+        self,
+        *,
+        confirmation_id: str,
+        conversation_id: str,
+        status: str,
+        resolved_at: datetime,
+    ) -> PendingToolConfirmationRecord | None: ...
+
+    def increment_pending_tool_confirmation_clarification(
+        self,
+        *,
+        confirmation_id: str,
+        conversation_id: str,
+    ) -> PendingToolConfirmationRecord | None: ...
+
 
 class PostgresChatRepository:
     def __init__(
@@ -143,6 +182,9 @@ class PostgresChatRepository:
         self._model_runs_repository = PostgresModelRunsRepository()
         self._memory_repository = PostgresMemoryRepository(database_url)
         self._tool_execution_repository = PostgresToolExecutionRepository(database_url)
+        self._pending_confirmation_repository = (
+            PostgresPendingToolConfirmationRepository(database_url)
+        )
 
     def prepare_conversation(
         self,
@@ -470,6 +512,64 @@ class PostgresChatRepository:
             request_id=request_id,
             model_run_id=model_run_id,
             tool_execution=tool_execution,
+        )
+
+    def get_active_pending_tool_confirmation(
+        self,
+        *,
+        conversation_id: str,
+    ) -> PendingToolConfirmationRecord | None:
+        return self._pending_confirmation_repository.get_active_confirmation(
+            conversation_id=conversation_id,
+        )
+
+    def replace_pending_tool_confirmation(
+        self,
+        *,
+        confirmation_id: str,
+        conversation_id: str,
+        request_id: str,
+        source_class: str,
+        tool_name: str,
+        arguments: dict[str, object],
+        created_at: datetime,
+        expires_at: datetime,
+    ) -> PendingToolConfirmationRecord:
+        return self._pending_confirmation_repository.replace_pending_confirmation(
+            confirmation_id=confirmation_id,
+            conversation_id=conversation_id,
+            request_id=request_id,
+            source_class=source_class,
+            tool_name=tool_name,
+            arguments=arguments,
+            created_at=created_at,
+            expires_at=expires_at,
+        )
+
+    def resolve_pending_tool_confirmation(
+        self,
+        *,
+        confirmation_id: str,
+        conversation_id: str,
+        status: str,
+        resolved_at: datetime,
+    ) -> PendingToolConfirmationRecord | None:
+        return self._pending_confirmation_repository.resolve_pending_confirmation(
+            confirmation_id=confirmation_id,
+            conversation_id=conversation_id,
+            status=status,
+            resolved_at=resolved_at,
+        )
+
+    def increment_pending_tool_confirmation_clarification(
+        self,
+        *,
+        confirmation_id: str,
+        conversation_id: str,
+    ) -> PendingToolConfirmationRecord | None:
+        return self._pending_confirmation_repository.increment_pending_confirmation_clarification(
+            confirmation_id=confirmation_id,
+            conversation_id=conversation_id,
         )
 
     def _execute(self, operation):

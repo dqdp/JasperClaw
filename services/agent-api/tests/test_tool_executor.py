@@ -90,6 +90,14 @@ class _FakeSpotifyClient:
         raise AssertionError("unexpected next")
 
 
+class _FakeTelegramClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def send_message(self, *, chat_id: int, text: str) -> None:
+        self.calls.append({"chat_id": chat_id, "text": text})
+
+
 def _settings(**overrides: object) -> Settings:
     base: dict[str, object] = {
         "ollama_base_url": "http://ollama:11434",
@@ -102,6 +110,8 @@ def _settings(**overrides: object) -> Settings:
         "spotify_access_token": "token",
         "spotify_playlist_top_k": 5,
         "spotify_station_top_k": 20,
+        "telegram_bot_token": "telegram-bot-token",
+        "telegram_api_base_url": "https://api.telegram.org",
     }
     base.update(overrides)
     return Settings(**base)
@@ -256,6 +266,98 @@ def test_tool_executor_executes_spotify_playlist_listing() -> None:
         ]
     }
     assert "Available Spotify playlists" in context.runtime_messages[0].content
+
+
+def test_tool_executor_executes_telegram_send_in_demo_mode(tmp_path) -> None:
+    demo_path = tmp_path / "household.demo.toml"
+    demo_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    settings = _settings(
+        household_config_path="",
+        demo_household_config_path=str(demo_path),
+    )
+    telegram_client = _FakeTelegramClient()
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=_FakeSpotifyClient(),
+        telegram_client=telegram_client,
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_tg_demo",
+        base_messages=[ChatMessage(role="user", content="send wife hello")],
+        decision=ToolPlanningDecision(
+            tool_name="telegram-send",
+            arguments={"alias": "wife", "text": "hello"},
+        ),
+        annotate_failures=False,
+        request_source=None,
+    )
+
+    assert telegram_client.calls == []
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output == {"status": "demo", "alias": "wife"}
+
+
+def test_tool_executor_executes_telegram_send_in_real_mode(tmp_path) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    settings = _settings(
+        household_config_path=str(household_path),
+        demo_household_config_path="",
+    )
+    telegram_client = _FakeTelegramClient()
+    executor = ToolExecutor(
+        settings=settings,
+        web_search_client=_FakeSearchClient(),
+        spotify_client=_FakeSpotifyClient(),
+        telegram_client=telegram_client,
+        prompt_formatter=ChatPromptFormatter(),
+        policy_engine=ToolPolicyEngine(
+            settings=settings,
+            web_search_adapter_available=True,
+        ),
+    )
+
+    context = executor.execute(
+        request_id="req_tg_real",
+        base_messages=[ChatMessage(role="user", content="send wife hello")],
+        decision=ToolPlanningDecision(
+            tool_name="telegram-send",
+            arguments={"alias": "wife", "text": "hello"},
+        ),
+        annotate_failures=False,
+        request_source=None,
+    )
+
+    assert telegram_client.calls == [{"chat_id": 111111111, "text": "hello"}]
+    assert context.execution is not None
+    assert context.execution.status == "completed"
+    assert context.execution.output == {"status": "ok", "alias": "wife"}
 
 
 def test_tool_executor_executes_spotify_playlist_playback() -> None:

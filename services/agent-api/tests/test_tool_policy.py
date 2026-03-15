@@ -142,3 +142,33 @@ description = "Personal chat"
     assert denied.allowed is False
     assert "household config" in (denied.error_message or "")
     assert allowed.allowed is True
+
+
+def test_tool_policy_requires_household_config_for_telegram_send(
+    tmp_path,
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    denied = ToolPolicyEngine(
+        settings=_settings(),
+        web_search_adapter_available=False,
+    ).evaluate("telegram-send")
+    allowed = ToolPolicyEngine(
+        settings=_settings(household_config_path=str(household_path)),
+        web_search_adapter_available=False,
+    ).evaluate("telegram-send")
+
+    assert denied.allowed is False
+    assert "household config" in (denied.error_message or "")
+    assert allowed.allowed is True
+    assert allowed.adapter_name == "telegram-bot-api"
+    assert allowed.provider == "telegram"

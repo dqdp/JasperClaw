@@ -66,6 +66,10 @@ def test_tool_planner_builds_prompt_after_existing_system_messages() -> None:
         in messages[1].content
     )
     assert '{"tool":"telegram-list-aliases"}' in messages[1].content
+    assert (
+        '{"tool":"telegram-send","alias":"wife","text":"Running late by 10 minutes"}'
+        in messages[1].content
+    )
 
 
 def test_tool_planner_parses_supported_directives() -> None:
@@ -104,6 +108,12 @@ def test_tool_planner_parses_supported_directives() -> None:
         )
     )
     assert planner.parse_decision(
+        '{"tool":"telegram-send","alias":" wife ","text":" Running late "}'
+    ) == ToolPlanningDecision(
+        tool_name="telegram-send",
+        arguments={"alias": "wife", "text": "Running late"},
+    )
+    assert planner.parse_decision(
         '{"tool":"spotify-play-playlist","playlist_name":" Focus Flow "}'
     ) == ToolPlanningDecision(
         tool_name="spotify-play-playlist",
@@ -133,6 +143,7 @@ def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
         )
         is None
     )
+    assert planner.parse_decision('{"tool":"telegram-send","alias":"","text":"x"}') is None
     assert planner.content_outcome(
         '{"tool":"web-search","query":"x"}',
         ToolPlanningDecision(tool_name="web-search", arguments={"query": "x"}),
@@ -144,3 +155,4 @@ def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
     assert "spotify-play-playlist" in SUPPORTED_TOOL_NAMES
     assert "spotify-start-station" in SUPPORTED_TOOL_NAMES
     assert "telegram-list-aliases" in SUPPORTED_TOOL_NAMES
+    assert "telegram-send" in SUPPORTED_TOOL_NAMES

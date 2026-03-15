@@ -351,6 +351,143 @@ class _InMemoryCursor:
             return
 
         if normalized.startswith(
+            "SELECT id, conversation_id, request_id, source_class, tool_name, status, clarification_count, request_payload_json, created_at, expires_at, resolved_at FROM pending_tool_confirmations"
+        ):
+            conversation_id, status = params
+            matches = [
+                pending
+                for pending in self._connection.pending_tool_confirmations
+                if pending["conversation_id"] == conversation_id
+                and pending["status"] == status
+            ]
+            matches.sort(key=lambda pending: pending["created_at"], reverse=True)
+            self._rows = [
+                (
+                    pending["id"],
+                    pending["conversation_id"],
+                    pending["request_id"],
+                    pending["source_class"],
+                    pending["tool_name"],
+                    pending["status"],
+                    pending["clarification_count"],
+                    pending["request_payload_json"],
+                    pending["created_at"],
+                    pending["expires_at"],
+                    pending["resolved_at"],
+                )
+                for pending in matches[:1]
+            ]
+            return
+
+        if normalized.startswith(
+            "UPDATE pending_tool_confirmations SET status = %s, resolved_at = %s WHERE conversation_id = %s AND status = %s"
+        ):
+            next_status, resolved_at, conversation_id, current_status = params
+            for pending in self._connection.pending_tool_confirmations:
+                if (
+                    pending["conversation_id"] == conversation_id
+                    and pending["status"] == current_status
+                ):
+                    pending["status"] = next_status
+                    pending["resolved_at"] = resolved_at
+            self._rows = []
+            return
+
+        if normalized.startswith(
+            "INSERT INTO pending_tool_confirmations ( id, conversation_id, request_id, source_class, tool_name, status, clarification_count, request_payload_json, created_at, expires_at, resolved_at )"
+        ):
+            (
+                confirmation_id,
+                conversation_id,
+                request_id,
+                source_class,
+                tool_name,
+                status,
+                clarification_count,
+                request_payload_json,
+                created_at,
+                expires_at,
+                resolved_at,
+            ) = params
+            self._connection.pending_tool_confirmations.append(
+                {
+                    "id": confirmation_id,
+                    "conversation_id": conversation_id,
+                    "request_id": request_id,
+                    "source_class": source_class,
+                    "tool_name": tool_name,
+                    "status": status,
+                    "clarification_count": clarification_count,
+                    "request_payload_json": json.loads(request_payload_json),
+                    "created_at": created_at,
+                    "expires_at": expires_at,
+                    "resolved_at": resolved_at,
+                }
+            )
+            self._rows = []
+            return
+
+        if normalized.startswith(
+            "UPDATE pending_tool_confirmations SET status = %s, resolved_at = %s WHERE id = %s AND conversation_id = %s RETURNING"
+        ):
+            next_status, resolved_at, confirmation_id, conversation_id = params
+            self._rows = []
+            for pending in self._connection.pending_tool_confirmations:
+                if (
+                    pending["id"] == confirmation_id
+                    and pending["conversation_id"] == conversation_id
+                ):
+                    pending["status"] = next_status
+                    pending["resolved_at"] = resolved_at
+                    self._rows = [
+                        (
+                            pending["id"],
+                            pending["conversation_id"],
+                            pending["request_id"],
+                            pending["source_class"],
+                            pending["tool_name"],
+                            pending["status"],
+                            pending["clarification_count"],
+                            pending["request_payload_json"],
+                            pending["created_at"],
+                            pending["expires_at"],
+                            pending["resolved_at"],
+                        )
+                    ]
+                    break
+            return
+
+        if normalized.startswith(
+            "UPDATE pending_tool_confirmations SET clarification_count = clarification_count + 1 WHERE id = %s AND conversation_id = %s AND status = %s RETURNING"
+        ):
+            confirmation_id, conversation_id, status = params
+            self._rows = []
+            for pending in self._connection.pending_tool_confirmations:
+                if (
+                    pending["id"] == confirmation_id
+                    and pending["conversation_id"] == conversation_id
+                    and pending["status"] == status
+                ):
+                    pending["clarification_count"] += 1
+                    self._rows = [
+                        (
+                            pending["id"],
+                            pending["conversation_id"],
+                            pending["request_id"],
+                            pending["source_class"],
+                            pending["tool_name"],
+                            pending["status"],
+                            pending["clarification_count"],
+                            pending["request_payload_json"],
+                            pending["created_at"],
+                            pending["expires_at"],
+                            pending["resolved_at"],
+                        )
+                    ]
+                    break
+            return
+
+        if normalized.startswith(
             "INSERT INTO tool_executions ( id, conversation_id, model_run_id, request_id, tool_name, status, started_at, finished_at, latency_ms, error_type, error_code, request_payload_json, response_payload_json, policy_decision, adapter_name, provider, created_at )"
         ):
             (
@@ -431,6 +568,7 @@ class _InMemoryConnection:
         self.retrieval_runs: list[dict] = []
         self.retrieval_hits: list[dict] = []
         self.tool_executions: list[dict] = []
+        self.pending_tool_confirmations: list[dict] = []
 
     def __enter__(self):
         return self

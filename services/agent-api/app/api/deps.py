@@ -7,6 +7,7 @@ from app.clients.ollama import OllamaChatClient
 from app.clients.search import WebSearchClient
 from app.clients.spotify import SpotifyClient
 from app.clients.stt import SttClient
+from app.clients.telegram import TelegramClient
 from app.clients.tts import TtsClient
 from app.core.config import Settings, get_settings
 from app.migrations import MigrationRunner
@@ -82,6 +83,18 @@ def get_stt_client() -> SttClient | None:
 
 
 @lru_cache
+def get_telegram_client() -> TelegramClient | None:
+    settings = get_settings()
+    if not settings.telegram_bot_token:
+        return None
+    return TelegramClient(
+        bot_token=settings.telegram_bot_token,
+        api_base_url=settings.telegram_api_base_url,
+        timeout_seconds=settings.telegram_timeout_seconds,
+    )
+
+
+@lru_cache
 def get_tts_client() -> TtsClient | None:
     settings = get_settings()
     if not settings.tts_base_url:
@@ -117,6 +130,7 @@ def get_chat_service(
         WebSearchClient | None, Depends(get_web_search_client)
     ],
     spotify_client: Annotated[SpotifyClient | None, Depends(get_spotify_client)],
+    telegram_client: Annotated[TelegramClient | None, Depends(get_telegram_client)],
 ) -> ChatService:
     return ChatService(
         settings=settings,
@@ -124,6 +138,7 @@ def get_chat_service(
         repository=repository,
         web_search_client=web_search_client,
         spotify_client=spotify_client,
+        telegram_client=telegram_client,
     )
 
 
