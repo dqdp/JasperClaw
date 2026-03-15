@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from app.core.config import Settings
+from shared_infra.household_config import resolve_household_config
 
 CapabilityState = Literal["demo", "real", "unconfigured"]
 
@@ -66,6 +68,7 @@ def build_capability_discovery_snapshot(
 
 
 def resolve_capability_discovery(settings: Settings) -> CapabilityDiscoverySnapshot:
+    telegram_state = _resolve_telegram_household_state(settings)
     capabilities = (
         CapabilityDiscoveryEntry(
             id="voice",
@@ -89,7 +92,7 @@ def resolve_capability_discovery(settings: Settings) -> CapabilityDiscoverySnaps
         CapabilityDiscoveryEntry(
             id="telegram_send",
             label="Telegram send",
-            state="unconfigured",
+            state=telegram_state,
         ),
     )
     return build_capability_discovery_snapshot(
@@ -104,3 +107,20 @@ def _state_label(state: CapabilityState) -> str:
     if state == "demo":
         return "demo"
     return "not configured"
+
+
+def _resolve_telegram_household_state(settings: Settings) -> CapabilityState:
+    selection = resolve_household_config(
+        real_path=_optional_path(settings.household_config_path),
+        demo_path=_optional_path(settings.demo_household_config_path),
+    )
+    if selection is None:
+        return "unconfigured"
+    return "real" if selection.mode == "real" else "demo"
+
+
+def _optional_path(raw_path: str) -> Path | None:
+    normalized = raw_path.strip()
+    if not normalized:
+        return None
+    return Path(normalized)

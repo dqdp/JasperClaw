@@ -32,6 +32,8 @@ class Settings:
     spotify_redirect_uri: str = ""
     spotify_timeout_seconds: float = 5.0
     spotify_search_top_k: int = 3
+    household_config_path: str = ""
+    demo_household_config_path: str = ""
     model_owner: str = "local-assistant"
     voice_enabled: bool = False
     stt_base_url: str = "http://stt-service:8080"
@@ -112,6 +114,10 @@ def get_settings() -> Settings:
         spotify_redirect_uri=(os.getenv("SPOTIFY_REDIRECT_URI", "") or "").strip(),
         spotify_timeout_seconds=float(os.getenv("SPOTIFY_TIMEOUT_SECONDS", "5")),
         spotify_search_top_k=int(os.getenv("SPOTIFY_SEARCH_TOP_K", "3")),
+        household_config_path=(os.getenv("HOUSEHOLD_CONFIG_PATH", "") or "").strip(),
+        demo_household_config_path=(
+            os.getenv("DEMO_HOUSEHOLD_CONFIG_PATH", "") or ""
+        ).strip(),
         voice_enabled=_get_bool_env("VOICE_ENABLED", default=False),
         stt_base_url=(
             os.getenv("STT_BASE_URL", "http://stt-service:8080").strip()

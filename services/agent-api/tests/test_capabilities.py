@@ -84,3 +84,77 @@ def test_capability_discovery_endpoint_returns_user_facing_surface(
             "Telegram send: not configured"
         ),
     }
+
+
+def test_capability_discovery_endpoint_marks_telegram_send_demo_when_demo_household_exists(
+    client,
+    auth_headers,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    demo_path = tmp_path / "household.demo.toml"
+    demo_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.demo_home]
+chat_id = 111111111
+description = "Demo household alias"
+""".strip()
+    )
+    monkeypatch.setenv("DEMO_HOUSEHOLD_CONFIG_PATH", str(demo_path))
+
+    response = client.get("/v1/capabilities/discovery", headers=auth_headers)
+
+    assert response.status_code == 200
+    telegram_send = next(
+        capability
+        for capability in response.json()["capabilities"]
+        if capability["id"] == "telegram_send"
+    )
+    assert telegram_send["state"] == "demo"
+    assert "Telegram send is demo" in response.json()["help_text"]
+
+
+def test_capability_discovery_endpoint_prefers_real_household_over_demo(
+    client,
+    auth_headers,
+    monkeypatch,
+    tmp_path,
+) -> None:
+    real_path = tmp_path / "household.toml"
+    demo_path = tmp_path / "household.demo.toml"
+    real_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Real household alias"
+""".strip()
+    )
+    demo_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.demo_home]
+chat_id = 222222222
+description = "Demo household alias"
+""".strip()
+    )
+    monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(real_path))
+    monkeypatch.setenv("DEMO_HOUSEHOLD_CONFIG_PATH", str(demo_path))
+
+    response = client.get("/v1/capabilities/discovery", headers=auth_headers)
+
+    assert response.status_code == 200
+    telegram_send = next(
+        capability
+        for capability in response.json()["capabilities"]
+        if capability["id"] == "telegram_send"
+    )
+    assert telegram_send["state"] == "real"
+    assert "Telegram send is connected" in response.json()["help_text"]
