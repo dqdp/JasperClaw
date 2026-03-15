@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "infra" / "compose" / "compose.yml"
 COMPOSE_CI_FILE = REPO_ROOT / "infra" / "compose" / "compose.ci.yml"
 APP_ENV_FILE = REPO_ROOT / "infra" / "env" / "app.example.env"
+TELEGRAM_ENV_FILE = REPO_ROOT / "infra" / "env" / "telegram.example.env"
 VOICES_FILE = REPO_ROOT / "services" / "tts-service" / "app" / "voices.toml"
 
 
@@ -48,6 +49,13 @@ def test_compose_mounts_demo_household_config_for_default_baseline_services() ->
 
     assert "../config/household.demo.toml:/app/config/household.demo.toml:ro" in compose_text
     assert compose_text.count("/app/config/household.demo.toml:ro") >= 2
+
+
+def test_telegram_example_env_matches_v1_command_surface() -> None:
+    env_text = TELEGRAM_ENV_FILE.read_text(encoding="utf-8")
+
+    assert "TELEGRAM_ALLOWED_COMMANDS=/help,/status,/ask,/aliases,/send" in env_text
+    assert "DEMO_HOUSEHOLD_CONFIG_PATH=/app/config/household.demo.toml" in env_text
 
 
 def test_ci_compose_mounts_demo_household_config_for_baseline_services() -> None:
