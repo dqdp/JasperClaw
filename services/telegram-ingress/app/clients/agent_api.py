@@ -39,7 +39,16 @@ class AgentApiClient:
         text: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
+        metadata = {
+            "source": "telegram",
+            # Telegram chat IDs are stable client-side session hints, not canonical
+            # backend conversation IDs, until the bridge can supply transcript continuity.
+            "client_conversation_id": conversation_id,
+        }
+        if idempotency_key:
+            metadata["ingress_idempotency_key"] = idempotency_key
         response = await self._request(
             method="POST",
             url=f"{self._base_url}/v1/chat/completions",
@@ -47,12 +56,7 @@ class AgentApiClient:
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": text}],
-                "metadata": {
-                    "source": "telegram",
-                    # Telegram chat IDs are stable client-side session hints, not canonical
-                    # backend conversation IDs, until the bridge can supply transcript continuity.
-                    "client_conversation_id": conversation_id,
-                },
+                "metadata": metadata,
             },
             extra_headers={
                 "X-Request-ID": request_id,
@@ -102,7 +106,17 @@ class AgentApiClient:
         text: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
+        metadata = {
+            "source": "telegram_command",
+            "client_conversation_id": conversation_id,
+            "forced_tool_name": "telegram-send",
+            "forced_tool_alias": alias,
+            "forced_tool_text": text,
+        }
+        if idempotency_key:
+            metadata["ingress_idempotency_key"] = idempotency_key
         response = await self._request(
             method="POST",
             url=f"{self._base_url}/v1/chat/completions",
@@ -110,13 +124,7 @@ class AgentApiClient:
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": f"/send {alias} {text}"}],
-                "metadata": {
-                    "source": "telegram_command",
-                    "client_conversation_id": conversation_id,
-                    "forced_tool_name": "telegram-send",
-                    "forced_tool_alias": alias,
-                    "forced_tool_text": text,
-                },
+                "metadata": metadata,
             },
             extra_headers={
                 "X-Request-ID": request_id,
@@ -139,7 +147,15 @@ class AgentApiClient:
         model: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
+        metadata = {
+            "source": "telegram_command",
+            "client_conversation_id": conversation_id,
+            "forced_tool_name": "telegram-list-aliases",
+        }
+        if idempotency_key:
+            metadata["ingress_idempotency_key"] = idempotency_key
         response = await self._request(
             method="POST",
             url=f"{self._base_url}/v1/chat/completions",
@@ -147,11 +163,7 @@ class AgentApiClient:
             json={
                 "model": model,
                 "messages": [{"role": "user", "content": "/aliases"}],
-                "metadata": {
-                    "source": "telegram_command",
-                    "client_conversation_id": conversation_id,
-                    "forced_tool_name": "telegram-list-aliases",
-                },
+                "metadata": metadata,
             },
             extra_headers={
                 "X-Request-ID": request_id,

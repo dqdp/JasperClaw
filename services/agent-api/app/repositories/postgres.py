@@ -14,6 +14,7 @@ from app.persistence.model_runs_repo import PostgresModelRunsRepository
 from app.persistence.models import (
     ChatPersistenceResult,
     ConversationContext,
+    IngressCompletionRecord,
     MemoryLifecycleTransitionResult,
     MemoryRetrievalRecord,
     MemorySearchHit,
@@ -25,6 +26,9 @@ from app.persistence.models import (
 )
 from app.persistence.pending_confirmation_repo import (
     PostgresPendingToolConfirmationRepository,
+)
+from app.persistence.ingress_completion_repo import (
+    PostgresIngressCompletionRepository,
 )
 from app.persistence.transcript_repo import PostgresTranscriptRepository
 from app.persistence.tool_exec_repo import PostgresToolExecutionRepository
@@ -166,6 +170,24 @@ class ChatRepository(Protocol):
         conversation_id: str,
     ) -> PendingToolConfirmationRecord | None: ...
 
+    def get_ingress_completion(
+        self,
+        *,
+        idempotency_key: str,
+    ) -> IngressCompletionRecord | None: ...
+
+    def store_ingress_completion(
+        self,
+        *,
+        idempotency_key: str,
+        source: str,
+        public_model: str,
+        conversation_id: str,
+        content: str,
+        usage: ChatCompletionUsage | None,
+        stored_at: datetime,
+    ) -> IngressCompletionRecord: ...
+
 
 class PostgresChatRepository:
     def __init__(
@@ -185,6 +207,9 @@ class PostgresChatRepository:
         self._tool_execution_repository = PostgresToolExecutionRepository(database_url)
         self._pending_confirmation_repository = (
             PostgresPendingToolConfirmationRepository(database_url)
+        )
+        self._ingress_completion_repository = PostgresIngressCompletionRepository(
+            database_url
         )
 
     def prepare_conversation(
@@ -573,6 +598,36 @@ class PostgresChatRepository:
         return self._pending_confirmation_repository.increment_pending_confirmation_clarification(
             confirmation_id=confirmation_id,
             conversation_id=conversation_id,
+        )
+
+    def get_ingress_completion(
+        self,
+        *,
+        idempotency_key: str,
+    ) -> IngressCompletionRecord | None:
+        return self._ingress_completion_repository.get_completion(
+            idempotency_key=idempotency_key,
+        )
+
+    def store_ingress_completion(
+        self,
+        *,
+        idempotency_key: str,
+        source: str,
+        public_model: str,
+        conversation_id: str,
+        content: str,
+        usage: ChatCompletionUsage | None,
+        stored_at: datetime,
+    ) -> IngressCompletionRecord:
+        return self._ingress_completion_repository.store_completion(
+            idempotency_key=idempotency_key,
+            source=source,
+            public_model=public_model,
+            conversation_id=conversation_id,
+            content=content,
+            usage=usage,
+            stored_at=stored_at,
         )
 
     def _execute(self, operation):

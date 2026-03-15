@@ -273,6 +273,9 @@ class _FakeRepository:
         self.pending_create_calls = []
         self.pending_resolve_calls = []
         self.pending_clarification_calls = []
+        self.ingress_completion_cache = {}
+        self.ingress_completion_lookup_calls = []
+        self.ingress_completion_store_calls = []
 
     def prepare_conversation(self, **kwargs):
         self.prepare_calls.append(kwargs)
@@ -424,6 +427,25 @@ class _FakeRepository:
         )
         self.pending_confirmations[kwargs["conversation_id"]] = updated
         return updated
+
+    def get_ingress_completion(self, *, idempotency_key: str):
+        self.ingress_completion_lookup_calls.append(idempotency_key)
+        return self.ingress_completion_cache.get(idempotency_key)
+
+    def store_ingress_completion(self, **kwargs):
+        from app.persistence.models import IngressCompletionRecord
+
+        self.ingress_completion_store_calls.append(kwargs)
+        record = IngressCompletionRecord(
+            idempotency_key=kwargs["idempotency_key"],
+            source=kwargs["source"],
+            public_model=kwargs["public_model"],
+            conversation_id=kwargs["conversation_id"],
+            content=kwargs["content"],
+            usage=kwargs["usage"],
+        )
+        self.ingress_completion_cache[kwargs["idempotency_key"]] = record
+        return record
 
 
 def _chat_payload(
@@ -1813,6 +1835,89 @@ description = "Personal chat"
     tool_execution = repository.tool_execution_calls[0]["tool_execution"]
     assert tool_execution.tool_name == "telegram-send"
     assert tool_execution.status == "completed"
+
+
+def test_chat_completions_replays_cached_telegram_command_result_without_reexecuting_tool(
+    client, monkeypatch, auth_headers, tmp_path
+) -> None:
+    household_path = tmp_path / "household.toml"
+    household_path.write_text(
+        """
+[telegram]
+trusted_chat_ids = [123456789]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"
+""".strip()
+    )
+    monkeypatch.setenv("HOUSEHOLD_CONFIG_PATH", str(household_path))
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "telegram-bot-token")
+    get_settings.cache_clear()
+    _patch_http_client(monkeypatch)
+    _patch_telegram_client()
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    client.app.dependency_overrides[deps.get_telegram_client] = (
+        lambda: _FakeTelegramClient()
+    )
+    payload = {
+        "model": "assistant-v1",
+        "messages": [{"role": "user", "content": "/send wife Running late"}],
+        "metadata": {
+            "source": "telegram_command",
+            "client_conversation_id": "telegram:77",
+            "forced_tool_name": "telegram-send",
+            "forced_tool_alias": "wife",
+            "forced_tool_text": "Running late",
+            "ingress_idempotency_key": "tg-update:300",
+        },
+        "stream": False,
+    }
+
+    first = client.post("/v1/chat/completions", json=payload, headers=auth_headers)
+    second = client.post("/v1/chat/completions", json=payload, headers=auth_headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["choices"][0]["message"]["content"] == "Sent to wife."
+    assert second.json()["choices"][0]["message"]["content"] == "Sent to wife."
+    assert _FakeTelegramClient.calls == [{"chat_id": 111111111, "text": "Running late"}]
+    assert len(repository.tool_execution_calls) == 1
+    assert repository.ingress_completion_lookup_calls == [
+        "tg-update:300",
+        "tg-update:300",
+    ]
+    assert len(repository.ingress_completion_store_calls) == 1
+
+
+def test_chat_completions_replays_cached_telegram_completion_without_rerunning_model(
+    client, monkeypatch, auth_headers
+) -> None:
+    _patch_http_client(monkeypatch)
+    repository = _FakeRepository()
+    client.app.dependency_overrides[deps.get_chat_repository] = lambda: repository
+    payload = _chat_payload(
+        metadata={
+            "source": "telegram",
+            "client_conversation_id": "telegram:77",
+            "ingress_idempotency_key": "tg-update:301",
+        }
+    )
+
+    first = client.post("/v1/chat/completions", json=payload, headers=auth_headers)
+    second = client.post("/v1/chat/completions", json=payload, headers=auth_headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["choices"][0]["message"]["content"] == "Runtime response"
+    assert second.json()["choices"][0]["message"]["content"] == "Runtime response"
+    assert len(_FakeClient.chat_calls) == 1
+    assert repository.ingress_completion_lookup_calls == [
+        "tg-update:301",
+        "tg-update:301",
+    ]
+    assert len(repository.ingress_completion_store_calls) == 1
 
 
 def test_chat_completions_telegram_command_aliases_executes_without_confirmation(

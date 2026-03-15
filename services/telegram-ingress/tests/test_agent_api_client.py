@@ -61,6 +61,7 @@ def test_complete_uses_request_id_header_and_client_conversation_metadata() -> N
             text="Reply with ok.",
             conversation_id="telegram:42",
             request_id="req_123",
+            idempotency_key="tg-update:200",
         )
     )
 
@@ -77,6 +78,7 @@ def test_complete_uses_request_id_header_and_client_conversation_metadata() -> N
         "metadata": {
             "source": "telegram",
             "client_conversation_id": "telegram:42",
+            "ingress_idempotency_key": "tg-update:200",
         },
     }
 
@@ -111,6 +113,7 @@ def test_send_alias_command_uses_telegram_command_metadata() -> None:
             text="Running late",
             conversation_id="telegram:42",
             request_id="req_789",
+            idempotency_key="tg-update:201",
         )
     )
 
@@ -129,6 +132,7 @@ def test_send_alias_command_uses_telegram_command_metadata() -> None:
             "forced_tool_name": "telegram-send",
             "forced_tool_alias": "wife",
             "forced_tool_text": "Running late",
+            "ingress_idempotency_key": "tg-update:201",
         },
     }
 
@@ -161,6 +165,7 @@ def test_list_aliases_command_uses_telegram_command_metadata() -> None:
             model="assistant-fast",
             conversation_id="telegram:42",
             request_id="req_790",
+            idempotency_key="tg-update:202",
         )
     )
 
@@ -177,6 +182,7 @@ def test_list_aliases_command_uses_telegram_command_metadata() -> None:
             "source": "telegram_command",
             "client_conversation_id": "telegram:42",
             "forced_tool_name": "telegram-list-aliases",
+            "ingress_idempotency_key": "tg-update:202",
         },
     }
 

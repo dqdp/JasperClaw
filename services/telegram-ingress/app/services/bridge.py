@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections import deque
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from time import perf_counter
 
@@ -12,6 +13,11 @@ from app.modules.webhook.commands import CommandRouter
 from app.modules.webhook.parser import TelegramUpdate, TelegramUpdateParser
 from app.modules.webhook.reply_pipeline import ReplyPipeline
 from app.modules.webhook.result import WebhookResult
+from app.services.update_idempotency import (
+    InMemoryTelegramUpdateRepository,
+    TelegramUpdateRepository,
+    TelegramUpdateStorageError,
+)
 from shared_infra.household_config import HouseholdConfigSelection, resolve_household_config
 
 
@@ -20,7 +26,7 @@ class TelegramBridgeRetryableError(RuntimeError):
 
 
 class DedupCache:
-    """Short-term idempotency cache with TTL and bounded size."""
+    """Short-term completed-update cache with TTL and bounded size."""
 
     def __init__(self, *, ttl_seconds: float, max_events: int) -> None:
         self._ttl_seconds = ttl_seconds
@@ -28,17 +34,20 @@ class DedupCache:
         self._events: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
-    async def should_process(self, key: str) -> bool:
+    async def contains(self, key: str) -> bool:
         now = perf_counter()
         async with self._lock:
             self._evict(now)
-            if key in self._events:
-                return False
+            return key in self._events
+
+    async def remember(self, key: str) -> None:
+        now = perf_counter()
+        async with self._lock:
+            self._evict(now)
             self._events[key] = now
             self._enforce_capacity(now)
-            return True
 
-    async def release(self, key: str) -> None:
+    async def forget(self, key: str) -> None:
         async with self._lock:
             self._events.pop(key, None)
 
@@ -98,14 +107,17 @@ class TelegramBridgeService:
         agent_client: AgentApiClient,
         telegram_client: TelegramClient,
         settings: Settings,
+        update_repository: TelegramUpdateRepository | None = None,
     ) -> None:
         self._agent_client = agent_client
         self._telegram_client = telegram_client
         self._settings = settings
-        self._dedupe = DedupCache(
+        self._completed_updates = DedupCache(
             ttl_seconds=self._settings.dedupe_window_seconds,
             max_events=self._settings.dedupe_max_events,
         )
+        self._update_repository = update_repository or InMemoryTelegramUpdateRepository()
+        self._claim_ttl_seconds = max(30.0, self._settings.request_timeout_seconds * 4)
         self._chat_rate_limiter = RateLimiter(
             limit_per_window=self._settings.telegram_rate_limit_per_chat,
             window_seconds=self._settings.rate_limit_window_seconds,
@@ -124,7 +136,9 @@ class TelegramBridgeService:
             telegram_client=self._telegram_client,
             agent_model=self._settings.agent_api_model,
             max_reply_chars=self._settings.max_reply_chars,
-            release_retry_state=self._release_update_dedupe,
+            stage_reply=self._stage_update_reply,
+            complete_delivery=self._complete_update_delivery,
+            abandon_processing_state=self._abandon_update_processing,
             retryable_error_factory=TelegramBridgeRetryableError,
         )
 
@@ -167,8 +181,8 @@ class TelegramBridgeService:
                 conversation_id=f"telegram:{update.chat_id}",
             )
 
-        cache_key = self._cache_key(update)
-        if not await self._dedupe.should_process(cache_key):
+        update_key = self._update_key(update)
+        if await self._completed_updates.contains(update_key):
             return self._log_update_result(
                 request_id=request_id,
                 started=started,
@@ -184,21 +198,84 @@ class TelegramBridgeService:
                 message_id=update.message_id,
                 conversation_id=f"telegram:{update.chat_id}",
             )
-        if not await self._global_rate_limiter.allow("global"):
+        claim = self._claim_update(update)
+        if claim.action == "duplicate_completed":
+            await self._completed_updates.remember(update_key)
             return self._log_update_result(
                 request_id=request_id,
                 started=started,
-                result=WebhookResult.ignored(reason="rate_limited_global"),
+                result=WebhookResult(
+                    status="ignored",
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    message_id=update.message_id,
+                    reason="duplicate_update",
+                ),
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=f"telegram:{update.chat_id}",
+            )
+        if claim.action == "retry_later":
+            self._log_update_failure(
+                request_id=request_id,
+                started=started,
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=f"telegram:{update.chat_id}",
+            )
+            raise TelegramBridgeRetryableError(
+                "telegram bridge update already processing"
+            )
+        conversation_id = claim.conversation_id or f"telegram:{update.chat_id}"
+        if claim.status == "pending_send" and claim.response_text:
+            try:
+                result = await self._reply_pipeline.send_local_reply(
+                    update=update,
+                    conversation_id=conversation_id,
+                    text=claim.response_text,
+                    staged_reply_text=claim.response_text,
+                )
+            except TelegramBridgeRetryableError:
+                await self._release_retry_update(update)
+                self._log_update_failure(
+                    request_id=request_id,
+                    started=started,
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    message_id=update.message_id,
+                    conversation_id=conversation_id,
+                )
+                raise
+            return self._log_update_result(
+                request_id=request_id,
+                started=started,
+                result=result,
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=conversation_id,
+            )
+        if not await self._global_rate_limiter.allow("global"):
+            result = WebhookResult.ignored(reason="rate_limited_global")
+            await self._complete_update_delivery(update)
+            return self._log_update_result(
+                request_id=request_id,
+                started=started,
+                result=result,
                 update_id=update.update_id,
                 chat_id=update.chat_id,
                 message_id=update.message_id,
                 conversation_id=f"telegram:{update.chat_id}",
             )
         if not await self._chat_rate_limiter.allow(str(update.chat_id)):
+            result = WebhookResult.ignored(reason="rate_limited_chat")
+            await self._complete_update_delivery(update)
             return self._log_update_result(
                 request_id=request_id,
                 started=started,
-                result=WebhookResult.ignored(reason="rate_limited_chat"),
+                result=result,
                 update_id=update.update_id,
                 chat_id=update.chat_id,
                 message_id=update.message_id,
@@ -208,7 +285,7 @@ class TelegramBridgeService:
         if not self._is_trusted_chat(update.chat_id):
             result = await self._reply_pipeline.send_local_reply(
                 update=update,
-                conversation_id=f"telegram:{update.chat_id}",
+                conversation_id=conversation_id,
                 text="This chat is not authorized for household assistant access.",
             )
             return self._log_update_result(
@@ -221,20 +298,21 @@ class TelegramBridgeService:
                 conversation_id=f"telegram:{update.chat_id}",
             )
 
-        conversation_id = f"telegram:{update.chat_id}"
         command = self._parser.extract_command(update.text)
         if command is not None:
             if not self._parser.is_command_allowed(update.text):
+                result = WebhookResult(
+                    status="ignored",
+                    update_id=update.update_id,
+                    chat_id=update.chat_id,
+                    message_id=update.message_id,
+                    reason="command_not_allowed",
+                )
+                await self._complete_update_delivery(update)
                 return self._log_update_result(
                     request_id=request_id,
                     started=started,
-                    result=WebhookResult(
-                        status="ignored",
-                        update_id=update.update_id,
-                        chat_id=update.chat_id,
-                        message_id=update.message_id,
-                        reason="command_not_allowed",
-                    ),
+                    result=result,
                     update_id=update.update_id,
                     chat_id=update.chat_id,
                     message_id=update.message_id,
@@ -245,6 +323,7 @@ class TelegramBridgeService:
                     update=update,
                     conversation_id=conversation_id,
                     request_id=request_id,
+                    update_key=update_key,
                 )
             except TelegramBridgeRetryableError:
                 self._log_update_failure(
@@ -260,11 +339,11 @@ class TelegramBridgeService:
                 return self._log_update_result(
                     request_id=request_id,
                     started=started,
-                    result=handled,
-                    update_id=update.update_id,
-                    chat_id=update.chat_id,
-                    message_id=update.message_id,
-                    conversation_id=conversation_id,
+                result=handled,
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=conversation_id,
                 )
             return self._log_update_result(
                 request_id=request_id,
@@ -288,8 +367,10 @@ class TelegramBridgeService:
                 conversation_id=conversation_id,
                 prompt_text=update.text,
                 request_id=request_id,
+                idempotency_key=self._ingress_idempotency_key(update),
             )
         except TelegramBridgeRetryableError:
+            await self._release_retry_update(update)
             self._log_update_failure(
                 request_id=request_id,
                 started=started,
@@ -315,6 +396,7 @@ class TelegramBridgeService:
         update: TelegramUpdate,
         conversation_id: str,
         request_id: str,
+        update_key: str,
     ) -> WebhookResult | None:
         route = self._command_router.route(update.text)
         if route is None:
@@ -343,6 +425,7 @@ class TelegramBridgeService:
                 update=update,
                 conversation_id=conversation_id,
                 request_id=request_id,
+                update_key=update_key,
             )
         if route.mode == "send_alias":
             return await self._handle_send_alias(
@@ -350,6 +433,7 @@ class TelegramBridgeService:
                 conversation_id=conversation_id,
                 route=route,
                 request_id=request_id,
+                update_key=update_key,
             )
         if route.mode == "local_reply":
             return await self._reply_pipeline.send_local_reply(
@@ -363,6 +447,7 @@ class TelegramBridgeService:
                 conversation_id=conversation_id,
                 prompt_text=route.text,
                 request_id=request_id,
+                idempotency_key=self._ingress_idempotency_key(update),
             )
         return None
 
@@ -387,9 +472,6 @@ class TelegramBridgeService:
     async def close(self) -> None:
         await self._agent_client.close()
         await self._telegram_client.close()
-
-    async def _release_update_dedupe(self, update: TelegramUpdate) -> None:
-        await self._dedupe.release(self._cache_key(update))
 
     def _resolve_household_selection(self) -> HouseholdConfigSelection | None:
         return resolve_household_config(
@@ -417,12 +499,14 @@ class TelegramBridgeService:
         update: TelegramUpdate,
         conversation_id: str,
         request_id: str,
+        update_key: str,
     ) -> WebhookResult:
         try:
             reply_text = await self._agent_client.list_aliases_command(
                 model=self._settings.agent_api_model,
                 conversation_id=conversation_id,
                 request_id=request_id,
+                idempotency_key=self._ingress_idempotency_key(update),
             )
             if not reply_text.strip():
                 raise AgentApiError("agent-api response content missing")
@@ -431,8 +515,8 @@ class TelegramBridgeService:
                 conversation_id=conversation_id,
                 text=reply_text,
             )
-        except (AgentApiError, TelegramSendError):
-            await self._release_update_dedupe(update)
+        except AgentApiError:
+            await self._abandon_update_processing(update)
             raise TelegramBridgeRetryableError(
                 "telegram bridge downstream unavailable"
             )
@@ -444,6 +528,7 @@ class TelegramBridgeService:
         conversation_id: str,
         route: CommandRoute,
         request_id: str,
+        update_key: str,
     ) -> WebhookResult:
         alias = (route.alias or "").strip().casefold()
         if self._household_selection is None or not alias:
@@ -459,14 +544,16 @@ class TelegramBridgeService:
                 text=route.text,
                 conversation_id=conversation_id,
                 request_id=request_id,
+                idempotency_key=self._ingress_idempotency_key(update),
             )
             if not reply_text.strip():
                 raise AgentApiError("agent-api response content missing")
         except AgentApiError:
-            await self._release_update_dedupe(update)
+            await self._abandon_update_processing(update)
             raise TelegramBridgeRetryableError(
                 "telegram bridge downstream unavailable"
             )
+        await self._stage_update_reply(update, conversation_id, reply_text)
         try:
             await self._telegram_client.send_message(
                 chat_id=update.chat_id,
@@ -483,6 +570,7 @@ class TelegramBridgeService:
                 error_code=type(exc).__name__,
                 error_message=str(exc),
             )
+        await self._complete_update_delivery(update)
         return WebhookResult.ok(
             status="processed",
             update_id=update.update_id,
@@ -495,6 +583,87 @@ class TelegramBridgeService:
         if update.update_id > 0:
             return str(update.update_id)
         return f"{update.chat_id}:{update.message_id}"
+
+    def _update_key(self, update: TelegramUpdate) -> str:
+        return f"telegram-update:{self._cache_key(update)}"
+
+    def _ingress_idempotency_key(self, update: TelegramUpdate) -> str:
+        return self._update_key(update)
+
+    def _claim_update(self, update: TelegramUpdate):
+        now = datetime.now(timezone.utc)
+        try:
+            return self._update_repository.claim_update(
+                update_key=self._update_key(update),
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                now=now,
+                locked_until=now + timedelta(seconds=self._claim_ttl_seconds),
+            )
+        except TelegramUpdateStorageError as exc:
+            raise TelegramBridgeRetryableError(
+                "telegram bridge downstream unavailable"
+            ) from exc
+
+    async def _stage_update_reply(
+        self,
+        update: TelegramUpdate,
+        conversation_id: str,
+        response_text: str,
+    ) -> None:
+        now = datetime.now(timezone.utc)
+        try:
+            self._update_repository.stage_reply(
+                update_key=self._update_key(update),
+                conversation_id=conversation_id,
+                response_text=response_text,
+                staged_at=now,
+                locked_until=now + timedelta(seconds=self._claim_ttl_seconds),
+            )
+        except TelegramUpdateStorageError as exc:
+            await self._abandon_update_processing(update)
+            raise TelegramBridgeRetryableError(
+                "telegram bridge downstream unavailable"
+            ) from exc
+
+    async def _complete_update_delivery(self, update: TelegramUpdate) -> None:
+        try:
+            self._update_repository.mark_completed(
+                update_key=self._update_key(update),
+                completed_at=datetime.now(timezone.utc),
+            )
+            await self._completed_updates.remember(self._update_key(update))
+        except TelegramUpdateStorageError:
+            log_event(
+                "telegram_update_completion_mark_failed",
+                level=logging.WARNING,
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+            )
+
+    async def _abandon_update_processing(self, update: TelegramUpdate) -> None:
+        try:
+            self._update_repository.abandon_processing(
+                update_key=self._update_key(update),
+            )
+        except TelegramUpdateStorageError as exc:
+            raise TelegramBridgeRetryableError(
+                "telegram bridge downstream unavailable"
+            ) from exc
+        await self._completed_updates.forget(self._update_key(update))
+
+    async def _release_retry_update(self, update: TelegramUpdate) -> None:
+        try:
+            self._update_repository.release_retry(
+                update_key=self._update_key(update),
+                released_at=datetime.now(timezone.utc),
+            )
+        except TelegramUpdateStorageError as exc:
+            raise TelegramBridgeRetryableError(
+                "telegram bridge downstream unavailable"
+            ) from exc
 
     @staticmethod
     def _optional_path(raw_path: str) -> Path | None:

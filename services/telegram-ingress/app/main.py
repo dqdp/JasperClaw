@@ -27,6 +27,8 @@ from app.services.bridge import (
     TelegramBridgeRetryableError,
     TelegramBridgeService,
 )
+from app.services.update_idempotency import PostgresTelegramUpdateRepository
+from app.services.update_idempotency import TelegramUpdateRepository
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -87,6 +89,7 @@ def create_app(
     bridge_service: TelegramBridgeService | None = None,
     alert_delivery_service: AlertDeliveryHandler | None = None,
     alert_delivery_metrics: AlertDeliveryMetrics | None = None,
+    update_repository: TelegramUpdateRepository | None = None,
 ) -> FastAPI:
     config = settings if settings is not None else get_settings()
     metrics = alert_delivery_metrics or AlertDeliveryMetrics()
@@ -106,6 +109,11 @@ def create_app(
             ),
             telegram_client=telegram_client,
             settings=config,
+            update_repository=(
+                update_repository
+                if update_repository is not None
+                else PostgresTelegramUpdateRepository(config.database_url)
+            ),
         )
     webhook_facade = WebhookFacade(bridge_service=bridge_service)
 

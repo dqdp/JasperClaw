@@ -154,6 +154,9 @@ class ChatService:
         request: ChatCompletionRequest,
         conversation_id_hint: str | None = None,
     ) -> ChatResult:
+        cached_result = self._maybe_load_ingress_cached_result(request=request)
+        if cached_result is not None:
+            return cached_result
         profile = self._resolve_profile(request.model)
         resolved_conversation_hint = (
             conversation_id_hint or self._extract_conversation_hint(request)
@@ -168,7 +171,7 @@ class ChatService:
         )
         if forced_tool_outcome is not None:
             completed_at = datetime.now(timezone.utc)
-            return self._build_success_result(
+            result = self._build_success_result(
                 request_id=request_id,
                 request=request,
                 profile=profile,
@@ -182,6 +185,12 @@ class ChatService:
                 runtime_started=perf_counter(),
                 log_runtime=False,
             )
+            self._store_ingress_cached_result_if_needed(
+                request=request,
+                result=result,
+                stored_at=completed_at,
+            )
+            return result
         deterministic_outcome = self._maybe_handle_pending_confirmation(
             request_id=request_id,
             request=request,
@@ -191,7 +200,7 @@ class ChatService:
         )
         if deterministic_outcome is not None:
             completed_at = datetime.now(timezone.utc)
-            return self._build_success_result(
+            result = self._build_success_result(
                 request_id=request_id,
                 request=request,
                 profile=profile,
@@ -205,6 +214,12 @@ class ChatService:
                 runtime_started=perf_counter(),
                 log_runtime=False,
             )
+            self._store_ingress_cached_result_if_needed(
+                request=request,
+                result=result,
+                stored_at=completed_at,
+            )
+            return result
         memory_context = self._memory_service.prepare_context(
             request_id=request_id,
             request=request,
@@ -262,7 +277,7 @@ class ChatService:
                 )
             elif planning_result is not None:
                 completed_at = datetime.now(timezone.utc)
-                return self._build_success_result(
+                result = self._build_success_result(
                     request_id=request_id,
                     request=request,
                     profile=profile,
@@ -276,6 +291,12 @@ class ChatService:
                     runtime_started=runtime_started,
                     log_runtime=False,
                 )
+                self._store_ingress_cached_result_if_needed(
+                    request=request,
+                    result=result,
+                    stored_at=completed_at,
+                )
+                return result
 
             runtime_started = perf_counter()
             runtime_result = self._ollama_client.chat(
@@ -320,7 +341,7 @@ class ChatService:
             raise
 
         completed_at = datetime.now(timezone.utc)
-        return self._build_success_result(
+        result = self._build_success_result(
             request_id=request_id,
             request=request,
             profile=profile,
@@ -333,6 +354,12 @@ class ChatService:
             completed_at=completed_at,
             runtime_started=runtime_started,
         )
+        self._store_ingress_cached_result_if_needed(
+            request=request,
+            result=result,
+            stored_at=completed_at,
+        )
+        return result
 
     def create_streaming_chat_completion(
         self,
@@ -1018,6 +1045,91 @@ class ChatService:
             return None
         normalized = value.strip().casefold()
         return normalized or None
+
+    def _extract_ingress_idempotency_key(
+        self,
+        request: ChatCompletionRequest,
+    ) -> tuple[str, str] | None:
+        if not request.metadata:
+            return None
+        source = self._extract_request_source(request)
+        if source not in {"telegram", "telegram_command"}:
+            return None
+        raw_key = (request.metadata.get("ingress_idempotency_key") or "").strip()
+        if not raw_key:
+            return None
+        return raw_key, source
+
+    def _maybe_load_ingress_cached_result(
+        self,
+        *,
+        request: ChatCompletionRequest,
+    ) -> ChatResult | None:
+        extracted = self._extract_ingress_idempotency_key(request)
+        if extracted is None:
+            return None
+        idempotency_key, source = extracted
+        record = self._repository.get_ingress_completion(
+            idempotency_key=idempotency_key,
+        )
+        if record is None:
+            return None
+        if record.source != source:
+            raise APIError(
+                status_code=409,
+                error_type="validation_error",
+                code="invalid_request",
+                message="Ingress idempotency key reuse has mismatched source",
+            )
+        if record.public_model != request.model:
+            raise APIError(
+                status_code=409,
+                error_type="validation_error",
+                code="invalid_request",
+                message="Ingress idempotency key reuse has mismatched model",
+            )
+        return ChatResult(
+            response_id=f"chatcmpl_{uuid4().hex[:12]}",
+            created=int(time()),
+            public_model=record.public_model,
+            conversation_id=record.conversation_id,
+            content=record.content,
+            choices=[
+                ChatCompletionChoice(
+                    message=ChatCompletionChoiceMessage(content=record.content)
+                )
+            ],
+            usage=record.usage,
+        )
+
+    def _store_ingress_cached_result_if_needed(
+        self,
+        *,
+        request: ChatCompletionRequest,
+        result: ChatResult,
+        stored_at: datetime,
+    ) -> None:
+        extracted = self._extract_ingress_idempotency_key(request)
+        if extracted is None:
+            return
+        idempotency_key, source = extracted
+        try:
+            self._repository.store_ingress_completion(
+                idempotency_key=idempotency_key,
+                source=source,
+                public_model=result.public_model,
+                conversation_id=result.conversation_id,
+                content=result.content,
+                usage=result.usage,
+                stored_at=stored_at,
+            )
+        except APIError:
+            log_event(
+                "ingress_completion_cache_store_failed",
+                level=logging.WARNING,
+                idempotency_key=idempotency_key,
+                source=source,
+            )
 
     def _resolve_source_class(
         self,

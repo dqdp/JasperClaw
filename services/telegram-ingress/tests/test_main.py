@@ -24,6 +24,7 @@ from app.services.alert_delivery import (
     AlertSubmissionResult,
 )
 from app.services.bridge import TelegramBridgeService, WebhookResult
+from app.services.update_idempotency import InMemoryTelegramUpdateRepository
 
 
 _TEST_HOUSEHOLD_CONFIG = (
@@ -134,6 +135,7 @@ class _FakeAgentApiClient(AgentApiClient):
         text: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -141,6 +143,7 @@ class _FakeAgentApiClient(AgentApiClient):
                 "text": text,
                 "conversation_id": conversation_id,
                 "request_id": request_id,
+                "idempotency_key": idempotency_key or "",
             }
         )
         return self.reply_text
@@ -153,6 +156,7 @@ class _FakeAgentApiClient(AgentApiClient):
         text: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -162,6 +166,7 @@ class _FakeAgentApiClient(AgentApiClient):
                 "conversation_id": conversation_id,
                 "request_id": request_id,
                 "mode": "send_alias_command",
+                "idempotency_key": idempotency_key or "",
             }
         )
         return self.reply_text
@@ -172,6 +177,7 @@ class _FakeAgentApiClient(AgentApiClient):
         model: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -180,6 +186,7 @@ class _FakeAgentApiClient(AgentApiClient):
                 "conversation_id": conversation_id,
                 "request_id": request_id,
                 "mode": "list_aliases_command",
+                "idempotency_key": idempotency_key or "",
             }
         )
         return self.reply_text
@@ -219,6 +226,7 @@ class _FailingAgentApiClient(AgentApiClient):
         text: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -226,6 +234,7 @@ class _FailingAgentApiClient(AgentApiClient):
                 "text": text,
                 "conversation_id": conversation_id,
                 "request_id": request_id,
+                "idempotency_key": idempotency_key or "",
             }
         )
         raise AgentApiError("agent-api unavailable")
@@ -253,6 +262,7 @@ class _FailingAgentApiClient(AgentApiClient):
         text: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -262,6 +272,7 @@ class _FailingAgentApiClient(AgentApiClient):
                 "conversation_id": conversation_id,
                 "request_id": request_id,
                 "mode": "send_alias_command",
+                "idempotency_key": idempotency_key or "",
             }
         )
         raise AgentApiError("agent-api unavailable")
@@ -272,6 +283,7 @@ class _FailingAgentApiClient(AgentApiClient):
         model: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -280,6 +292,7 @@ class _FailingAgentApiClient(AgentApiClient):
                 "conversation_id": conversation_id,
                 "request_id": request_id,
                 "mode": "list_aliases_command",
+                "idempotency_key": idempotency_key or "",
             }
         )
         raise AgentApiError("agent-api unavailable")
@@ -658,6 +671,7 @@ def test_webhook_processes_text_update() -> None:
             "text": "привет",
             "conversation_id": "telegram:42",
             "request_id": response.headers["X-Request-ID"],
+            "idempotency_key": "telegram-update:100",
         },
     ]
     assert telegram_client.sent_messages == [(42, "ok")]
@@ -685,6 +699,7 @@ def test_webhook_propagates_request_id_and_logs_update_context(caplog) -> None:
             "text": "status?",
             "conversation_id": "telegram:99",
             "request_id": "req_telegram_obs",
+            "idempotency_key": "telegram-update:102",
         }
     ]
 
@@ -976,6 +991,7 @@ def test_webhook_ask_command_forwards_stripped_text_to_agent_api() -> None:
             "text": "what is the status?",
             "conversation_id": "telegram:77",
             "request_id": response.headers["X-Request-ID"],
+            "idempotency_key": "telegram-update:604",
         }
     ]
     assert telegram_client.sent_messages == [(77, "ok")]
@@ -1032,6 +1048,7 @@ def test_webhook_aliases_command_routes_through_agent_api() -> None:
             "conversation_id": "telegram:77",
             "request_id": agent_client.calls[0]["request_id"],
             "mode": "list_aliases_command",
+            "idempotency_key": "telegram-update:6051",
         }
     ]
     assert telegram_client.sent_messages == [
@@ -1068,6 +1085,7 @@ def test_webhook_send_command_routes_through_agent_api_and_acknowledges_sender()
             "conversation_id": "telegram:77",
             "request_id": agent_client.calls[0]["request_id"],
             "mode": "send_alias_command",
+            "idempotency_key": "telegram-update:6052",
         }
     ]
     assert telegram_client.sent_messages == [(77, "Sent to wife.")]
@@ -1104,6 +1122,7 @@ def test_webhook_send_command_surfaces_agent_api_alias_validation() -> None:
             "conversation_id": "telegram:77",
             "request_id": agent_client.calls[0]["request_id"],
             "mode": "send_alias_command",
+            "idempotency_key": "telegram-update:6053",
         }
     ]
     assert telegram_client.sent_messages == [
@@ -1143,6 +1162,7 @@ def test_webhook_send_command_does_not_retry_after_ack_failure() -> None:
             "conversation_id": "telegram:77",
             "request_id": agent_client.calls[0]["request_id"],
             "mode": "send_alias_command",
+            "idempotency_key": "telegram-update:6054",
         }
     ]
     assert telegram_client.sent_messages == []
@@ -1212,6 +1232,102 @@ def test_webhook_ignores_duplicate_update() -> None:
     assert second.json()["reason"] == "duplicate_update"
     assert len(telegram_client.sent_messages) == 1
     assert len(agent_client.calls) == 1
+
+
+def test_webhook_ignores_duplicate_update_after_restart() -> None:
+    settings = _operational_settings({})
+    shared_repository = InMemoryTelegramUpdateRepository()
+    first_agent_client = _FakeAgentApiClient(reply_text="reply")
+    first_telegram_client = _FakeTelegramClient()
+    first_client = TestClient(
+        create_app(
+            settings=settings,
+            bridge_service=TelegramBridgeService(
+                agent_client=first_agent_client,
+                telegram_client=first_telegram_client,
+                settings=settings,
+                update_repository=shared_repository,
+            ),
+        )
+    )
+    second_agent_client = _FakeAgentApiClient(reply_text="reply")
+    second_telegram_client = _FakeTelegramClient()
+    second_client = TestClient(
+        create_app(
+            settings=settings,
+            bridge_service=TelegramBridgeService(
+                agent_client=second_agent_client,
+                telegram_client=second_telegram_client,
+                settings=settings,
+                update_repository=shared_repository,
+            ),
+        )
+    )
+    payload = {
+        "update_id": 201,
+        "message": {"message_id": 31, "chat": {"id": 77}, "text": "loop"},
+    }
+
+    first = first_client.post("/webhook", json=payload)
+    second = second_client.post("/webhook", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["status"] == "processed"
+    assert second.json()["status"] == "ignored"
+    assert second.json()["reason"] == "duplicate_update"
+    assert first_telegram_client.sent_messages == [(77, "reply")]
+    assert second_telegram_client.sent_messages == []
+    assert len(first_agent_client.calls) == 1
+    assert second_agent_client.calls == []
+
+
+def test_webhook_reuses_staged_reply_after_restart_when_first_send_fails() -> None:
+    settings = _operational_settings({})
+    shared_repository = InMemoryTelegramUpdateRepository()
+    first_agent_client = _FakeAgentApiClient(reply_text="reply")
+    first_telegram_client = _FakeTelegramClient(
+        errors=[TelegramSendError("telegram unavailable")]
+    )
+    first_client = TestClient(
+        create_app(
+            settings=settings,
+            bridge_service=TelegramBridgeService(
+                agent_client=first_agent_client,
+                telegram_client=first_telegram_client,
+                settings=settings,
+                update_repository=shared_repository,
+            ),
+        )
+    )
+    second_agent_client = _FakeAgentApiClient(reply_text="reply")
+    second_telegram_client = _FakeTelegramClient()
+    second_client = TestClient(
+        create_app(
+            settings=settings,
+            bridge_service=TelegramBridgeService(
+                agent_client=second_agent_client,
+                telegram_client=second_telegram_client,
+                settings=settings,
+                update_repository=shared_repository,
+            ),
+        )
+    )
+    payload = {
+        "update_id": 202,
+        "message": {"message_id": 32, "chat": {"id": 77}, "text": "loop"},
+    }
+
+    first = first_client.post("/webhook", json=payload)
+    second = second_client.post("/webhook", json=payload)
+
+    assert first.status_code == 503
+    assert second.status_code == 200
+    assert second.json()["status"] == "processed"
+    assert first_telegram_client.sent_messages == []
+    assert second_telegram_client.sent_messages == [(77, "reply")]
+    assert len(first_agent_client.calls) == 1
+    assert second_agent_client.calls == []
 
 
 def test_webhook_ignores_non_text_updates() -> None:
@@ -1932,7 +2048,10 @@ def test_webhook_configuration_registers_webhook_on_startup(monkeypatch) -> None
             "webhook_path": "/telegram/webhook",
         }
     )
-    app = main_module.create_app(settings=settings)
+    app = main_module.create_app(
+        settings=settings,
+        update_repository=InMemoryTelegramUpdateRepository(),
+    )
     with TestClient(app):
         pass
 
@@ -1959,7 +2078,10 @@ def test_webhook_configuration_requires_secret_token(monkeypatch) -> None:
             "webhook_path": "/telegram/webhook",
         }
     )
-    app = main_module.create_app(settings=settings)
+    app = main_module.create_app(
+        settings=settings,
+        update_repository=InMemoryTelegramUpdateRepository(),
+    )
 
     with pytest.raises(RuntimeError, match="TELEGRAM_WEBHOOK_SECRET_TOKEN"):
         with TestClient(app):
@@ -1984,7 +2106,10 @@ def test_polling_enabled_starts_background_task(monkeypatch) -> None:
             "telegram_webhook_url": "",
         }
     )
-    app = main_module.create_app(settings=settings)
+    app = main_module.create_app(
+        settings=settings,
+        update_repository=InMemoryTelegramUpdateRepository(),
+    )
     with TestClient(app):
         assert app.state.telegram_polling_task is not None
         assert not app.state.telegram_polling_task.done()
@@ -2043,7 +2168,10 @@ def test_polling_keeps_offset_when_bridge_processing_fails(monkeypatch) -> None:
             "telegram_webhook_url": "",
         }
     )
-    app = main_module.create_app(settings=settings)
+    app = main_module.create_app(
+        settings=settings,
+        update_repository=InMemoryTelegramUpdateRepository(),
+    )
     with TestClient(app):
         deadline = time.time() + 1.0
         while (
@@ -2120,6 +2248,7 @@ def test_polling_generates_request_id_and_logs_update_context(monkeypatch, caplo
             text: str,
             conversation_id: str,
             request_id: str,
+            idempotency_key: str | None = None,
         ) -> str:
             agent_calls.append(
                 {
@@ -2127,6 +2256,7 @@ def test_polling_generates_request_id_and_logs_update_context(monkeypatch, caplo
                     "text": text,
                     "conversation_id": conversation_id,
                     "request_id": request_id,
+                    "idempotency_key": idempotency_key or "",
                 }
             )
             return "ok"
@@ -2147,7 +2277,10 @@ def test_polling_generates_request_id_and_logs_update_context(monkeypatch, caplo
             "telegram_webhook_url": "",
         }
     )
-    app = main_module.create_app(settings=settings)
+    app = main_module.create_app(
+        settings=settings,
+        update_repository=InMemoryTelegramUpdateRepository(),
+    )
 
     with caplog.at_level(logging.INFO, logger="telegram_ingress"):
         with TestClient(app):
@@ -2159,6 +2292,7 @@ def test_polling_generates_request_id_and_logs_update_context(monkeypatch, caplo
     request_id = agent_calls[0]["request_id"]
     assert request_id.startswith("req_")
     assert agent_calls[0]["conversation_id"] == "telegram:44"
+    assert agent_calls[0]["idempotency_key"] == "telegram-update:12"
     assert captured[0].sent_messages == [(44, "ok")]
 
     update_completed = next(

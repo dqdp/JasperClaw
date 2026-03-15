@@ -20,6 +20,7 @@ class _FakeAgentApiClient(AgentApiClient):
         text: str,
         conversation_id: str,
         request_id: str,
+        idempotency_key: str | None = None,
     ) -> str:
         self.calls.append(
             {
@@ -27,6 +28,7 @@ class _FakeAgentApiClient(AgentApiClient):
                 "text": text,
                 "conversation_id": conversation_id,
                 "request_id": request_id,
+                "idempotency_key": idempotency_key or "",
             }
         )
         if self.fail:
@@ -64,20 +66,34 @@ def _pipeline(
     *,
     agent_client: _FakeAgentApiClient | None = None,
     telegram_client: _FakeTelegramClient | None = None,
-    released: list[TelegramUpdate] | None = None,
+    staged: list[tuple[TelegramUpdate, str, str]] | None = None,
+    completed: list[TelegramUpdate] | None = None,
+    abandoned: list[TelegramUpdate] | None = None,
     max_reply_chars: int = 20,
 ) -> ReplyPipeline:
-    released = released if released is not None else []
+    staged = staged if staged is not None else []
+    completed = completed if completed is not None else []
+    abandoned = abandoned if abandoned is not None else []
 
-    async def _release_retry_state(update: TelegramUpdate) -> None:
-        released.append(update)
+    async def _stage_reply(
+        update: TelegramUpdate, conversation_id: str, text: str
+    ) -> None:
+        staged.append((update, conversation_id, text))
+
+    async def _complete_delivery(update: TelegramUpdate) -> None:
+        completed.append(update)
+
+    async def _abandon_processing_state(update: TelegramUpdate) -> None:
+        abandoned.append(update)
 
     return ReplyPipeline(
         agent_client=agent_client or _FakeAgentApiClient(),
         telegram_client=telegram_client or _FakeTelegramClient(),
         agent_model="assistant-fast",
         max_reply_chars=max_reply_chars,
-        release_retry_state=_release_retry_state,
+        stage_reply=_stage_reply,
+        complete_delivery=_complete_delivery,
+        abandon_processing_state=_abandon_processing_state,
         retryable_error_factory=_RetryableError,
     )
 
@@ -85,7 +101,13 @@ def _pipeline(
 @pytest.mark.anyio
 async def test_reply_pipeline_sends_local_reply(update: TelegramUpdate) -> None:
     telegram_client = _FakeTelegramClient()
-    pipeline = _pipeline(telegram_client=telegram_client)
+    staged: list[tuple[TelegramUpdate, str, str]] = []
+    completed: list[TelegramUpdate] = []
+    pipeline = _pipeline(
+        telegram_client=telegram_client,
+        staged=staged,
+        completed=completed,
+    )
 
     result = await pipeline.send_local_reply(
         update=update,
@@ -101,6 +123,8 @@ async def test_reply_pipeline_sends_local_reply(update: TelegramUpdate) -> None:
         conversation_id="telegram:42",
     )
     assert telegram_client.sent_messages == [(42, "local")]
+    assert staged == [(update, "telegram:42", "local")]
+    assert completed == [update]
 
 
 @pytest.mark.anyio
@@ -109,9 +133,13 @@ async def test_reply_pipeline_completes_and_truncates_reply(
 ) -> None:
     agent_client = _FakeAgentApiClient(response_text="abcdefghijklmnopqrstuvwxyz")
     telegram_client = _FakeTelegramClient()
+    staged: list[tuple[TelegramUpdate, str, str]] = []
+    completed: list[TelegramUpdate] = []
     pipeline = _pipeline(
         agent_client=agent_client,
         telegram_client=telegram_client,
+        staged=staged,
+        completed=completed,
         max_reply_chars=5,
     )
 
@@ -120,6 +148,7 @@ async def test_reply_pipeline_completes_and_truncates_reply(
         conversation_id="telegram:42",
         prompt_text="prompt",
         request_id="req_123",
+        idempotency_key="tg-update:10",
     )
 
     assert result.status == "processed"
@@ -129,19 +158,26 @@ async def test_reply_pipeline_completes_and_truncates_reply(
             "text": "prompt",
             "conversation_id": "telegram:42",
             "request_id": "req_123",
+            "idempotency_key": "tg-update:10",
         }
     ]
     assert telegram_client.sent_messages == [(42, "abcde")]
+    assert staged == [(update, "telegram:42", "abcde")]
+    assert completed == [update]
 
 
 @pytest.mark.anyio
 async def test_reply_pipeline_releases_retry_state_on_local_send_failure(
     update: TelegramUpdate,
 ) -> None:
-    released: list[TelegramUpdate] = []
+    staged: list[tuple[TelegramUpdate, str, str]] = []
+    completed: list[TelegramUpdate] = []
+    abandoned: list[TelegramUpdate] = []
     pipeline = _pipeline(
         telegram_client=_FakeTelegramClient(fail=True),
-        released=released,
+        staged=staged,
+        completed=completed,
+        abandoned=abandoned,
     )
 
     with pytest.raises(_RetryableError):
@@ -151,17 +187,19 @@ async def test_reply_pipeline_releases_retry_state_on_local_send_failure(
             text="local",
         )
 
-    assert released == [update]
+    assert staged == [(update, "telegram:42", "local")]
+    assert completed == []
+    assert abandoned == []
 
 
 @pytest.mark.anyio
 async def test_reply_pipeline_releases_retry_state_on_completion_failure(
     update: TelegramUpdate,
 ) -> None:
-    released: list[TelegramUpdate] = []
+    abandoned: list[TelegramUpdate] = []
     pipeline = _pipeline(
         agent_client=_FakeAgentApiClient(fail=True),
-        released=released,
+        abandoned=abandoned,
     )
 
     with pytest.raises(_RetryableError):
@@ -170,6 +208,7 @@ async def test_reply_pipeline_releases_retry_state_on_completion_failure(
             conversation_id="telegram:42",
             prompt_text="prompt",
             request_id="req_123",
+            idempotency_key="tg-update:10",
         )
 
-    assert released == [update]
+    assert abandoned == [update]

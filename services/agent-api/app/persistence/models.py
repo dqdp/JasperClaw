@@ -79,6 +79,16 @@ class ChatPersistenceResult:
 
 
 @dataclass(frozen=True, slots=True)
+class IngressCompletionRecord:
+    idempotency_key: str
+    source: str
+    public_model: str
+    conversation_id: str
+    content: str
+    usage: "ChatCompletionUsage | None"
+
+
+@dataclass(frozen=True, slots=True)
 class TranscriptionPersistenceResult:
     conversation_id: str
     persisted_message: PersistedMessage
