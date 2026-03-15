@@ -79,12 +79,42 @@ def _docker_stub(path: Path, log_path: Path) -> Path:
     return path
 
 
+def _git_stub(path: Path, log_path: Path, *, tracked_status: str = "") -> Path:
+    _write_file(
+        path,
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f'printf "%s\\n" "$*" >> "{log_path}"',
+                'if [[ "${1:-}" == "-C" ]]; then',
+                "  shift 2",
+                "fi",
+                'case "${1:-}" in',
+                "  status)",
+                f'    printf "%s" "{tracked_status}"',
+                "    ;;",
+                "  fetch|checkout)",
+                "    ;;",
+                "  *)",
+                '    echo "unexpected git invocation: $*" >&2',
+                "    exit 1",
+                "    ;;",
+                "esac",
+                "",
+            ]
+        ),
+    )
+    return path
+
+
 def _run_deploy(
     tmp_path: Path,
     *,
     voice_enabled: str,
     compose_profiles: str,
     extra_env_lines: list[str] | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     docker_log = tmp_path / "docker.log"
     script_log = tmp_path / "scripts.log"
@@ -107,6 +137,8 @@ def _run_deploy(
             "SMOKE_SCRIPT": str(smoke_stub),
         }
     )
+    if extra_env:
+        env.update(extra_env)
 
     result = subprocess.run(
         ["bash", str(DEPLOY_SCRIPT)],
@@ -172,6 +204,24 @@ def test_deploy_runs_voice_enabled_service_set(tmp_path: Path) -> None:
     assert docker_calls[-1].endswith(
         "up -d --remove-orphans agent-api telegram-ingress open-webui caddy stt-service tts-service"
     )
+
+
+def test_deploy_runs_migrations_without_local_platform_db_build(tmp_path: Path) -> None:
+    result, docker_log, _script_log = _run_deploy(
+        tmp_path,
+        voice_enabled="false",
+        compose_profiles="",
+    )
+
+    assert result.returncode == 0, result.stderr
+    docker_calls = docker_log.read_text(encoding="utf-8").splitlines()
+    assert any(call.endswith("pull") for call in docker_calls)
+    assert any(call.endswith("up -d postgres ollama") for call in docker_calls)
+    assert any(
+        call.endswith("run --rm --no-deps platform-db python -m platform_db.cli migrate")
+        for call in docker_calls
+    )
+    assert not any("build platform-db" in call for call in docker_calls)
 
 
 def test_deploy_reads_root_env_without_shell_expansion(tmp_path: Path) -> None:
@@ -247,5 +297,56 @@ def test_deploy_rejects_reused_user_and_alert_bot_tokens(tmp_path: Path) -> None
     assert result.returncode != 0
     assert "Invalid telegram security contract" in result.stderr
     assert "TELEGRAM_ALERT_BOT_TOKEN must differ from TELEGRAM_BOT_TOKEN" in result.stderr
+    assert not docker_log.exists()
+    assert not script_log.exists()
+
+
+def test_deploy_pins_repo_to_selected_git_ref_before_rollout(tmp_path: Path) -> None:
+    git_log = tmp_path / "git.log"
+    git_stub = _git_stub(tmp_path / "git-stub.sh", git_log)
+
+    result, docker_log, _script_log = _run_deploy(
+        tmp_path,
+        voice_enabled="false",
+        compose_profiles="",
+        extra_env={
+            "DEPLOY_GIT_REF": "release-42",
+            "GIT_BIN": str(git_stub),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    git_calls = git_log.read_text(encoding="utf-8").splitlines()
+    assert git_calls == [
+        f"-C {REPO_ROOT} status --porcelain --untracked-files=no",
+        f"-C {REPO_ROOT} fetch --tags origin",
+        f"-C {REPO_ROOT} checkout --detach release-42",
+    ]
+    assert docker_log.exists()
+
+
+def test_deploy_refuses_to_pin_repo_with_tracked_modifications(tmp_path: Path) -> None:
+    git_log = tmp_path / "git.log"
+    git_stub = _git_stub(
+        tmp_path / "git-stub.sh",
+        git_log,
+        tracked_status=" M .github/workflows/deploy-prod.yml",
+    )
+
+    result, docker_log, script_log = _run_deploy(
+        tmp_path,
+        voice_enabled="false",
+        compose_profiles="",
+        extra_env={
+            "DEPLOY_GIT_REF": "release-42",
+            "GIT_BIN": str(git_stub),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "tracked repository modifications" in result.stderr
+    assert git_log.read_text(encoding="utf-8").splitlines() == [
+        f"-C {REPO_ROOT} status --porcelain --untracked-files=no",
+    ]
     assert not docker_log.exists()
     assert not script_log.exists()

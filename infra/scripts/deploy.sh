@@ -2,6 +2,29 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GIT_BIN="${GIT_BIN:-git}"
+
+pin_repo_to_selected_ref_if_needed() {
+  if [[ -z "${DEPLOY_GIT_REF:-}" || "${DEPLOY_GIT_REF_PINNED:-}" == "1" ]]; then
+    return
+  fi
+
+  # Re-exec after checkout so the deploy logic comes from the selected release revision.
+  local tracked_status
+  tracked_status="$("$GIT_BIN" -C "$REPO_ROOT" status --porcelain --untracked-files=no)"
+  if [[ -n "$tracked_status" ]]; then
+    echo "Refusing to pin repo with tracked repository modifications" >&2
+    exit 1
+  fi
+
+  "$GIT_BIN" -C "$REPO_ROOT" fetch --tags origin
+  "$GIT_BIN" -C "$REPO_ROOT" checkout --detach "$DEPLOY_GIT_REF"
+  export DEPLOY_GIT_REF_PINNED=1
+  exec bash "$REPO_ROOT/infra/scripts/deploy.sh"
+}
+
+pin_repo_to_selected_ref_if_needed
+
 source "${REPO_ROOT}/infra/scripts/lib/release-logging.sh"
 source "${REPO_ROOT}/infra/scripts/lib/dotenv.sh"
 
@@ -152,7 +175,6 @@ log_info "Deploy services: ${deploy_services[*]}"
 run_logged_step "pull images" compose pull
 run_logged_step "start foundation services" compose up -d postgres ollama
 run_logged_step "ensure ollama models" ensure_ollama_models
-run_logged_step "build platform-db image" compose build platform-db
 run_logged_step "apply platform migrations" compose run --rm --no-deps platform-db python -m platform_db.cli migrate
 run_logged_step "roll out application services" compose up -d --remove-orphans "${deploy_services[@]}"
 run_logged_step "run canonical smoke" run_canonical_smoke

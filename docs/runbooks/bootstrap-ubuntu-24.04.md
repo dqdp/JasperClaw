@@ -19,6 +19,10 @@ Use this runbook for the canonical v1 deployment target:
 
 This runbook assumes a single-host deployment. It does not cover Kubernetes or a remote managed inference provider.
 
+The host checkout is still used as the source of rollout scripts, but the
+canonical deploy path now pins that checkout to the selected immutable git ref
+before it runs migrations or recreates services.
+
 ## Desired host state
 
 Only the minimal runtime remains native on the host:
@@ -261,6 +265,9 @@ git fetch --tags
 git status --short
 ```
 
+Keep the checkout clean. The canonical deploy path now refuses to pin the host
+repo to a release ref if tracked files are modified locally.
+
 ## 6. Prepare environment files
 
 The current deployment path uses two local operator-managed files:
@@ -349,18 +356,14 @@ For the first bootstrap, run the production rollout manually on the host before 
 
 ```bash
 cd /opt/local-assistant
-docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml pull
-docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml up -d postgres ollama
-COMPOSE_OVERRIDE_FILE=infra/compose/compose.prod.yml bash infra/scripts/ensure-ollama-models.sh
-docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml build platform-db
-docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml run --rm --no-deps platform-db python -m platform_db.cli migrate
-docker compose --env-file .env -f infra/compose/compose.yml -f infra/compose/compose.prod.yml up -d --remove-orphans agent-api open-webui caddy
-COMPOSE_OVERRIDE_FILE=infra/compose/compose.prod.yml bash infra/scripts/smoke.sh
+export DEPLOY_GIT_REF=<same-git-sha-or-tag-as-APP_VERSION>
+COMPOSE_OVERRIDE_FILE=infra/compose/compose.prod.yml bash infra/scripts/deploy.sh
 ```
 
 What this does:
 
-- pulls pinned images from GHCR
+- pins the host rollout scripts to the selected immutable git ref
+- pulls pinned images from GHCR, including `platform-db`
 - starts storage and inference dependencies required for the current text path
 - ensures all configured Ollama models exist locally
 - applies database migrations before serving traffic

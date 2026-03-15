@@ -19,12 +19,24 @@ jobs:
         include:
           - service: agent-api
             image_name: local-assistant-agent
+            context: .
+            dockerfile: services/agent-api/Dockerfile
           - service: stt-service
             image_name: local-assistant-stt
+            context: ./services/stt-service
+            dockerfile: Dockerfile
           - service: tts-service
             image_name: local-assistant-tts
+            context: ./services/tts-service
+            dockerfile: Dockerfile
           - service: telegram-ingress
             image_name: local-assistant-telegram-ingress
+            context: .
+            dockerfile: services/telegram-ingress/Dockerfile
+          - service: platform-db
+            image_name: local-assistant-db-admin
+            context: .
+            dockerfile: platform-db/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -52,6 +64,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
         with:
-          context: ./services/${{ matrix.service }}
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

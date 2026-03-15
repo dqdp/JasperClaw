@@ -29,5 +29,6 @@ jobs:
           script: |
             cd /opt/local-assistant
             export APP_VERSION=${{ inputs.app_version }}
+            export DEPLOY_GIT_REF=${{ inputs.app_version }}
             echo ${{ secrets.GHCR_PULL_TOKEN }} | docker login ghcr.io -u ${{ secrets.GHCR_PULL_USER || github.repository_owner }} --password-stdin
             bash infra/scripts/deploy.sh

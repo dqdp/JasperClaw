@@ -10,6 +10,7 @@ Describe the normal production deployment flow.
 - images are published to GHCR
 - production rollout is manually approved
 - host update is executed over SSH
+- rollout scripts are pinned to the selected immutable git ref
 - Compose pulls new images and recreates containers
 
 ## Preconditions
@@ -31,13 +32,14 @@ Describe the normal production deployment flow.
 1. Select target version
 2. Approve production deployment
 3. SSH into host through the deploy workflow
-4. Log in to GHCR on host if required
-5. Pull new images
-6. Start supporting services needed before schema migration
-7. Apply pending database migrations
-8. Start or recreate user-facing services
-9. Execute smoke tests
-10. Confirm service health
+4. Pin the host checkout to the selected git ref for rollout scripts
+5. Log in to GHCR on host if required
+6. Pull new images
+7. Start supporting services needed before schema migration
+8. Apply pending database migrations
+9. Start or recreate user-facing services
+10. Execute smoke tests
+11. Confirm service health
 
 ## Operational notes
 
@@ -57,7 +59,6 @@ Preferred rollout pattern:
 - `docker compose pull`
 - `docker compose up -d postgres ollama`
 - `COMPOSE_OVERRIDE_FILE=infra/compose/compose.prod.yml bash infra/scripts/ensure-ollama-models.sh`
-- `docker compose build platform-db`
 - `docker compose run --rm --no-deps platform-db python -m platform_db.cli migrate`
 - `docker compose up -d --remove-orphans agent-api telegram-ingress open-webui caddy` for `text-only`
 - `COMPOSE_PROFILES=voice docker compose up -d --remove-orphans agent-api telegram-ingress stt-service tts-service open-webui caddy` for `voice-enabled-cpu`
@@ -66,6 +67,12 @@ Keep `COMPOSE_PROFILES` and `VOICE_ENABLED` aligned. A `voice-enabled` env with 
 text-only Compose profile is considered an invalid rollout contract. The
 canonical `infra/scripts/deploy.sh` now fails fast on that mismatch instead of
 continuing with an ambiguous rollout.
+
+When `DEPLOY_GIT_REF` is set, the canonical deploy script checks out that ref
+before sourcing rollout helpers and refuses to proceed if the host checkout has
+tracked modifications. The GitHub Actions production workflow now exports
+`DEPLOY_GIT_REF=${APP_VERSION}` so the rollout logic and the pulled images come
+from the same immutable revision.
 
 Telegram security contract for deploy environments:
 
@@ -80,6 +87,7 @@ Telegram security contract for deploy environments:
 For the normal host-local flow, prefer the script entrypoint:
 
 ```bash
+export DEPLOY_GIT_REF=<same-sha-or-tag-as-APP_VERSION>
 bash infra/scripts/deploy.sh
 ```
 
