@@ -9,7 +9,7 @@ from app.clients.agent_api import AgentApiClient, AgentApiError
 from app.clients.telegram import TelegramClient, TelegramSendError
 from app.core.config import Settings
 from app.core.logging import log_event
-from app.modules.webhook.commands import CommandRouter
+from app.modules.webhook.commands import CommandRoute, CommandRouter
 from app.modules.webhook.parser import TelegramUpdate, TelegramUpdateParser
 from app.modules.webhook.reply_pipeline import ReplyPipeline
 from app.modules.webhook.result import WebhookResult

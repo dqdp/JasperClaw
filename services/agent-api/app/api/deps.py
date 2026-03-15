@@ -105,6 +105,10 @@ def get_tts_client() -> TtsClient | None:
     )
 
 
+def get_app_settings() -> Settings:
+    return get_settings()
+
+
 def get_memory_service(
     settings: Annotated[Settings, Depends(get_app_settings)],
     ollama_client: Annotated[OllamaChatClient, Depends(get_ollama_client)],
@@ -116,10 +120,6 @@ def get_memory_service(
         repository=repository,
         prompt_formatter=ChatPromptFormatter(),
     )
-
-
-def get_app_settings() -> Settings:
-    return get_settings()
 
 
 def get_chat_service(
