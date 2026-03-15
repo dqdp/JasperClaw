@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from collections import deque
+from pathlib import Path
 from time import perf_counter
 
 from app.clients.agent_api import AgentApiClient, AgentApiError
@@ -11,6 +12,7 @@ from app.modules.webhook.commands import CommandRouter
 from app.modules.webhook.parser import TelegramUpdate, TelegramUpdateParser
 from app.modules.webhook.reply_pipeline import ReplyPipeline
 from app.modules.webhook.result import WebhookResult
+from shared_infra.household_config import HouseholdConfigSelection, resolve_household_config
 
 
 class TelegramBridgeRetryableError(RuntimeError):
@@ -116,6 +118,7 @@ class TelegramBridgeService:
             allowed_commands=self._settings.telegram_allowed_commands,
         )
         self._command_router = CommandRouter(parser=self._parser)
+        self._household_selection = self._resolve_household_selection()
         self._reply_pipeline = ReplyPipeline(
             agent_client=self._agent_client,
             telegram_client=self._telegram_client,
@@ -196,6 +199,22 @@ class TelegramBridgeService:
                 request_id=request_id,
                 started=started,
                 result=WebhookResult.ignored(reason="rate_limited_chat"),
+                update_id=update.update_id,
+                chat_id=update.chat_id,
+                message_id=update.message_id,
+                conversation_id=f"telegram:{update.chat_id}",
+            )
+
+        if not self._is_trusted_chat(update.chat_id):
+            result = await self._reply_pipeline.send_local_reply(
+                update=update,
+                conversation_id=f"telegram:{update.chat_id}",
+                text="This chat is not authorized for household assistant access.",
+            )
+            return self._log_update_result(
+                request_id=request_id,
+                started=started,
+                result=result,
                 update_id=update.update_id,
                 chat_id=update.chat_id,
                 message_id=update.message_id,
@@ -359,10 +378,28 @@ class TelegramBridgeService:
     async def _release_update_dedupe(self, update: TelegramUpdate) -> None:
         await self._dedupe.release(self._cache_key(update))
 
+    def _resolve_household_selection(self) -> HouseholdConfigSelection | None:
+        return resolve_household_config(
+            real_path=self._optional_path(self._settings.household_config_path),
+            demo_path=self._optional_path(self._settings.demo_household_config_path),
+        )
+
+    def _is_trusted_chat(self, chat_id: int) -> bool:
+        if self._household_selection is None:
+            return False
+        return chat_id in self._household_selection.config.trusted_chat_ids
+
     def _cache_key(self, update: TelegramUpdate) -> str:
         if update.update_id > 0:
             return str(update.update_id)
         return f"{update.chat_id}:{update.message_id}"
+
+    @staticmethod
+    def _optional_path(raw_path: str) -> Path | None:
+        normalized = raw_path.strip()
+        if not normalized:
+            return None
+        return Path(normalized)
 
     def _log_update_result(
         self,

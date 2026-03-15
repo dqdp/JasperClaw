@@ -1,0 +1,6 @@
+[telegram]
+trusted_chat_ids = [10, 20, 30, 42, 44, 55, 77, 99, 123]
+
+[telegram.aliases.wife]
+chat_id = 111111111
+description = "Personal chat"

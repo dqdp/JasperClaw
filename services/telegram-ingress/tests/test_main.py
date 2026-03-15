@@ -5,6 +5,7 @@ import warnings
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,6 +24,11 @@ from app.services.alert_delivery import (
     AlertSubmissionResult,
 )
 from app.services.bridge import TelegramBridgeService, WebhookResult
+
+
+_TEST_HOUSEHOLD_CONFIG = (
+    Path(__file__).resolve().parent / "fixtures" / "household.toml"
+)
 
 
 def _events(caplog) -> list[dict[str, object]]:
@@ -298,6 +304,7 @@ def _operational_settings(overrides: dict[str, object] | None = None) -> Setting
         "telegram_bot_token": "bot-token",
         "agent_api_key": "agent-token",
         "webhook_path": "/webhook",
+        "household_config_path": str(_TEST_HOUSEHOLD_CONFIG),
     }
     if overrides:
         base.update(overrides)
@@ -859,6 +866,54 @@ def test_webhook_ask_command_without_body_returns_usage_and_skips_agent_api() ->
     assert data["status"] == "processed"
     assert not agent_client.calls
     assert telegram_client.sent_messages == [(77, "Usage: /ask <message>")]
+
+
+def test_webhook_rejects_untrusted_chat_before_agent_call() -> None:
+    settings = _operational_settings({})
+    client, telegram_client, agent_client = _create_client(settings=settings)
+
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 606,
+            "message": {
+                "message_id": 13,
+                "chat": {"id": 1001},
+                "text": "hello there",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processed"
+    assert not agent_client.calls
+    assert telegram_client.sent_messages == [
+        (1001, "This chat is not authorized for household assistant access.")
+    ]
+
+
+def test_webhook_rejects_chat_when_household_config_is_missing() -> None:
+    settings = _operational_settings({"household_config_path": ""})
+    client, telegram_client, agent_client = _create_client(settings=settings)
+
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 607,
+            "message": {
+                "message_id": 14,
+                "chat": {"id": 77},
+                "text": "/ask what is the status?",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processed"
+    assert not agent_client.calls
+    assert telegram_client.sent_messages == [
+        (77, "This chat is not authorized for household assistant access.")
+    ]
 
 
 def test_webhook_ignores_duplicate_update() -> None:

@@ -123,6 +123,8 @@ class Settings:
     # Optional operational guardrails.
     max_reply_chars: int = 4096
     telegram_allowed_commands: tuple[str, ...] = ()
+    household_config_path: str = ""
+    demo_household_config_path: str = ""
     telegram_alert_bot_token: str = ""
     telegram_alert_auth_token: str = ""
     telegram_alert_api_base_url: str = "https://api.telegram.org"
@@ -177,6 +179,10 @@ def get_settings() -> Settings:
             "TELEGRAM_ALLOWED_COMMANDS",
             (),
         ),
+        household_config_path=(os.getenv("HOUSEHOLD_CONFIG_PATH", "") or "").strip(),
+        demo_household_config_path=(
+            os.getenv("DEMO_HOUSEHOLD_CONFIG_PATH", "") or ""
+        ).strip(),
         telegram_alert_bot_token=_strip_secret(os.getenv("TELEGRAM_ALERT_BOT_TOKEN", "")),
         telegram_alert_api_base_url=os.getenv(
             "TELEGRAM_ALERT_API_BASE_URL",
