@@ -3,7 +3,7 @@ import logging
 from collections import deque
 from time import perf_counter
 
-from app.clients.agent_api import AgentApiClient
+from app.clients.agent_api import AgentApiClient, AgentApiError
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings
 from app.core.logging import log_event
@@ -301,6 +301,24 @@ class TelegramBridgeService:
         if route is None:
             return None
 
+        if route.mode == "discovery_help":
+            return await self._reply_pipeline.send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text=await self._resolve_discovery_reply(
+                    request_id=request_id,
+                    route=route,
+                ),
+            )
+        if route.mode == "discovery_status":
+            return await self._reply_pipeline.send_local_reply(
+                update=update,
+                conversation_id=conversation_id,
+                text=await self._resolve_discovery_reply(
+                    request_id=request_id,
+                    route=route,
+                ),
+            )
         if route.mode == "local_reply":
             return await self._reply_pipeline.send_local_reply(
                 update=update,
@@ -315,6 +333,24 @@ class TelegramBridgeService:
                 request_id=request_id,
             )
         return None
+
+    async def _resolve_discovery_reply(
+        self,
+        *,
+        request_id: str,
+        route: CommandRoute,
+    ) -> str:
+        try:
+            discovery = await self._agent_client.describe_capabilities(
+                request_id=request_id,
+            )
+        except AgentApiError:
+            # Help/status should degrade to bounded local text instead of turning a
+            # simple discovery command into a retryable downstream failure.
+            return route.text
+        if route.mode == "discovery_help":
+            return discovery.help_text
+        return discovery.status_text
 
     async def close(self) -> None:
         await self._agent_client.close()

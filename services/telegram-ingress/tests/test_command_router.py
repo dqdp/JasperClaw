@@ -6,12 +6,12 @@ def test_command_router_handles_local_commands() -> None:
     router = CommandRouter(parser=TelegramUpdateParser())
 
     assert router.route("/help") == CommandRoute(
-        mode="local_reply",
+        mode="discovery_help",
         text="Available commands: /help, /status, /ask <message>",
     )
     assert router.route("/status@MyBot") == CommandRoute(
-        mode="local_reply",
-        text="telegram-ingress ok",
+        mode="discovery_status",
+        text="Status is temporarily unavailable right now.",
     )
 
 

@@ -21,13 +21,13 @@ class CommandRouter:
         command = self._parser.extract_command(text)
         if command == "/help":
             return CommandRoute(
-                mode="local_reply",
+                mode="discovery_help",
                 text="Available commands: /help, /status, /ask <message>",
             )
         if command == "/status":
             return CommandRoute(
-                mode="local_reply",
-                text="telegram-ingress ok",
+                mode="discovery_status",
+                text="Status is temporarily unavailable right now.",
             )
         if command == "/ask":
             prompt_text = self._parser.extract_command_body(text)

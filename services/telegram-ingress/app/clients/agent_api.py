@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -5,6 +6,12 @@ import httpx
 
 class AgentApiError(RuntimeError):
     """Raised when /v1/chat/completions cannot be called successfully."""
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityDiscovery:
+    help_text: str
+    status_text: str
 
 
 class AgentApiClient:
@@ -51,14 +58,48 @@ class AgentApiClient:
                 "X-Request-ID": request_id,
             },
         )
-        return response["choices"][0]["message"]["content"]
+        choices = response.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise AgentApiError("agent-api response is missing completion choices")
+        message = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if not isinstance(message, dict):
+            raise AgentApiError("agent-api response message missing")
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            raise AgentApiError("agent-api response content missing")
+        return content
+
+    async def describe_capabilities(
+        self,
+        *,
+        request_id: str,
+    ) -> CapabilityDiscovery:
+        response = await self._request(
+            method="GET",
+            url=f"{self._base_url}/v1/capabilities/discovery",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+            json=None,
+            extra_headers={
+                "X-Request-ID": request_id,
+            },
+        )
+        help_text = response.get("help_text")
+        status_text = response.get("status_text")
+        if not isinstance(help_text, str) or not help_text.strip():
+            raise AgentApiError("agent-api discovery help_text missing")
+        if not isinstance(status_text, str) or not status_text.strip():
+            raise AgentApiError("agent-api discovery status_text missing")
+        return CapabilityDiscovery(
+            help_text=help_text,
+            status_text=status_text,
+        )
 
     async def _request(
         self,
         method: str,
         url: str,
         headers: dict[str, str],
-        json: dict[str, Any],
+        json: dict[str, Any] | None,
         extra_headers: dict[str, str],
     ) -> dict[str, Any]:
         all_headers = dict(headers)
@@ -84,14 +125,4 @@ class AgentApiClient:
             raise AgentApiError("non-json response from agent-api") from exc
         if not isinstance(payload, dict):
             raise AgentApiError("agent-api response must be a JSON object")
-
-        choices = payload.get("choices")
-        if not isinstance(choices, list) or not choices:
-            raise AgentApiError("agent-api response is missing completion choices")
-        message = choices[0].get("message") if isinstance(choices[0], dict) else None
-        if not isinstance(message, dict):
-            raise AgentApiError("agent-api response message missing")
-        content = message.get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise AgentApiError("agent-api response content missing")
         return payload

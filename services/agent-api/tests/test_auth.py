@@ -33,6 +33,14 @@ def test_audio_routes_require_bearer_token(client) -> None:
     assert response.json()["error"]["code"] == "missing_api_key"
 
 
+def test_capability_discovery_requires_bearer_token(client) -> None:
+    response = client.get("/v1/capabilities/discovery")
+
+    assert response.status_code == 401
+    assert response.json()["error"]["type"] == "authentication_error"
+    assert response.json()["error"]["code"] == "missing_api_key"
+
+
 def test_auth_configuration_error_returns_503(client, monkeypatch) -> None:
     monkeypatch.setenv("INTERNAL_OPENAI_API_KEY", "")
     get_settings.cache_clear()

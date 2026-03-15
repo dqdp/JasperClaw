@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from app.clients.agent_api import AgentApiClient, AgentApiError
+from app.clients.agent_api import AgentApiClient, AgentApiError, CapabilityDiscovery
 from app.clients.telegram import TelegramClient
 from app.core.config import Settings
 from app.core.metrics import AlertDeliveryMetrics
@@ -104,10 +104,19 @@ class _StartupTelegramClient(TelegramClient):
 
 
 class _FakeAgentApiClient(AgentApiClient):
-    def __init__(self, reply_text: str = "ok") -> None:
+    def __init__(
+        self,
+        reply_text: str = "ok",
+        *,
+        help_text: str = "Help from agent-api",
+        status_text: str = "Status from agent-api",
+    ) -> None:
         self.calls: list[dict[str, str]] = []
+        self.discovery_calls: list[str] = []
         self.closed = False
         self.reply_text = reply_text
+        self.help_text = help_text
+        self.status_text = status_text
 
     async def complete(
         self,
@@ -126,6 +135,17 @@ class _FakeAgentApiClient(AgentApiClient):
             }
         )
         return self.reply_text
+
+    async def describe_capabilities(
+        self,
+        *,
+        request_id: str,
+    ) -> CapabilityDiscovery:
+        self.discovery_calls.append(request_id)
+        return CapabilityDiscovery(
+            help_text=self.help_text,
+            status_text=self.status_text,
+        )
 
     async def close(self) -> None:
         self.closed = True
@@ -157,6 +177,21 @@ class _FailingAgentApiClient(AgentApiClient):
                 "model": model,
                 "text": text,
                 "conversation_id": conversation_id,
+                "request_id": request_id,
+            }
+        )
+        raise AgentApiError("agent-api unavailable")
+
+    async def describe_capabilities(
+        self,
+        *,
+        request_id: str,
+    ) -> CapabilityDiscovery:
+        self.calls.append(
+            {
+                "model": "",
+                "text": "",
+                "conversation_id": "",
                 "request_id": request_id,
             }
         )
@@ -674,9 +709,8 @@ def test_webhook_help_command_returns_local_response_without_agent_call() -> Non
     assert data["message_id"] == 8
     assert data["update_id"] == 601
     assert not agent_client.calls
-    assert telegram_client.sent_messages == [
-        (77, "Available commands: /help, /status, /ask <message>")
-    ]
+    assert agent_client.discovery_calls == [response.headers["X-Request-ID"]]
+    assert telegram_client.sent_messages == [(77, "Help from agent-api")]
 
 
 def test_webhook_status_command_returns_local_response_without_agent_call() -> None:
@@ -700,7 +734,8 @@ def test_webhook_status_command_returns_local_response_without_agent_call() -> N
     assert data["message_id"] == 9
     assert data["update_id"] == 602
     assert not agent_client.calls
-    assert telegram_client.sent_messages == [(77, "telegram-ingress ok")]
+    assert agent_client.discovery_calls == [response.headers["X-Request-ID"]]
+    assert telegram_client.sent_messages == [(77, "Status from agent-api")]
 
 
 def test_webhook_status_command_with_bot_username_returns_local_response() -> None:
@@ -721,7 +756,60 @@ def test_webhook_status_command_with_bot_username_returns_local_response() -> No
     data = response.json()
     assert data["status"] == "processed"
     assert not agent_client.calls
-    assert telegram_client.sent_messages == [(77, "telegram-ingress ok")]
+    assert agent_client.discovery_calls == [response.headers["X-Request-ID"]]
+    assert telegram_client.sent_messages == [(77, "Status from agent-api")]
+
+
+def test_webhook_help_command_falls_back_to_bounded_local_reply_when_discovery_fails() -> None:
+    settings = _operational_settings({})
+    client, telegram_client, agent_client = _create_client(
+        settings=settings,
+        agent_client=_FailingAgentApiClient(),
+    )
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 603,
+            "message": {
+                "message_id": 10,
+                "chat": {"id": 77},
+                "text": "/help",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processed"
+    assert telegram_client.sent_messages == [
+        (77, "Available commands: /help, /status, /ask <message>")
+    ]
+    assert agent_client.calls[0]["request_id"] == response.headers["X-Request-ID"]
+
+
+def test_webhook_status_command_falls_back_to_bounded_local_reply_when_discovery_fails() -> None:
+    settings = _operational_settings({})
+    client, telegram_client, agent_client = _create_client(
+        settings=settings,
+        agent_client=_FailingAgentApiClient(),
+    )
+    response = client.post(
+        "/webhook",
+        json={
+            "update_id": 604,
+            "message": {
+                "message_id": 11,
+                "chat": {"id": 77},
+                "text": "/status",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "processed"
+    assert telegram_client.sent_messages == [
+        (77, "Status is temporarily unavailable right now.")
+    ]
+    assert agent_client.calls[0]["request_id"] == response.headers["X-Request-ID"]
 
 
 def test_webhook_ask_command_forwards_stripped_text_to_agent_api() -> None:
