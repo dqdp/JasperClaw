@@ -144,6 +144,7 @@ class SpotifyClient:
         return results
 
     def play_playlist(self, *, playlist_uri: str, device_id: str | None = None) -> None:
+        self._ensure_playback_target(device_id=device_id)
         payload = {"context_uri": playlist_uri}
         self._authenticated_request(
             "PUT",
@@ -153,6 +154,7 @@ class SpotifyClient:
         )
 
     def play_track(self, *, track_uri: str, device_id: str | None = None) -> None:
+        self._ensure_playback_target(device_id=device_id)
         payload = {"uris": [track_uri]}
         self._authenticated_request(
             "PUT",
@@ -162,6 +164,7 @@ class SpotifyClient:
         )
 
     def pause_playback(self, *, device_id: str | None = None) -> None:
+        self._ensure_playback_target(device_id=device_id)
         self._authenticated_request(
             "PUT",
             f"{self._base_url}/v1/me/player/pause",
@@ -169,6 +172,7 @@ class SpotifyClient:
         )
 
     def next_track(self, *, device_id: str | None = None) -> None:
+        self._ensure_playback_target(device_id=device_id)
         self._authenticated_request(
             "POST",
             f"{self._base_url}/v1/me/player/next",
@@ -352,6 +356,45 @@ class SpotifyClient:
             return {}
         return {"device_id": device_id.strip()} if device_id.strip() else {}
 
+    def _ensure_playback_target(self, *, device_id: str | None) -> None:
+        if device_id and device_id.strip():
+            return
+        response = self._authenticated_request(
+            "GET",
+            f"{self._base_url}/v1/me/player/devices",
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify devices payload returned invalid JSON",
+            ) from exc
+        devices = payload.get("devices")
+        if not isinstance(devices, list):
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify devices payload is missing devices",
+            )
+        has_active_device = any(
+            isinstance(device, dict)
+            and device.get("is_active") is True
+            and device.get("is_restricted") is not True
+            for device in devices
+        )
+        if has_active_device:
+            return
+        raise APIError(
+            status_code=409,
+            error_type="prerequisite_error",
+            code="no_active_playback_device",
+            message="Spotify playback requires an active playback device",
+        )
+
     def _authenticated_request(self, method: str, url: str, **kwargs) -> httpx.Response:
         kwargs["headers"] = dict(kwargs.pop("headers", {}))
         return self._perform_request(method=method, url=url, with_auth=True, **kwargs)
@@ -387,12 +430,12 @@ class SpotifyClient:
                     return response
                 if with_auth and response.status_code in (401, 403):
                     if not (self._client_id and self._client_secret):
-                        self._raise_for_status(response)
+                        self._raise_for_status(response, url=url)
                     self._cached_token = ""
                     self._token_expires_at = 0.0
                     if attempt <= self._max_retries:
                         continue
-                self._raise_for_status(response)
+                self._raise_for_status(response, url=url)
             except httpx.TimeoutException as exc:
                 if attempt <= self._max_retries:
                     continue
@@ -421,8 +464,15 @@ class SpotifyClient:
             )
         return response
 
-    def _raise_for_status(self, response: httpx.Response) -> None:
+    def _raise_for_status(self, response: httpx.Response, *, url: str) -> None:
         status_code = response.status_code
+        if status_code == 403 and "/v1/me/player" in url:
+            raise APIError(
+                status_code=409,
+                error_type="prerequisite_error",
+                code="premium_required",
+                message="Spotify playback requires a Spotify Premium account",
+            )
         if status_code >= 500:
             raise APIError(
                 status_code=503,

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from app.clients.spotify import SpotifyClient
+from app.core.errors import APIError
 
 
 class _FakeResponse:
@@ -153,3 +156,71 @@ def test_play_playlist_uses_context_uri_payload(monkeypatch) -> None:
         "context_uri": "spotify:playlist:001"
     }
     assert _FakeClient.requests[0]["kwargs"]["params"] == {"device_id": "speaker"}
+
+
+def test_play_playlist_requires_active_device_when_device_id_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr("app.clients.spotify.httpx.Client", _FakeClient)
+    _FakeClient.requests = []
+    _FakeClient.responses = [
+        _FakeResponse(
+            200,
+            {
+                "devices": [
+                    {
+                        "id": "speaker",
+                        "is_active": False,
+                        "is_restricted": False,
+                    }
+                ]
+            },
+        ),
+    ]
+
+    client = SpotifyClient(
+        base_url="https://api.spotify.com",
+        access_token="token",
+        client_id="",
+        client_secret="",
+        redirect_uri="",
+        timeout_seconds=5.0,
+    )
+
+    with pytest.raises(APIError) as exc_info:
+        client.play_playlist(playlist_uri="spotify:playlist:001", device_id=None)
+
+    assert exc_info.value.code == "no_active_playback_device"
+    assert _FakeClient.requests[0]["url"] == "https://api.spotify.com/v1/me/player/devices"
+
+
+def test_play_playlist_classifies_player_403_as_premium_required(monkeypatch) -> None:
+    monkeypatch.setattr("app.clients.spotify.httpx.Client", _FakeClient)
+    _FakeClient.requests = []
+    _FakeClient.responses = [
+        _FakeResponse(
+            200,
+            {
+                "devices": [
+                    {
+                        "id": "speaker",
+                        "is_active": True,
+                        "is_restricted": False,
+                    }
+                ]
+            },
+        ),
+        _FakeResponse(403, {"error": {"message": "Premium required"}}),
+    ]
+
+    client = SpotifyClient(
+        base_url="https://api.spotify.com",
+        access_token="token",
+        client_id="",
+        client_secret="",
+        redirect_uri="",
+        timeout_seconds=5.0,
+    )
+
+    with pytest.raises(APIError) as exc_info:
+        client.play_playlist(playlist_uri="spotify:playlist:001", device_id=None)
+
+    assert exc_info.value.code == "premium_required"
