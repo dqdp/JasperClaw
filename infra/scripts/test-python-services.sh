@@ -29,7 +29,8 @@ for service in "${services[@]}"; do
     echo "==> pytest ${service}"
     (
       cd "${service}"
-      "${PYTHON_BIN}" -m pytest tests
+      PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+        "${PYTHON_BIN}" -m pytest tests
     )
   fi
 done
@@ -38,7 +39,8 @@ if [[ -d "platform_db/tests" ]]; then
   echo "==> pytest platform_db"
   (
     cd "${REPO_ROOT}"
-    "${PYTHON_BIN}" -m pytest platform_db/tests
+    PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+      "${PYTHON_BIN}" -m pytest platform_db/tests
   )
 fi
 
@@ -46,6 +48,7 @@ if [[ -d "infra/scripts/tests" ]]; then
   echo "==> pytest infra/scripts"
   (
     cd "${REPO_ROOT}"
-    "${PYTHON_BIN}" -m pytest infra/scripts/tests
+    PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+      "${PYTHON_BIN}" -m pytest infra/scripts/tests
   )
 fi
