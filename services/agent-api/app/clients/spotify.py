@@ -143,6 +143,15 @@ class SpotifyClient:
             results.append(self._normalize_playlist_item(raw_item))
         return results
 
+    def play_playlist(self, *, playlist_uri: str, device_id: str | None = None) -> None:
+        payload = {"context_uri": playlist_uri}
+        self._authenticated_request(
+            "PUT",
+            f"{self._base_url}/v1/me/player/play",
+            json=payload,
+            params=self._build_device_query(device_id),
+        )
+
     def play_track(self, *, track_uri: str, device_id: str | None = None) -> None:
         payload = {"uris": [track_uri]}
         self._authenticated_request(

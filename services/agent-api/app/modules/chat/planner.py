@@ -9,6 +9,7 @@ from app.schemas.chat import ChatCompletionRequest, ChatMessage
 SUPPORTED_TOOL_NAMES = (
     "web-search",
     "spotify-list-playlists",
+    "spotify-play-playlist",
     "spotify-search",
     "spotify-play",
     "spotify-pause",
@@ -73,7 +74,12 @@ class ToolPlanner:
         if self._web_search_available:
             tool_examples.append('{"tool":"web-search","query":"..."}')
         if self._spotify_real_available:
-            tool_examples.append('{"tool":"spotify-list-playlists"}')
+            tool_examples.extend(
+                [
+                    '{"tool":"spotify-list-playlists"}',
+                    '{"tool":"spotify-play-playlist","playlist_name":"..."}',
+                ]
+            )
         if self._spotify_available:
             tool_examples.extend(
                 [
@@ -140,6 +146,21 @@ class ToolPlanner:
             arguments["query"] = query
         elif tool_name == "spotify-list-playlists":
             arguments = {}
+        elif tool_name == "spotify-play-playlist":
+            playlist_name = arguments.get("playlist_name")
+            if playlist_name is None:
+                playlist_name = arguments.get("name")
+            if not isinstance(playlist_name, str):
+                return None
+            playlist_name = playlist_name.strip()
+            if not playlist_name:
+                return None
+            arguments = {"playlist_name": playlist_name}
+            device_id = payload.get("device_id")
+            if device_id is not None:
+                if not isinstance(device_id, str) or not device_id.strip():
+                    return None
+                arguments["device_id"] = device_id.strip()
         elif tool_name == "spotify-play":
             track_uri = arguments.get("track_uri")
             if track_uri is None:

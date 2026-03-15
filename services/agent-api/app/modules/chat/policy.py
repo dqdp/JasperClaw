@@ -101,7 +101,7 @@ class ToolPolicyEngine:
                 provider="search-provider",
             )
 
-        if normalized_tool == "spotify-list-playlists":
+        if normalized_tool in {"spotify-list-playlists", "spotify-play-playlist"}:
             if not self._settings.is_spotify_real_configured():
                 return ToolPolicyDecision(
                     allowed=False,
@@ -109,7 +109,7 @@ class ToolPolicyEngine:
                     error_type="policy_error",
                     error_code="tool_not_allowed",
                     error_message=(
-                        "spotify-list-playlists is unavailable because the real "
+                        f"{normalized_tool} is unavailable because the real "
                         "Spotify baseline is not configured."
                     ),
                     adapter_name="spotify-http",

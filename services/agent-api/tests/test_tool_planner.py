@@ -59,6 +59,7 @@ def test_tool_planner_builds_prompt_after_existing_system_messages() -> None:
     assert '{"tool":"web-search","query":"..."}' in messages[1].content
     assert '{"tool":"spotify-play","track_uri":"..."}' in messages[1].content
     assert '{"tool":"spotify-list-playlists"}' in messages[1].content
+    assert '{"tool":"spotify-play-playlist","playlist_name":"..."}' in messages[1].content
 
 
 def test_tool_planner_parses_supported_directives() -> None:
@@ -89,6 +90,12 @@ def test_tool_planner_parses_supported_directives() -> None:
             arguments={},
         )
     )
+    assert planner.parse_decision(
+        '{"tool":"spotify-play-playlist","playlist_name":" Focus Flow "}'
+    ) == ToolPlanningDecision(
+        tool_name="spotify-play-playlist",
+        arguments={"playlist_name": "Focus Flow"},
+    )
 
 
 def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
@@ -108,3 +115,4 @@ def test_tool_planner_rejects_invalid_directives_and_reports_outcome() -> None:
     assert planner.content_outcome("answer directly", None) == "respond_directly"
     assert "web-search" in SUPPORTED_TOOL_NAMES
     assert "spotify-list-playlists" in SUPPORTED_TOOL_NAMES
+    assert "spotify-play-playlist" in SUPPORTED_TOOL_NAMES

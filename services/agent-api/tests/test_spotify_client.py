@@ -130,3 +130,26 @@ def test_list_playlists_uses_me_playlists_endpoint(monkeypatch) -> None:
     assert results[0].owner == "Alex"
     assert _FakeClient.requests[0]["url"] == "https://api.spotify.com/v1/me/playlists"
     assert _FakeClient.requests[0]["kwargs"]["params"] == {"limit": "5"}
+
+
+def test_play_playlist_uses_context_uri_payload(monkeypatch) -> None:
+    monkeypatch.setattr("app.clients.spotify.httpx.Client", _FakeClient)
+    _FakeClient.requests = []
+    _FakeClient.responses = [_FakeResponse(204, {})]
+
+    client = SpotifyClient(
+        base_url="https://api.spotify.com",
+        access_token="token",
+        client_id="",
+        client_secret="",
+        redirect_uri="",
+        timeout_seconds=5.0,
+    )
+
+    client.play_playlist(playlist_uri="spotify:playlist:001", device_id="speaker")
+
+    assert _FakeClient.requests[0]["url"] == "https://api.spotify.com/v1/me/player/play"
+    assert _FakeClient.requests[0]["kwargs"]["json"] == {
+        "context_uri": "spotify:playlist:001"
+    }
+    assert _FakeClient.requests[0]["kwargs"]["params"] == {"device_id": "speaker"}

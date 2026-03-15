@@ -72,6 +72,10 @@ def test_tool_policy_requires_real_spotify_bootstrap_for_playlist_listing() -> N
         settings=_settings(spotify_access_token="token"),
         web_search_adapter_available=False,
     ).evaluate("spotify-list-playlists")
+    denied_play = ToolPolicyEngine(
+        settings=_settings(spotify_access_token="token"),
+        web_search_adapter_available=False,
+    ).evaluate("spotify-play-playlist")
     allowed = ToolPolicyEngine(
         settings=_settings(
             spotify_client_id="client-id",
@@ -84,5 +88,6 @@ def test_tool_policy_requires_real_spotify_bootstrap_for_playlist_listing() -> N
 
     assert denied.allowed is False
     assert "real Spotify baseline" in (denied.error_message or "")
+    assert denied_play.allowed is False
     assert allowed.allowed is True
     assert allowed.adapter_name == "spotify-http"
