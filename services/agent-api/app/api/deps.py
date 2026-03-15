@@ -65,6 +65,7 @@ def get_spotify_client() -> SpotifyClient | None:
         client_id=settings.spotify_client_id,
         client_secret=settings.spotify_client_secret,
         redirect_uri=settings.spotify_redirect_uri,
+        refresh_token=settings.spotify_refresh_token,
         timeout_seconds=settings.spotify_timeout_seconds,
     )
 

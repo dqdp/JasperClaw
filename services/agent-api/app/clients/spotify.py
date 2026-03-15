@@ -38,6 +38,7 @@ class SpotifyClient:
         client_id: str,
         client_secret: str,
         redirect_uri: str,
+        refresh_token: str = "",
         timeout_seconds: float,
         max_retries: int = 1,
     ) -> None:
@@ -46,6 +47,7 @@ class SpotifyClient:
         self._client_id = client_id.strip()
         self._client_secret = client_secret.strip()
         self._redirect_uri = redirect_uri.strip()
+        self._refresh_token = refresh_token.strip()
         self._timeout_seconds = timeout_seconds
         self._max_retries = max(max_retries, 0)
         self._cached_token = self._access_token
@@ -183,6 +185,10 @@ class SpotifyClient:
         if self._cached_token and time() < self._token_expires_at:
             return self._cached_token
 
+        if self._refresh_token and self._client_id and self._client_secret:
+            self._fetch_refresh_token()
+            return self._cached_token
+
         if self._client_id and self._client_secret:
             self._fetch_client_credentials_token()
             return self._cached_token
@@ -236,6 +242,64 @@ class SpotifyClient:
                 code="dependency_bad_response",
                 message="Spotify token endpoint returned invalid payload",
             )
+        raw_expires = payload.get("expires_in", 3600)
+        expires_in = (
+            raw_expires if isinstance(raw_expires, int) and raw_expires > 0 else 3600
+        )
+
+        self._cached_token = token.strip()
+        self._token_expires_at = time() + float(expires_in) - 60
+
+    def _fetch_refresh_token(self) -> None:
+        credentials = f"{self._client_id}:{self._client_secret}"
+        encoded = base64.b64encode(credentials.encode()).decode()
+        headers = {
+            "Authorization": f"Basic {encoded}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        response = self._raw_request(
+            "POST",
+            f"{_SPOTIFY_ACCOUNTS_BASE_URL}{_DEFAULT_TOKEN_ENDPOINT}",
+            headers=headers,
+            data=urlencode(
+                {
+                    "grant_type": "refresh_token",
+                    "refresh_token": self._refresh_token,
+                }
+            ),
+        )
+        if response.status_code != 200:
+            raise APIError(
+                status_code=503 if response.status_code >= 500 else 502,
+                error_type=(
+                    "dependency_unavailable"
+                    if response.status_code >= 500
+                    else "upstream_error"
+                ),
+                code=self._map_status_to_code(response.status_code),
+                message="Spotify token endpoint rejected refresh token",
+            )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify token endpoint returned invalid JSON",
+            ) from exc
+
+        token = payload.get("access_token")
+        if not isinstance(token, str) or not token.strip():
+            raise APIError(
+                status_code=502,
+                error_type="upstream_error",
+                code="dependency_bad_response",
+                message="Spotify token endpoint returned invalid payload",
+            )
+        raw_refresh_token = payload.get("refresh_token")
+        if isinstance(raw_refresh_token, str) and raw_refresh_token.strip():
+            self._refresh_token = raw_refresh_token.strip()
         raw_expires = payload.get("expires_in", 3600)
         expires_in = (
             raw_expires if isinstance(raw_expires, int) and raw_expires > 0 else 3600

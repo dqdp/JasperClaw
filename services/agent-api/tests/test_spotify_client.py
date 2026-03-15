@@ -96,6 +96,57 @@ def test_client_credentials_token_uses_spotify_accounts_host(monkeypatch) -> Non
     assert _FakeClient.requests[1]["url"] == "https://api.spotify.com/v1/search"
 
 
+def test_refresh_token_flow_uses_spotify_accounts_host_for_real_user_calls(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("app.clients.spotify.httpx.Client", _FakeClient)
+    _FakeClient.requests = []
+    _FakeClient.responses = [
+        _FakeResponse(
+            200,
+            {
+                "access_token": "refreshed-token",
+                "refresh_token": "rotated-refresh-token",
+                "expires_in": 3600,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "items": [
+                    {
+                        "name": "Focus Flow",
+                        "uri": "spotify:playlist:001",
+                        "owner": {"display_name": "Alex"},
+                        "external_urls": {
+                            "spotify": "https://open.spotify.com/playlist/001"
+                        },
+                    }
+                ]
+            },
+        ),
+    ]
+
+    client = SpotifyClient(
+        base_url="https://api.spotify.com",
+        access_token="",
+        client_id="client-id",
+        client_secret="client-secret",
+        redirect_uri="http://assistant.test/callback",
+        refresh_token="refresh-token",
+        timeout_seconds=5.0,
+    )
+
+    results = client.list_playlists(limit=5)
+
+    assert len(results) == 1
+    assert _FakeClient.requests[0]["url"] == "https://accounts.spotify.com/api/token"
+    assert _FakeClient.requests[0]["kwargs"]["data"] == (
+        "grant_type=refresh_token&refresh_token=refresh-token"
+    )
+    assert _FakeClient.requests[1]["url"] == "https://api.spotify.com/v1/me/playlists"
+
+
 def test_list_playlists_uses_me_playlists_endpoint(monkeypatch) -> None:
     monkeypatch.setattr("app.clients.spotify.httpx.Client", _FakeClient)
     _FakeClient.requests = []
