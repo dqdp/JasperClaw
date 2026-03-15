@@ -35,22 +35,60 @@ cross-cutting areas are only partially closed:
   deferred
 - Telegram ingress hardening baseline is materially closed for MVP; broader
   incident-management remains an optional follow-up rather than a current blocker
+- the ordinary default startup is still text-first rather than a product-ready
+  voice-and-actions baseline
+- Spotify state-changing actions still need a correct user-scoped auth model
+  and a product-facing playback and station surface
+- Telegram exists as ingress plus alerts, not yet as a narrow outbound send and
+  alias-discovery baseline for normal user requests
+- trusted-chat policy and alias-scoped Telegram send behavior are now
+  documented for the target baseline, but explicit demo-household packaging,
+  Spotify auth bootstrap, and runtime implementation remain open
 
 ## Recommended Direction
 
-The recommended path remains `stabilize-first`, but the release-hardening
-baseline is now materially more complete.
+The MVP hardening pass is materially complete.
+The next recommended block is `default-startup convergence`.
 
 Rationale:
 
-- the system already has several real slices worth protecting
-- the main remaining risk is no longer missing core functionality, but
-  operational confidence
-- the highest-value next work is narrowing the remaining operability gaps
-  exposed after restore, rollback, deploy, and smoke proof landed on the now-real
-  stack
-- the immediate next step is a short MVP sign-off and metadata truth pass before
-  choosing another expansion block
+- the repository already has the component slices needed for a convincing
+  product baseline
+- the biggest remaining product gap is that the ordinary startup does not yet
+  expose those slices as one batteries-included experience
+- the main design risk is no longer release hardening, but making the default
+  startup honest about provider capability, auth, and side-effect boundaries
+- the next block should converge voice, Spotify, and Telegram send behavior on
+  one default startup contract instead of leaving them as separate partial
+  slices
+
+## Phase B: Default Startup Convergence
+
+Goal: make the default startup product-legible by turning it into the supported
+voice-first baseline instead of leaving voice and external actions as partial
+opt-in slices.
+
+### Phase B Exit Criteria
+
+Phase B is complete only when all of the following are true:
+
+- the ordinary default startup enables the supported CPU voice path
+- voice requests can exercise at least one Spotify action and one Telegram send
+  action through the canonical `agent-api` path
+- users can discover available commands, aliases, playlists, and capability
+  state without guessing provider internals
+- Spotify playback and station behavior use a correct user-scoped auth model
+  rather than `client_credentials`
+- recommendation-assisted playlist generation is documented as optional rather
+  than baseline-critical
+- Telegram outbound actions remain limited to trusted chats and configured
+  aliases
+- bot commands and voice requests use the same typed capability layer
+- ordinary Telegram free chat remains deny-by-default for model-driven external
+  effects while slash commands use only a narrow allowlisted exception
+- Telegram bot commands remain limited to a minimal household helper surface in
+  v1
+- smoke coverage reflects the default startup contract directly
 
 ## Phase A: Stabilization
 

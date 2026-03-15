@@ -196,3 +196,52 @@ Use this block as a direct starting point when creating EPIC 6 in Linear:
 - [Subtask] TGX-5: Add security review checklist and controls
 - [Subtask] TGX-6: Implement policy guards for Telegram-originated tool actions
 - [Subtask] TGX-7: Add observability and audit continuity checks
+
+## EPIC 7: Default Product Baseline
+
+### Outcome
+
+The ordinary default startup becomes a batteries-included assistant baseline
+with voice enabled and a narrow, useful external-action surface.
+
+### Tasks
+
+- PB-1: Make the supported CPU voice path part of the default startup contract
+- PB-2: Define capability-state semantics for demo versus real provider modes
+- PB-3: Replace the current Spotify state-changing auth assumptions with a
+  correct user-scoped OAuth model
+- PB-4: Add user-facing Spotify playlist-discovery, playlist-playback, and
+  station-start capabilities
+- PB-5: Add internal Spotify helper capabilities for playlist-backed execution
+- PB-6: Evaluate recommendation-assisted playlist generation as an optional
+  helper path rather than a baseline dependency
+- PB-7: Add trusted-chat Telegram send and alias discovery capabilities
+- PB-8: Keep Telegram bot commands minimal under a narrow allowlisted exception
+- PB-9: Add end-to-end smoke coverage for the default voice, Spotify, and
+  Telegram send path
+- PB-10: Document the default-startup product contract, including provider
+  prerequisites and non-goals
+
+### Exit criteria
+
+- the default startup supports e2e voice interaction
+- the assistant can perform baseline Spotify actions and alias-scoped Telegram
+  send actions through the canonical `agent-api` path
+- users can discover commands, aliases, playlists, and capability state without
+  guessing low-level provider operations
+- real Spotify playlist mutation and playback use user-scoped OAuth rather than
+  `client_credentials`
+- playlist playback and station start are supported in the real Spotify path
+- any playlist CRUD used for station building remains an internal helper rather
+  than the primary user-facing contract
+- recommendation-assisted playlist generation remains optional because Spotify's
+  recommendations endpoints are deprecated
+- Telegram outbound actions remain limited to trusted chats and configured
+  aliases
+- bot commands do not create a broad privileged bypass around the typed tools
+  layer
+- ordinary Telegram free chat remains deny-by-default for model-driven external
+  effects
+- Telegram bot commands remain limited to the minimal household helper surface
+- smoke coverage validates the ordinary default startup rather than a specialty
+  opt-in profile

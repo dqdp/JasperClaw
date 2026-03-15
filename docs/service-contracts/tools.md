@@ -7,6 +7,9 @@ This document defines the canonical v1 contract for the typed tools integration 
 In v1, this is an **internal contract**, not a public HTTP API.
 It defines an internal execution boundary, not a standalone service topology.
 
+Planner behavior for selecting typed capabilities is documented separately in
+`docs/features/capability-planning.md`.
+
 Risk classification, approval requirements, and sandbox expectations for tools are governed by `docs/ops/agent-action-policy.md`.
 
 ## Responsibilities
@@ -53,6 +56,61 @@ Current Tools Slice 2 baseline:
 New tool IDs must be stable, explicit, and versioned by name rather than inferred from provider internals.
 
 Each tool registration must also declare policy metadata such as risk class, confirmation requirements, allowed scopes, and audit fields.
+
+## Planned default product-baseline expansion
+
+The next planned product baseline is not yet implemented in the repository.
+
+Intent:
+
+- make the ordinary default startup voice-capable and tool-capable without a
+  separate opt-in baseline profile
+- keep the same typed tools boundary inside `agent-api`
+- expand from the current Spotify playback/search slice toward a narrow
+  batteries-included baseline for Spotify discovery, playback, station start,
+  and Telegram send
+
+Planned user-facing capabilities:
+
+- `capabilities-help`
+- `spotify-list-playlists`
+- `spotify-play-playlist`
+- `spotify-start-station`
+- `spotify-pause`
+- `spotify-next`
+- `telegram-list-aliases`
+- `telegram-send`
+
+Planned helper capabilities:
+
+- `spotify-create-playlist`
+- `spotify-add-to-playlist`
+- `spotify-search`
+
+These helper capabilities may exist behind the orchestration layer without
+becoming the primary user-facing contract.
+
+Planned constraints:
+
+- real Spotify playlist mutation and playback control require user-scoped OAuth
+  using the chosen `Authorization Code + refresh token` baseline;
+  `client_credentials` is not sufficient for this path
+- real Spotify playback control also assumes a Premium user and an active
+  playback device already available to Spotify Connect
+- recommendation-assisted playlist generation may exist as an optional helper,
+  but the baseline must not depend solely on Spotify's deprecated
+  recommendations endpoints
+- `telegram-send` must be limited to preconfigured recipient aliases; arbitrary
+  chat lookup and history access remain out of scope
+- Telegram assistant access should be limited to trusted household chats rather
+  than the open ingress surface
+- deterministic Telegram bot commands should route to the same typed
+  capabilities through a narrow allowlisted exception rather than a broad
+  privileged path
+- ordinary Telegram free chat should remain deny-by-default for model-driven
+  external effects
+- the first Telegram bot-command surface should stay minimal: `/help`,
+  `/status`, `/ask`, `/aliases`, and `/send`, without Spotify control commands
 
 ## Current Telegram integration baseline
 

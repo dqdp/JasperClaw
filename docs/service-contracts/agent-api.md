@@ -54,6 +54,7 @@ Rules:
 - typed tools integration layer inside `agent-api` in v1
 
 Tool execution inside `agent-api` follows the internal contract in `docs/service-contracts/tools.md`.
+Model-driven capability planning follows `docs/features/capability-planning.md`.
 
 ## Model exposure
 

@@ -31,6 +31,17 @@ Deliver a self-hosted assistant where all user-facing AI traffic flows through `
 - remaining work is primarily convergence and hardening rather than replacing
   placeholders
 
+Current default-startup gap:
+
+- the ordinary default startup is still text-first rather than voice-first
+- Spotify support does not yet cover the intended user-facing playback and
+  station surface
+- Telegram does not yet expose a narrow outbound `telegram-send` and alias
+  discovery baseline
+- Telegram trusted-chat policy is now part of the documented baseline
+  contract, but demo-household packaging and runtime implementation are still
+  pending
+
 ## Architecture review outcomes already accepted
 
 - `Open WebUI` is a non-canonical UX projection layer
@@ -142,6 +153,49 @@ Current baseline:
 - deployment and rollback are repeatable
 - key operational failure modes are observable
 
+## Milestone 4: Default Product Baseline
+
+### Goal
+
+Turn the ordinary default startup into a batteries-included baseline with voice
+enabled and a narrow set of useful external actions.
+
+### Scope
+
+- make the supported CPU voice profile part of the default startup contract
+- preserve one canonical orchestration path for text, voice, and tool use
+- add user-facing Spotify playback, station, and playlist-discovery capabilities
+- keep playlist CRUD as helper behavior rather than the primary user-facing
+  contract
+- add narrow trusted-chat Telegram send and alias-discovery capabilities
+- keep Telegram bot commands minimal for household help and send flows
+- preserve deny-by-default policy for ordinary Telegram free chat while adding
+  a narrow allowlisted slash-command exception
+- keep demo-to-real capability switching inside the same typed tool contract
+- add smoke coverage for the default startup path instead of a specialty
+  profile-only voice path
+
+### Done when
+
+- a default startup supports e2e voice interaction through `agent-api`
+- the assistant can invoke baseline Spotify actions and alias-scoped Telegram
+  send actions by voice
+- users can discover available commands, aliases, playlists, and capability
+  state without guessing provider internals
+- the real Spotify path uses user-scoped OAuth rather than treating
+  `client_credentials` as sufficient for state-changing operations
+- playlist playback and station start are both supported through stable typed
+  capabilities
+- any playlist CRUD used for station-building remains an internal helper path
+- recommendation-assisted playlist generation is optional rather than the only
+  baseline mechanism
+- Telegram bot commands and voice requests converge on the same typed tool
+  boundary
+- Telegram assistant access is limited to trusted household chats
+- ordinary Telegram free chat remains deny-by-default for model-driven external
+  effects
+- Telegram bot commands remain limited to the minimal household helper surface
+
 ## Deferred for v2
 
 - autonomous background agents
@@ -156,6 +210,7 @@ Current baseline:
 2. Control Plane MVP
 3. Memory and Tools
 4. Voice and Hardening
+5. Default Product Baseline
 
 ## Change control
 
