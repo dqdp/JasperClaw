@@ -6,6 +6,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 VOICE_ENV_FILE = REPO_ROOT / "infra" / "env" / "app.ci-voice-smoke.example.env"
+TELEGRAM_ENV_FILE = REPO_ROOT / "infra" / "env" / "telegram.ci-smoke.example.env"
 
 
 def _extract_job_body(job_name: str) -> str:
@@ -39,11 +40,19 @@ def test_voice_smoke_env_enables_supported_voice_profile() -> None:
 
     assert values["VOICE_ENABLED"] == "true"
     assert values["SPOTIFY_DEMO_ENABLED"] == "true"
+    assert values["DEMO_HOUSEHOLD_CONFIG_PATH"] == "/app/config/household.demo.toml"
     assert values["STT_MODEL"] == "base"
     assert values["STT_DEVICE"] == "cpu"
     assert values["STT_COMPUTE_TYPE"] == "int8"
     assert values["STT_PREWARM_ON_STARTUP"] == "true"
     assert values["TTS_DEFAULT_VOICE"] == "assistant-default"
+
+
+def test_telegram_smoke_env_enables_demo_household_contract() -> None:
+    values = _parse_env_file(TELEGRAM_ENV_FILE)
+
+    assert values["DEMO_HOUSEHOLD_CONFIG_PATH"] == "/app/config/household.demo.toml"
+    assert values["TELEGRAM_ALLOWED_COMMANDS"] == "/help,/status,/ask,/aliases,/send"
 
 
 def test_ci_declares_mandatory_voice_smoke_job() -> None:

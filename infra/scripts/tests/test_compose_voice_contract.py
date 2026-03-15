@@ -7,6 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPOSE_FILE = REPO_ROOT / "infra" / "compose" / "compose.yml"
+COMPOSE_CI_FILE = REPO_ROOT / "infra" / "compose" / "compose.ci.yml"
 VOICES_FILE = REPO_ROOT / "services" / "tts-service" / "app" / "voices.toml"
 
 
@@ -23,3 +24,10 @@ def test_open_webui_default_tts_voice_uses_registered_default_voice() -> None:
 
     assert default_voice == "assistant-default"
     assert default_voice in voices["voices"]
+
+
+def test_ci_compose_mounts_demo_household_config_for_baseline_services() -> None:
+    compose_text = COMPOSE_CI_FILE.read_text(encoding="utf-8")
+
+    assert "../config/household.demo.toml:/app/config/household.demo.toml:ro" in compose_text
+    assert compose_text.count("/app/config/household.demo.toml:ro") >= 2
