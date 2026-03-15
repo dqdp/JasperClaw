@@ -54,6 +54,8 @@ services:
     restart: unless-stopped
     env_file:
       - ../env/app.env
+    volumes:
+      - ../config/household.demo.toml:/app/config/household.demo.toml:ro
     environment:
       INTERNAL_OPENAI_API_KEY: ${INTERNAL_OPENAI_API_KEY}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -122,6 +124,8 @@ services:
     env_file:
       - path: ../env/telegram.env
         required: false
+    volumes:
+      - ../config/household.demo.toml:/app/config/household.demo.toml:ro
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432

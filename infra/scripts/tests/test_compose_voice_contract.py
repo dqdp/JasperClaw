@@ -33,12 +33,21 @@ def test_app_example_env_enables_default_voice_startup() -> None:
     assert "VOICE_ENABLED=true" in env_text
     assert "STT_BASE_URL=http://stt-service:8080" in env_text
     assert "TTS_BASE_URL=http://tts-service:8080" in env_text
+    assert "SPOTIFY_DEMO_ENABLED=true" in env_text
+    assert "DEMO_HOUSEHOLD_CONFIG_PATH=/app/config/household.demo.toml" in env_text
 
 
 def test_compose_voice_services_are_no_longer_gated_by_special_profile() -> None:
     compose_text = COMPOSE_FILE.read_text(encoding="utf-8")
 
     assert 'profiles: ["voice"]' not in compose_text
+
+
+def test_compose_mounts_demo_household_config_for_default_baseline_services() -> None:
+    compose_text = COMPOSE_FILE.read_text(encoding="utf-8")
+
+    assert "../config/household.demo.toml:/app/config/household.demo.toml:ro" in compose_text
+    assert compose_text.count("/app/config/household.demo.toml:ro") >= 2
 
 
 def test_ci_compose_mounts_demo_household_config_for_baseline_services() -> None:
