@@ -12,3 +12,5 @@ __pycache__/
 .idea/
 .vscode/
 tmp/
+shared_infra/build/
+shared_infra/shared_infra.egg-info/

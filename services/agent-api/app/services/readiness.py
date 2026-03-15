@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 
 from app.clients.ollama import OllamaChatClient
+from app.clients.stt import SttClient
+from app.clients.tts import TtsClient
 from app.core.config import Settings, is_configured_required_secret
 from app.core.errors import APIError
 from app.core.logging import log_event
@@ -24,10 +26,14 @@ class ReadinessService:
         settings: Settings,
         ollama_client: OllamaChatClient,
         migration_runner: MigrationRunner,
+        stt_client: SttClient | None = None,
+        tts_client: TtsClient | None = None,
     ) -> None:
         self._settings = settings
         self._ollama_client = ollama_client
         self._migration_runner = migration_runner
+        self._stt_client = stt_client
+        self._tts_client = tts_client
 
     def check(self) -> ReadinessResult:
         checks = {
@@ -35,6 +41,9 @@ class ReadinessService:
             "postgres": self._check_postgres(),
             "ollama": self._check_ollama(),
         }
+        if self._settings.voice_enabled:
+            checks["stt"] = self._check_stt()
+            checks["tts"] = self._check_tts()
         status = "ready" if all(value == "ok" for value in checks.values()) else "not_ready"
         get_agent_metrics().record_readiness(status=status)
         log_event("readiness_check_completed", status=status, checks=checks)
@@ -70,6 +79,24 @@ class ReadinessService:
                     self._settings.ollama_fast_chat_model,
                 )
             )
+        except APIError:
+            return "fail"
+        return "ok"
+
+    def _check_stt(self) -> str:
+        if self._stt_client is None:
+            return "fail"
+        try:
+            self._stt_client.check_ready()
+        except APIError:
+            return "fail"
+        return "ok"
+
+    def _check_tts(self) -> str:
+        if self._tts_client is None:
+            return "fail"
+        try:
+            self._tts_client.check_ready()
         except APIError:
             return "fail"
         return "ok"

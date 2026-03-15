@@ -152,9 +152,13 @@ def get_readiness_service(
     settings: Annotated[Settings, Depends(get_app_settings)],
     ollama_client: Annotated[OllamaChatClient, Depends(get_ollama_client)],
     migration_runner: Annotated[MigrationRunner, Depends(get_migration_runner)],
+    stt_client: Annotated[SttClient | None, Depends(get_stt_client)],
+    tts_client: Annotated[TtsClient | None, Depends(get_tts_client)],
 ) -> ReadinessService:
     return ReadinessService(
         settings=settings,
         ollama_client=ollama_client,
         migration_runner=migration_runner,
+        stt_client=stt_client,
+        tts_client=tts_client,
     )

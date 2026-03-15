@@ -138,7 +138,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz')\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -154,9 +154,8 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
-      - --web.enable-lifecycle
     ports:
-      - "9090:9090"
+      - "${OBSERVABILITY_BIND_HOST:-127.0.0.1}:9090:9090"
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./observability/prometheus/alerts:/etc/prometheus/alerts:ro
@@ -174,11 +173,11 @@ services:
     restart: unless-stopped
     profiles: ["observability"]
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       GF_USERS_ALLOW_SIGN_UP: "false"
     ports:
-      - "3000:3000"
+      - "${OBSERVABILITY_BIND_HOST:-127.0.0.1}:3000:3000"
     volumes:
       - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
@@ -196,6 +195,11 @@ services:
     restart: unless-stopped
     env_file:
       - ../env/app.env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - runtime
 
@@ -206,6 +210,11 @@ services:
     restart: unless-stopped
     env_file:
       - ../env/app.env
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/readyz')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     networks:
       - runtime
 

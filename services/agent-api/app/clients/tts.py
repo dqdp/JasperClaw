@@ -77,3 +77,30 @@ class TtsClient:
             )
 
         return response.content
+
+    def check_ready(self) -> None:
+        try:
+            with httpx.Client(timeout=self._timeout_seconds) as client:
+                response = client.get(f"{self._base_url}/readyz")
+        except httpx.TimeoutException as exc:
+            raise APIError(
+                status_code=504,
+                error_type="dependency_unavailable",
+                code="dependency_timeout",
+                message="Speech service timed out",
+            ) from exc
+        except httpx.RequestError as exc:
+            raise APIError(
+                status_code=503,
+                error_type="dependency_unavailable",
+                code="speech_service_unavailable",
+                message="Speech service unavailable",
+            ) from exc
+
+        if response.status_code != 200:
+            raise APIError(
+                status_code=503,
+                error_type="dependency_unavailable",
+                code="speech_service_unavailable",
+                message="Speech service unavailable",
+            )

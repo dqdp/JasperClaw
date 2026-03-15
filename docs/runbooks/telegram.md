@@ -22,7 +22,7 @@ This runbook separates:
   - per-chat and global rate limiting,
   - webhook secret token verification.
 - Every accepted user message is forwarded to `agent-api` and response is sent back to the same chat.
-- `telegram-ingress` health is exposed via `GET /healthz`.
+- `telegram-ingress` readiness is exposed via `GET /readyz`.
 - Optional slash-command allowlist is supported via `TELEGRAM_ALLOWED_COMMANDS`.
 - Minimal local command routing is implemented for `/help`, `/status`, and `/ask`.
 - `X-Request-ID` continuity is preserved across ingress handling and downstream `agent-api` calls.
@@ -65,7 +65,7 @@ This runbook separates:
 4. Убедиться, что `infra/caddy/Caddyfile` проксирует ` /telegram/webhook* ` на `telegram-ingress:8080`.
 5. Поднять стек и проверить логи:
    - старт `telegram-ingress` должен зарегистрировать webhook;
-   - endpoint `GET /healthz` у `telegram-ingress` должен быть OK.
+   - endpoint `GET /readyz` у `telegram-ingress` должен быть OK.
 6. Проверить Telegram:
    - отправить тестовое сообщение боту;
    - убедиться, что пришел ответ.
@@ -114,7 +114,7 @@ When `TELEGRAM_ALLOWED_COMMANDS` is configured, commands outside that allowlist 
 
 - `POST /telegram/alerts` принимает JSON с `text` или `alerts` (формат близкий к Alertmanager webhook),
 - нормализует событие в текст и маршрутизирует его через default/warning/critical recipient groups,
-- использует `TELEGRAM_ALERT_BOT_TOKEN` и требует `X-Telegram-Alert-Token` при наличии `TELEGRAM_ALERT_AUTH_TOKEN`,
+- использует `TELEGRAM_ALERT_BOT_TOKEN`, требует `X-Telegram-Alert-Token`, и fail-closed возвращает `503`, если relay частично сконфигурирован без `TELEGRAM_ALERT_AUTH_TOKEN`,
 - поддерживает replay-safe dedupe только при наличии явного `X-Telegram-Alert-Idempotency-Key` от sender-а.
 
 Policy baseline:
@@ -250,7 +250,7 @@ curl -s -X POST \
     production rollout against the live Telegram network
   - without those deterministic inputs, production deploys rely on CI smoke plus
     the manual checks below
-- `telegram-ingress` `GET /healthz` -> 200.
+- `telegram-ingress` `GET /readyz` -> 200.
 - отправить сообщение боту в пользовательском чате -> ответный message от бота.
 - отправить второе сообщение в том же чате -> успешное продолжение того же backend conversation path.
 - проверить, что невалидный webhook-secret отбрасывается.

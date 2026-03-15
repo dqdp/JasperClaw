@@ -440,6 +440,55 @@ def test_metrics_endpoint_exposes_alert_delivery_metrics() -> None:
     assert 'telegram_alert_delivery_escalated_total{reason="retry_exhausted"} 1' in response.text
 
 
+def test_readyz_reports_ready_when_bridge_is_operational() -> None:
+    client, _, _ = _create_client(settings=_operational_settings({}))
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+def test_readyz_returns_503_when_bridge_is_not_configured() -> None:
+    settings = Settings()
+    app = create_app(
+        settings=settings,
+        bridge_service=TelegramBridgeService(
+            agent_client=_FakeAgentApiClient(),
+            telegram_client=_FakeTelegramClient(),
+            settings=settings,
+        ),
+    )
+    client = TestClient(app)
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "checks": {"bridge": "fail", "alerts": "ok"},
+    }
+
+
+def test_readyz_returns_503_when_alert_relay_is_misconfigured() -> None:
+    settings = _operational_settings(
+        {
+            "telegram_alert_bot_token": "alert-bot-token",
+            "telegram_alert_auth_token": "",
+            "telegram_alert_chat_ids": (11,),
+        }
+    )
+    client, _ = _create_alert_client(settings=settings)
+
+    response = client.get("/readyz")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "status": "not_ready",
+        "checks": {"bridge": "ok", "alerts": "fail"},
+    }
+
+
 def test_create_app_does_not_emit_on_event_deprecation_warning() -> None:
     settings = _operational_settings({})
 
@@ -1221,6 +1270,22 @@ def test_alerts_endpoint_returns_503_when_alerting_is_not_configured() -> None:
     )
     response = client.post("/telegram/alerts", json={"text": "downtime"})
     assert response.status_code == 503
+
+
+def test_alerts_endpoint_returns_503_when_alert_relay_is_misconfigured() -> None:
+    settings = _operational_settings(
+        {
+            "telegram_alert_bot_token": "alert-bot-token",
+            "telegram_alert_auth_token": "",
+            "telegram_alert_chat_ids": (11,),
+        }
+    )
+    client, alert_service = _create_alert_client(settings=settings)
+
+    response = client.post("/telegram/alerts", json={"text": "downtime"})
+
+    assert response.status_code == 503
+    assert alert_service.requests == []
 
 
 def test_alerts_endpoint_requires_auth_token_when_configured() -> None:

@@ -3,6 +3,7 @@ import hmac
 import logging
 from contextlib import asynccontextmanager
 from contextlib import suppress
+from dataclasses import dataclass
 from time import perf_counter
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request
@@ -29,6 +30,55 @@ from app.services.bridge import (
 
 configure_logging()
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ReadinessResult:
+    status: str
+    checks: dict[str, str]
+
+    @property
+    def is_ready(self) -> bool:
+        return self.status == "ready"
+
+
+def _alert_relay_requested(
+    *,
+    settings: Settings,
+    alert_chat_ids: tuple[int, ...],
+) -> bool:
+    return bool(settings.telegram_alert_bot_token or alert_chat_ids)
+
+
+def _alert_relay_is_ready(
+    *,
+    settings: Settings,
+    alert_chat_ids: tuple[int, ...],
+) -> bool:
+    return bool(
+        settings.telegram_alert_bot_token
+        and alert_chat_ids
+        and settings.telegram_alert_auth_token
+    )
+
+
+def _readiness_result(
+    *,
+    settings: Settings,
+    alert_chat_ids: tuple[int, ...],
+) -> ReadinessResult:
+    checks = {
+        "bridge": "ok" if settings.is_operational() else "fail",
+        "alerts": "ok",
+    }
+    if _alert_relay_requested(settings=settings, alert_chat_ids=alert_chat_ids) and not _alert_relay_is_ready(
+        settings=settings,
+        alert_chat_ids=alert_chat_ids,
+    ):
+        checks["alerts"] = "fail"
+
+    status = "ready" if all(value == "ok" for value in checks.values()) else "not_ready"
+    return ReadinessResult(status=status, checks=checks)
 
 
 def create_app(
@@ -65,7 +115,11 @@ def create_app(
         config.telegram_alert_warning_chat_ids,
         config.telegram_alert_critical_chat_ids,
     )
-    if alert_delivery_service is None and config.telegram_alert_bot_token and alert_chat_ids:
+    alert_relay_ready = _alert_relay_is_ready(
+        settings=config,
+        alert_chat_ids=alert_chat_ids,
+    )
+    if alert_delivery_service is None and alert_relay_ready:
         alert_telegram_client = TelegramClient(
             bot_token=config.telegram_alert_bot_token,
             api_base_url=config.telegram_alert_api_base_url,
@@ -80,7 +134,7 @@ def create_app(
             claim_ttl_seconds=config.telegram_alert_claim_ttl_seconds,
         )
     alert_facade = None
-    if alert_delivery_service is not None:
+    if alert_delivery_service is not None and alert_relay_ready:
         alert_facade = AlertFacade(
             settings=config,
             alert_delivery_service=alert_delivery_service,
@@ -166,6 +220,19 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/readyz")
+    def readyz():
+        result = _readiness_result(settings=config, alert_chat_ids=alert_chat_ids)
+        if result.is_ready:
+            return {"status": "ready"}
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "checks": result.checks,
+            },
+        )
 
     @app.get("/metrics")
     def metrics_endpoint() -> PlainTextResponse:
@@ -268,6 +335,12 @@ def create_app(
             alias="X-Telegram-Alert-Idempotency-Key",
         ),
     ) -> object:
+        if _alert_relay_requested(settings=config, alert_chat_ids=alert_chat_ids) and not alert_relay_ready:
+            raise HTTPException(
+                status_code=503,
+                detail="telegram alert relay is misconfigured",
+            )
+
         if alert_facade is None or not alert_chat_ids:
             raise HTTPException(
                 status_code=503,
